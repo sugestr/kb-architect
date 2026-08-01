@@ -1,0 +1,54 @@
+# .kbconfig.yml — контракт проекта для kb-architect.
+# Кладётся в корень репозитория. Объявляет СУЩЕСТВУЮЩИЕ папки как роли —
+# переименовывать ничего не нужно.
+
+profile: authored          # умолчание: authored | derived | mirror
+
+roles:                     # роль -> папка(и) этого проекта, имена свои
+  knowledge: [knowledge]
+  decisions: [decisions]
+  sources: [sources]
+  documents: [documents]
+  output: [output]
+  archive: [archive]
+  inbox: [_inbox]
+
+entry:                     # ключевые файлы, имена свои
+  rules: CLAUDE.md
+  status: NOW.md           # файл входа по контракту
+  corrections: CORRECTIONS.md
+  # index: INDEX.md        # сверх минимума, см. справочник
+  # changelog: CHANGELOG.md
+
+limits:                    # КИЛОБАЙТЫ, не строки
+  rules_kb: 12
+  index_kb: 12
+  status_kb: 8
+  knowledge_kb: 40
+
+profiles: []               # профиль по глобу пути, например:
+# - path: "people/*/HEALTH_*.md"
+#   profile: derived
+# - path: "kb/*_state_snapshot.md"
+#   profile: mirror
+
+exclude: []                # что линтер не смотрит вовсе, например:
+# - "*.pdf"
+# - "**/parsed/**"
+# - "spec/**"
+
+stale_days: 90             # порог протухания для authored
+mirror_stale_days: 30      # порог сверки для mirror
+
+contour:                   # два контура — основной режим отказа, см. collaboration.md
+  role: source             # source | mirror
+  manifest: MIRROR.md      # файл-манифест (обязателен при role: mirror)
+  # budget_mb: 2           # потолок объёма яруса 1 для лёгкого контура
+  sync_max_age_days: 3     # отметка старше — расхождение вероятно
+  never_mirror: []         # оперативные представления, которые НЕ копируются:
+  # - "TODAY.md"
+  # - "**/CARE_STATUS.md"
+
+modules: []                # numbering | deadlines | review_queue | mirrors
+                           # | confidence | split_reference_explanation
+                           # | subject_split | derived_query
