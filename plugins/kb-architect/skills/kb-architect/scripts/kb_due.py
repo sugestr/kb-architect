@@ -30,6 +30,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kb_dates import parse_dates as _parse, last_date as _last, infer_order
+
 STALE_ENTRY_DAYS = 7        # вход старше — снимок протух
 REVIEW_DAYS = 30            # журнал и вопросы: давно не разбирали
 DATE_RE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
@@ -49,20 +52,24 @@ def find(root, names):
     return None
 
 
+ORDER = None
+
+
 def dates_in(text, past_only=False, today=None):
-    """Даты из текста. past_only отсекает будущие: в журнале и в наборе
-    вопросов встречаются сроки и плановые даты, и без фильтра «последняя
-    запись» уезжает в будущее — счётчик показывает отрицательные дни."""
-    out = []
-    for y, m, d in DATE_RE.findall(text):
-        try:
-            out.append(datetime.date(int(y), int(m), int(d)))
-        except ValueError:
-            pass
-    if past_only:
-        today = today or datetime.date.today()
-        out = [d for d in out if d <= today]
-    return out
+    """Даты из текста в любом из принятых форматов (см. kb_dates.py).
+    past_only отсекает будущие: в журнале и в наборе вопросов встречаются
+    сроки и плановые даты, и без фильтра «последняя запись» уезжает в
+    будущее — счётчик показывает отрицательные дни."""
+    dates, _ = _parse(text, past_only=past_only, today=today, day_first=ORDER)
+    return dates
+
+
+def dates_or_unknown(text, today=None):
+    """(последняя прошедшая дата, было ли нераспознанное).
+
+    Различие несущее: «дат нет» и «даты есть, но формат не распознан» —
+    разные утверждения, и второе не даёт права сказать «ни разу»."""
+    return _last(text, today=today, day_first=ORDER)
 
 
 def collect_all(root):
@@ -109,17 +116,24 @@ def main():
     due = []
     ok = []
 
+    # конвенция дат определяется один раз по всей базе
+    global ORDER
+    ORDER = infer_order(read(f) for f in collect_all(root)[:400]
+                        if os.path.splitext(f)[1].lower() in {".md", ".txt", ".yml", ".yaml"})
+
     # 1. Вход
     p = find(root, CANDIDATES["entry"])
     if p:
         head = "\n".join(read(p).splitlines()[:5])
-        ds = dates_in(head, past_only=True, today=today)
+        ds, head_unknown = _parse(head, past_only=True, today=today, day_first=ORDER)
         if ds:
             age = (today - max(ds)).days
             line = f"вход ({os.path.basename(p)}) обновлён {age} дн. назад"
             (due if age > STALE_ENTRY_DAYS else ok).append(
                 line + (" — снимок протух, обнови" if age > STALE_ENTRY_DAYS else "")
             )
+        elif head_unknown:
+            ok.append(f"вход ({os.path.basename(p)}): дата есть, но формат не распознан")
         else:
             due.append(f"вход ({os.path.basename(p)}) без строки «Обновлено» — не видно, протух ли")
     else:
@@ -137,13 +151,16 @@ def main():
     # 3. Журнал
     p = find(root, CANDIDATES["journal"])
     if p:
-        ds = dates_in(read(p), past_only=True, today=today)
+        last, unknown = dates_or_unknown(read(p), today=today)
+        ds = [last] if last else []
         if ds:
             age = (today - max(ds)).days
             line = f"журнал ({os.path.basename(p)}) — последняя запись {age} дн. назад"
             (due if age > REVIEW_DAYS else ok).append(
                 line + (" — пора разбирать" if age > REVIEW_DAYS else "")
             )
+        elif unknown:
+            ok.append("журнал: даты есть, но формат не распознан — судить о давности не берусь")
         else:
             ok.append("журнал пуст — это «не наблюдали», а не «не работает»")
     else:
@@ -153,13 +170,17 @@ def main():
     # 4. Контрольные вопросы
     p = find(root, CANDIDATES["questions"])
     if p:
-        ds = dates_in(read(p), past_only=True, today=today)
+        last, unknown = dates_or_unknown(read(p), today=today)
+        ds = [last] if last else []
         if ds:
             age = (today - max(ds)).days
             line = f"контрольные вопросы — последний прогон {age} дн. назад"
             (due if age > REVIEW_DAYS else ok).append(
                 line + (" — пора прогнать с чистого контекста" if age > REVIEW_DAYS else "")
             )
+        elif unknown:
+            ok.append("контрольные вопросы: даты есть, но формат не распознан — "
+                      "о давности прогона не сужу")
         else:
             due.append("контрольные вопросы ни разу не прогонялись — база не проверена ни разу")
     else:

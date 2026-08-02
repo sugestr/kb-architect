@@ -33,6 +33,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from kb_dates import parse_dates, infer_order
+
 TEXT_EXT = {".md"}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv",
              "_raw", "_work", "archive", "архив", "Archive"}
@@ -83,8 +86,10 @@ def main():
 
     today = datetime.date.today()
     broken, expired, blank = [], [], []
+    files_all = collect(root)
+    ORDER = infer_order(open(f, encoding="utf-8", errors="ignore").read() for f in files_all[:400])
 
-    for path in collect(root):
+    for path in files_all:
         rel = os.path.relpath(path, root)
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -110,22 +115,39 @@ def main():
 
         # 2. истёкший срок годности
         for val in VALID_UNTIL.findall(raw):
-            m = DATE.search(val)
-            if not m:
-                continue
-            try:
-                d = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-            except ValueError:
-                continue
-            if d < today:
-                expired.append((rel, d, (today - d).days))
+            got, _ = parse_dates(val, day_first=ORDER)
+            for d in got:
+                if d < today:
+                    expired.append((rel, d, (today - d).days))
 
         # 3. пустой verify
         for val in VERIFY.findall(raw):
             if val.strip().strip("<>").lower() in EMPTY_VERIFY:
                 blank.append(rel)
 
+    # 4. Объём входа — единственный численный лимит контракта, и потому
+    # единственный, который проверяется механически бесплатно.
+    ENTRY_LIMIT = 8 * 1024
+    oversized = None
+    for name in ("NOW.md", "STATUS.md"):
+        cand = os.path.join(root, name)
+        if os.path.isfile(cand):
+            size = os.path.getsize(cand)
+            if size > ENTRY_LIMIT:
+                oversized = (name, size)
+            break
+
     found = 0
+
+    if oversized:
+        name, size = oversized
+        found += 1
+        print(f"ВХОД ПЕРЕРОС ПОТОЛОК — {name}: {size / 1024:.1f} КБ при потолке 8 КБ "
+              f"(×{size / ENTRY_LIMIT:.1f}):")
+        print("  Мера в байтах, а не в строках: в плотном markdown с таблицами строка")
+        print("  не единица объёма, и лимит «по строкам» проходит там, где байтовый нет.")
+        print("  Обычно причина — историческое накопление внутри входа: закрытые сюжеты,")
+        print("  оставленные абзацами. Цена не в ошибке, а в счёте за каждую сессию.\n")
 
     if broken:
         found += len(broken)
