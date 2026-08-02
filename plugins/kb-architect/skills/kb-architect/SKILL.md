@@ -3,7 +3,7 @@ name: kb-architect
 description: "One-page contract for a knowledge base an AI agent reads across sessions, plus a reference library of patterns, templates and tools. Use when adopting the system in an existing project without migrating its structure, starting a new project's knowledge base, writing NOW.md or CORRECTIONS.md, deciding which metadata a file actually needs, running the control-question check for whether the base lies, handing state between sessions or devices, or auditing what broke. Also use when the user asks in Russian about 'база знаний', 'система хранения', 'как хранить факты', 'наведи порядок в проекте', 'контекст теряется между чатами', 'что дальше по проекту', 'база врёт', 'хендовер'."
 license: MIT
 metadata:
-  version: "3.8"
+  version: "3.9"
   author: "sugestr"
 ---
 
@@ -39,6 +39,8 @@ metadata:
 | «разверни базу знаний с нуля», «заведи хранилище для этого проекта», «сохрани всё, что мы тут насобирали» | поднимает репозиторий, разворачивает минимум, **загружает в него то, что уже накопилось** в переписке, файлах и голове. В облачной сессии с уже набранным материалом сырьё уходит в репозиторий первым, до всякой структуры | `references/start-new.md` |
 | «присоедини контракт к проекту», «наведи порядок, но ничего не ломай» | 30–90 минут, структура не трогается: вход, канал правок, три поля по условию, контрольные вопросы | `references/adopt-existing.md`, часть 1 |
 | «перестрой базу», «здесь бардак, переделай» | отдельная процедура: **бэкап в ветку и тег**, опись, план на утверждение, изменения по шагам, откат одной командой | `references/adopt-existing.md`, часть 2 |
+| «что просрочено», «с чего начать сегодня» | две секунды: протух ли вход, есть ли ожидания с прошедшей датой, давно ли разбирали журнал и прогоняли вопросы. Даты берутся из файлов, которые контракт и так велит вести — владельцу помнить ничего не надо | `scripts/kb_due.py` |
+| «проверь, не устарела ли редакция контракта» | сравнивает `kb_standard_version` проекта с установленной версией скилла и показывает, что менялось между ними | `references/rationale.md`, таблица выпусков |
 | «разбери входящее», «обнови, что у нас сейчас» | ежедневный цикл: разбор нового, обновление входа, фиксация. **Перед выводами об отсутствии — поиск по базе командой**, а не по памяти | `references/operations.md` |
 | «проверь, не врёт ли база» | прогон контрольных вопросов с чистого контекста | контракт, раздел «Один тест» |
 | «сверь с реальностью» | сверка утверждений с внешними системами и отправленными документами | `references/operations.md`, режим reconcile |
