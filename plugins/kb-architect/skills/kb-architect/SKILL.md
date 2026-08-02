@@ -3,7 +3,7 @@ name: kb-architect
 description: "One-page contract for a knowledge base an AI agent reads across sessions, plus a reference library of patterns, templates and tools. Use when adopting the system in an existing project without migrating its structure, starting a new project's knowledge base, writing NOW.md or CORRECTIONS.md, deciding which metadata a file actually needs, running the control-question check for whether the base lies, handing state between sessions or devices, or auditing what broke. Also use when the user asks in Russian about 'база знаний', 'система хранения', 'как хранить факты', 'наведи порядок в проекте', 'контекст теряется между чатами', 'что дальше по проекту', 'база врёт', 'хендовер'."
 license: MIT
 metadata:
-  version: "3.14"
+  version: "3.15"
   author: "sugestr"
 ---
 
@@ -47,7 +47,8 @@ metadata:
 | «проверь, не врёт ли база» | прогон контрольных вопросов с чистого контекста | контракт, раздел «Один тест» |
 | «сверь с реальностью» | сверка утверждений с внешними системами и отправленными документами | `references/operations.md`, режим reconcile |
 | «что сломалось за период», «пора разбирать журнал» | разбор журнала эксплуатации, решение о правках | `references/measurement.md` |
-| «передай состояние в другой чат», «подключи Codex к проекту», «дай внешнему ИИ читать базу» | сбор дельты для другой сессии; подключение агента другой платформы: один свод правил без копии, владение по путям, порядок «сначала чтение, потом запись» | `references/collaboration.md` |
+| «прими хендовер», «вот отчёт из другой сессии» | входящее разбирается как источник, а не как истина: сверка с базой, разбор на «новое / уже есть / расходится / TBD», расхождения в канал правок, ответ отправителю | `references/collaboration.md` §3а |
+| «сделай хендовер», «передай состояние в другой чат», «подключи Codex к проекту» | сбор дельты для другой сессии; подключение агента другой платформы: один свод правил без копии, владение по путям, порядок «сначала чтение, потом запись» | `references/collaboration.md` |
 | «кто здесь источник правды по X» | разбор authority: кому разрешено отвечать на какой вопрос | `references/authority.md` |
 | «что мне нужно из справочника», «подбери систему под этот проект» | диагностика из пяти вопросов: что главный объект, кто пишет файлы, есть ли внешний источник правды, есть ли второй контур, сколько пишущих. Ответы задают набор разделов механически | `references/00-kak-chitat.md` §0 |
 | «собери отчёт о дефектах скилла» | отчёт для того, кто ведёт стандарт: что произошло, почему это не невнимательность, что было в базе на самом деле, цена. Наблюдение ценнее предложения. **Сессия предлагает это сама**, записав в журнал «сломалось» | `assets/templates/defect-report.md` |
