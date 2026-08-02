@@ -109,13 +109,18 @@ def declared_value(root, keys, docs=None):
     Незаполненный плейсхолдер шаблона (`<версия>`) значением не считается:
     иначе шаблон отчитается за проект, который его не заполнял.
     Возвращает (значение, где нашли) либо (None, None)."""
+    # Разметка вокруг объявления допускается: живые проекты пишут строку
+    # маркером списка, в обратных кавычках, полужирным. Строгий разбор «ключ
+    # с начала строки» один раз уже соврал «редакция не записана» о записанной
+    # редакции — оформление не должно решать, видит ли инструмент факт.
     for path in (docs if docs is not None else context_docs(root)):
         text = read(path)
         for key in keys:
-            m = re.search(r"^[ \t]*[-*]?[ \t]*" + re.escape(key) + r"[ \t]*:[ \t]*(.+)$",
+            m = re.search(r"^[ \t]*(?:[-*>+][ \t]*)?[`*_\"']{0,2}[ \t]*"
+                          + re.escape(key) + r"[`*_\"']{0,2}[ \t]*:[ \t]*(.+)$",
                           text, re.IGNORECASE | re.MULTILINE)
             if m:
-                val = m.group(1).strip().strip("`").strip()
+                val = m.group(1).strip().strip("`*_ ").strip()
                 if val and not val.startswith("<"):
                     return val, path
     return None, None
@@ -251,6 +256,23 @@ def locate(root, kind):
                        how=f"раздел внутри {os.path.relpath(where, root)}")
 
     return Located(kind)
+
+
+ABSENT = ("нет", "не ведётся", "не ведется", "отсутствует", "не заводим",
+          "не заведён", "не заведен", "none", "no")
+
+
+def declared_absent(raw):
+    """Объявленное отсутствие — это ответ, а не молчание.
+
+    Контракт разрешает не брать элемент, если отказ объявлен. Тогда
+    напоминать о нём каждую сессию значит превращать раздел «ПОРА»
+    в шум: после второй ложной тревоги его перестают читать. Разница
+    между «журнала нет» и «журнал не заводим, вот почему» — вся."""
+    if not raw:
+        return False
+    head = raw.strip().lower().lstrip("«\"'")
+    return any(head.startswith(w) for w in ABSENT)
 
 
 def how_to_declare(kind):

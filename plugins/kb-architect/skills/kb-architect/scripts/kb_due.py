@@ -194,6 +194,8 @@ def main():
             ok.append("журнал: даты есть, но формат не распознан — судить о давности не берусь")
         else:
             ok.append(f"журнал ({where}) пуст — это «не наблюдали», а не «не работает»")
+    elif kb_paths.declared_absent(journal.declared):
+        ok.append(f"журнала нет, и это объявленное отступление: «{journal.declared}»")
     elif journal.declared:
         ok.append(f"журнал объявлен: «{journal.declared}» — но по этому адресу его нет")
     else:
@@ -217,6 +219,9 @@ def main():
                       "о давности прогона не сужу")
         else:
             due.append("контрольные вопросы ни разу не прогонялись — база не проверена ни разу")
+    elif kb_paths.declared_absent(questions.declared):
+        ok.append(f"контрольных вопросов нет, и это объявленное отступление: "
+                  f"«{questions.declared}». Приёмочной проверки у базы при этом нет")
     else:
         due.append("контрольных вопросов нет — приёмочной проверки у базы нет. "
                    + kb_paths.how_to_declare("questions"))
