@@ -15,6 +15,8 @@ kb_due.py — что в базе просрочено. Запускается п
   журнал         последняя запись в SLOMALOS.md — давно ли разбирали
   вопросы        последний прогон в QUESTIONS.md — давно ли проверяли базу
   git            незакоммиченное и незапушенное — цела ли точка возврата
+  объём          сколько изменилось за неделю — большой прирост требует проверки
+  рост           не пора ли повторить диагностику: база могла сменить класс
 
 Зачем скрипт, а не памятка владельцу. Напоминание, которое должен помнить
 человек, — не механизм: оно провалит тот же тест цены, что провалило правило
@@ -60,6 +62,15 @@ def dates_in(text, past_only=False, today=None):
     if past_only:
         today = today or datetime.date.today()
         out = [d for d in out if d <= today]
+    return out
+
+
+def collect_all(root):
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in
+                       {"node_modules", "__pycache__", "venv", ".venv"}]
+        out.extend(os.path.join(dirpath, f) for f in filenames if not f.startswith("."))
     return out
 
 
@@ -172,6 +183,35 @@ def main():
             ok.append("git: дерево чистое, удалённого репозитория не видно — проверь, есть ли он")
         if not dirty and ahead == "0":
             ok.append("git: всё закоммичено и запушено")
+
+        # объём изменений за неделю: время не единственный повод для проверки.
+        # После большой сессии база могла обрасти быстрее, чем протухнуть.
+        recent = git("log", "--since=7.days", "--pretty=%H")
+        n_commits = len([x for x in recent.splitlines() if x.strip()])
+        changed = git("log", "--since=7.days", "--name-only", "--pretty=format:")
+        n_files = len({x.strip() for x in changed.splitlines() if x.strip()})
+        if n_files >= 25 or n_commits >= 15:
+            due.append(f"за неделю изменено файлов: {n_files} в {n_commits} коммитах — "
+                       f"объём большой, прогони проверку целостности (kb_check.py)")
+        elif n_files:
+            ok.append(f"за неделю изменено файлов: {n_files} в {n_commits} коммитах")
+
+    # 6. Рост базы против базовой линии диагностики
+    rules = find(root, ["CLAUDE.md", "AGENTS.md", "ПРАВИЛА.md"])
+    if rules:
+        rtext = read(rules)
+        m = re.search(r"диагностика проведена\s*:\s*(\S+)[^\n]*?файлов\s*:\s*(\d+)", rtext, re.I)
+        total = len([f for f in collect_all(root)])
+        if m:
+            base = int(m.group(2))
+            if base and (total >= base * 2 or total - base >= 50):
+                due.append(f"база выросла: было {base} файлов на момент диагностики, стало {total} — "
+                           f"повтори диагностику (00-kak-chitat.md §0), могли появиться новые классы")
+            else:
+                ok.append(f"файлов: {total} (на момент диагностики {base})")
+        else:
+            ok.append(f"файлов: {total}; базовая линия не записана — после диагностики впиши "
+                      f"в правила строку «диагностика проведена: <дата>, файлов: {total}»")
     else:
         ok.append("git-репозитория нет — восстановить базу после потери будет нечем")
 
