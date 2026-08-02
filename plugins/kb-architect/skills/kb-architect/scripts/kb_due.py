@@ -14,6 +14,7 @@ kb_due.py — что в базе просрочено. Запускается п
   ожидания       раздел «ЧЕГО ЖДЁМ» — не просрочено ли что-то
   журнал         последняя запись в SLOMALOS.md — давно ли разбирали
   вопросы        последний прогон в QUESTIONS.md — давно ли проверяли базу
+  git            незакоммиченное и незапушенное — цела ли точка возврата
 
 Зачем скрипт, а не памятка владельцу. Напоминание, которое должен помнить
 человек, — не механизм: оно провалит тот же тест цены, что провалило правило
@@ -24,6 +25,7 @@ kb_due.py — что в базе просрочено. Запускается п
 import datetime
 import os
 import re
+import subprocess
 import sys
 
 STALE_ENTRY_DAYS = 7        # вход старше — снимок протух
@@ -151,6 +153,27 @@ def main():
             due.append("контрольные вопросы ни разу не прогонялись — база не проверена ни разу")
     else:
         due.append("файла контрольных вопросов нет — приёмочной проверки у базы нет")
+
+    # 5. Git: незакоммиченное и незапушенное
+    if os.path.isdir(os.path.join(root, ".git")):
+        def git(*args):
+            try:
+                return subprocess.run(["git", "-C", root, *args], capture_output=True,
+                                      text=True, timeout=15).stdout.strip()
+            except Exception:
+                return ""
+        dirty = [l for l in git("status", "--porcelain").splitlines() if l.strip()]
+        if dirty:
+            due.append(f"незакоммиченных изменений: {len(dirty)} — точка возврата не полна")
+        ahead = git("rev-list", "--count", "@{u}..HEAD")
+        if ahead.isdigit() and int(ahead) > 0:
+            due.append(f"коммитов не запушено: {ahead} — для второй линии и для завтра этого не существует")
+        elif not ahead and not dirty:
+            ok.append("git: дерево чистое, удалённого репозитория не видно — проверь, есть ли он")
+        if not dirty and ahead == "0":
+            ok.append("git: всё закоммичено и запушено")
+    else:
+        ok.append("git-репозитория нет — восстановить базу после потери будет нечем")
 
     if due:
         print("ПОРА:")

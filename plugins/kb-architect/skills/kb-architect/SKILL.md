@@ -3,7 +3,7 @@ name: kb-architect
 description: "One-page contract for a knowledge base an AI agent reads across sessions, plus a reference library of patterns, templates and tools. Use when adopting the system in an existing project without migrating its structure, starting a new project's knowledge base, writing NOW.md or CORRECTIONS.md, deciding which metadata a file actually needs, running the control-question check for whether the base lies, handing state between sessions or devices, or auditing what broke. Also use when the user asks in Russian about 'база знаний', 'система хранения', 'как хранить факты', 'наведи порядок в проекте', 'контекст теряется между чатами', 'что дальше по проекту', 'база врёт', 'хендовер'."
 license: MIT
 metadata:
-  version: "3.11"
+  version: "3.12"
   author: "sugestr"
 ---
 
@@ -40,6 +40,7 @@ metadata:
 | «покажи, что не так с хранением», «система так себе, что чинить» | диагноз без единого изменения: список проблем по цене, что чем обходится и как чинится. Файлы не трогаются | `references/adopt-existing.md`, часть 1а |
 | «присоедини контракт к проекту», «наведи порядок, но ничего не ломай» | 30–90 минут, структура не трогается: вход, канал правок, три поля по условию, контрольные вопросы | `references/adopt-existing.md`, часть 1 |
 | «перестрой базу», «здесь бардак, переделай» | отдельная процедура: **бэкап в ветку и тег**, опись, план на утверждение, изменения по шагам, откат одной командой | `references/adopt-existing.md`, часть 2 |
+| «проверь целостность», «всё ли на месте» | три проверки, которые не шумят: битые ссылки внутри базы, истёкшие сроки годности, пустые `verify` | `scripts/kb_check.py` |
 | «что просрочено», «с чего начать сегодня» | две секунды: протух ли вход, есть ли ожидания с прошедшей датой, давно ли разбирали журнал и прогоняли вопросы. Даты берутся из файлов, которые контракт и так велит вести — владельцу помнить ничего не надо | `scripts/kb_due.py` |
 | «проверь, не устарела ли редакция контракта» | сравнивает `kb_standard_version` проекта с установленной версией скилла и показывает, что менялось между ними | `references/rationale.md`, таблица выпусков |
 | «разбери входящее», «обнови, что у нас сейчас» | ежедневный цикл: разбор нового, обновление входа, фиксация. **Перед выводами об отсутствии — поиск по базе командой**, а не по памяти | `references/operations.md` |
@@ -167,4 +168,6 @@ metadata:
 
 - `assets/templates/` — заготовки: `NOW.md`, `CORRECTIONS.md`, `SLOMALOS.md`, `QUESTIONS.md`, правила проекта, конфиг, решение, попытка, манифест зеркала.
 - `scripts/kb_init.py` — развернуть минимум одной командой.
-- `scripts/kb_lint.py` — линтер. **Не обязательный шаг:** на живых репозиториях не проверялся и даст шум. Прогоняй руками и смотри, что говорит.
+- `scripts/kb_check.py` — целостность: битые ссылки, истёкшие сроки, пустые `verify`. Три проверки, каждая либо находит поломку, либо молчит.
+- `scripts/kb_due.py` — что просрочено, включая состояние git.
+- `scripts/kb_lookup.py` — поиск по базе перед выводом об отсутствии.
