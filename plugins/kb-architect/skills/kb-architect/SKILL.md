@@ -3,7 +3,7 @@ name: kb-architect
 description: "One-page contract for a knowledge base an AI agent reads across sessions, plus a reference library of patterns, templates and tools. Use when adopting the system in an existing project without migrating its structure, starting a new project's knowledge base, writing NOW.md or CORRECTIONS.md, deciding which metadata a file actually needs, running the control-question check for whether the base lies, handing state between sessions or devices, or auditing what broke. Also use when the user asks in Russian about 'база знаний', 'система хранения', 'как хранить факты', 'наведи порядок в проекте', 'контекст теряется между чатами', 'что дальше по проекту', 'база врёт', 'хендовер'."
 license: MIT
 metadata:
-  version: "3.17"
+  version: "3.18"
   author: "sugestr"
 ---
 
@@ -169,6 +169,7 @@ metadata:
 
 - `assets/templates/` — заготовки: `NOW.md`, `CORRECTIONS.md`, `SLOMALOS.md`, `QUESTIONS.md`, правила проекта, конфиг, решение, попытка, манифест зеркала.
 - `scripts/kb_init.py` — развернуть минимум одной командой.
-- `scripts/kb_check.py` — целостность: битые ссылки, истёкшие сроки, пустые `verify`. Три проверки, каждая либо находит поломку, либо молчит.
-- `scripts/kb_due.py` — что просрочено, включая состояние git.
+- `scripts/kb_check.py` — целостность: битые ссылки, истёкшие сроки, пустые `verify`, объём входа против потолка. Каждая проверка либо находит поломку, либо молчит, а отчёт называет объём проверенного: «чисто» без списка однажды означало «не искали».
+- `scripts/kb_due.py` — что просрочено, включая состояние git и редакцию контракта, по которой живёт проект.
 - `scripts/kb_lookup.py` — поиск по базе перед выводом об отсутствии.
+- `scripts/kb_paths.py` — где у проекта вход, журнал и вопросы: объявление в правилах, известные имена, раздел внутри документа. Общий для проверок, чтобы искать одно и то же одинаково.

@@ -8,15 +8,21 @@ kb_due.py — что в базе просрочено. Запускается п
 контракт и так велит вести. Скрипт их читает и считает — владельцу не надо
 помнить ни одной из них.
 
-Смотрит четыре вещи:
+Смотрит:
 
-  вход           строка «Обновлено» в NOW.md — не устарел ли снимок
+  вход           строка «Обновлено» — не устарел ли снимок
   ожидания       раздел «ЧЕГО ЖДЁМ» — не просрочено ли что-то
-  журнал         последняя запись в SLOMALOS.md — давно ли разбирали
-  вопросы        последний прогон в QUESTIONS.md — давно ли проверяли базу
+  журнал         последняя запись — давно ли разбирали
+  вопросы        последний прогон — давно ли проверяли базу
   git            незакоммиченное и незапушенное — цела ли точка возврата
   объём          сколько изменилось за неделю — большой прирост требует проверки
   рост           не пора ли повторить диагностику: база могла сменить класс
+  редакция       по какой версии контракта живёт проект и не отстала ли она
+
+Где искать вход, журнал и вопросы, решает kb_paths.py: файл в корне, файл
+в подпапке, раздел внутри правил проекта или объявленный там путь. Не нашли
+— так и сказано в «ПОРА», а не тихо пропущено: молчание при промахе
+неотличимо от порядка, и именно этим оба скрипта однажды соврали.
 
 Зачем скрипт, а не памятка владельцу. Напоминание, которое должен помнить
 человек, — не механизм: оно провалит тот же тест цены, что провалило правило
@@ -32,16 +38,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kb_dates import parse_dates as _parse, last_date as _last, infer_order
+import kb_paths
 
 STALE_ENTRY_DAYS = 7        # вход старше — снимок протух
 REVIEW_DAYS = 30            # журнал и вопросы: давно не разбирали
 DATE_RE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
-
-CANDIDATES = {
-    "entry": ["NOW.md", "STATUS.md"],
-    "journal": ["SLOMALOS.md"],
-    "questions": ["QUESTIONS.md", "docs/QUESTIONS.md"],
-}
 
 
 def find(root, names):
@@ -89,6 +90,23 @@ def read(path):
         return ""
 
 
+def head_of(text, extra=5, cap=25):
+    """Шапка входа: frontmatter целиком плюс несколько строк после него.
+
+    Раньше брались первые пять строк — и проект, у которого frontmatter
+    длиннее пяти строк, получал «вход без строки „Обновлено“» при
+    заполненной дате. Ложная тревога того же рода, что и остальные здесь:
+    инструмент судил не о базе, а о своей мерке."""
+    lines = text.splitlines()
+    end = 0
+    if lines and lines[0].strip() == "---":
+        for i, ln in enumerate(lines[1:], start=1):
+            if ln.strip() in ("---", "..."):
+                end = i + 1
+                break
+    return "\n".join(lines[:min(end + extra, cap)] if end else lines[:extra])
+
+
 def section(text, *titles):
     """Кусок файла от заголовка с одним из titles до следующего заголовка."""
     lines = text.splitlines()
@@ -122,59 +140,75 @@ def main():
                         if os.path.splitext(f)[1].lower() in {".md", ".txt", ".yml", ".yaml"})
 
     # 1. Вход
-    p = find(root, CANDIDATES["entry"])
-    if p:
-        head = "\n".join(read(p).splitlines()[:5])
+    #
+    # Поиск общий с kb_check.py (kb_paths.py) и различает четыре исхода:
+    # файл, раздел внутри правил, объявленный не-файл и «не найден».
+    # Раньше искались два имени в корне, и проект, ведущий вход в подпапке
+    # или разделом, попадал в «в порядке» — то есть отсутствие проверки
+    # печаталось как её прохождение.
+    entry = kb_paths.locate(root, "entry")
+    if entry.found:
+        where = entry.where(root)
+        head = head_of(entry.text())
         ds, head_unknown = _parse(head, past_only=True, today=today, day_first=ORDER)
         if ds:
             age = (today - max(ds)).days
-            line = f"вход ({os.path.basename(p)}) обновлён {age} дн. назад"
+            line = f"вход ({where}) обновлён {age} дн. назад"
             (due if age > STALE_ENTRY_DAYS else ok).append(
                 line + (" — снимок протух, обнови" if age > STALE_ENTRY_DAYS else "")
             )
         elif head_unknown:
-            ok.append(f"вход ({os.path.basename(p)}): дата есть, но формат не распознан")
+            ok.append(f"вход ({where}): дата есть, но формат не распознан")
         else:
-            due.append(f"вход ({os.path.basename(p)}) без строки «Обновлено» — не видно, протух ли")
+            due.append(f"вход ({where}) без строки «Обновлено» — не видно, протух ли")
+    elif entry.declared:
+        ok.append(f"вход объявлен вычисляемым — «{entry.declared}». Контракт требует "
+                  f"инвариант, а не файл, так что это не отступление; но и проверить "
+                  f"его свежесть и объём отсюда нечем")
     else:
-        ok.append("NOW.md/STATUS.md нет — если вход в этом проекте собирается иначе "
-                  "(запрос, панель, генератор), это не отступление: контракт требует "
-                  "инвариант, а не файл. Тогда опиши его в правилах проекта")
+        due.append("вход не найден, и в правилах не объявлен — а значит не проверены "
+                   "ни свежесть, ни потолок. " + kb_paths.how_to_declare("entry"))
 
     # 2. Ожидания с прошедшей датой
-    if p:
-        wait = section(read(p), "ЧЕГО ЖДЁМ", "ЖДЁМ", "WAITING")
+    if entry.found:
+        wait = section(entry.text(), "ЧЕГО ЖДЁМ", "ЖДЁМ", "WAITING")
         overdue = [d for d in dates_in(wait) if d < today]
         if overdue:
             due.append(f"ожиданий с прошедшей датой: {len(overdue)}, самое старое {min(overdue)} — проверь, не сорвано ли")
 
-    # 3. Журнал
-    p = find(root, CANDIDATES["journal"])
-    if p:
-        last, unknown = dates_or_unknown(read(p), today=today)
+    # 3. Журнал. Может вестись отдельным файлом или разделом внутри правил
+    # проекта — справочник сам предлагает второе, а скрипт знал только первое
+    # и рапортовал «журнала нет» о журнале с семью записями.
+    journal = kb_paths.locate(root, "journal")
+    if journal.found:
+        where = journal.where(root)
+        last, unknown = dates_or_unknown(journal.text(), today=today)
         ds = [last] if last else []
         if ds:
             age = (today - max(ds)).days
-            line = f"журнал ({os.path.basename(p)}) — последняя запись {age} дн. назад"
+            line = f"журнал ({where}) — последняя запись {age} дн. назад"
             (due if age > REVIEW_DAYS else ok).append(
                 line + (" — пора разбирать" if age > REVIEW_DAYS else "")
             )
         elif unknown:
             ok.append("журнал: даты есть, но формат не распознан — судить о давности не берусь")
         else:
-            ok.append("журнал пуст — это «не наблюдали», а не «не работает»")
+            ok.append(f"журнал ({where}) пуст — это «не наблюдали», а не «не работает»")
+    elif journal.declared:
+        ok.append(f"журнал объявлен: «{journal.declared}» — но по этому адресу его нет")
     else:
-        due.append("журнала эксплуатации нет — разбирать будет нечего, "
-                   "и повтор проблемы никто не заметит")
+        due.append("журнала эксплуатации нет — разбирать будет нечего, и повтор "
+                   "проблемы никто не заметит. " + kb_paths.how_to_declare("journal"))
 
     # 4. Контрольные вопросы
-    p = find(root, CANDIDATES["questions"])
-    if p:
-        last, unknown = dates_or_unknown(read(p), today=today)
+    questions = kb_paths.locate(root, "questions")
+    if questions.found:
+        where = questions.where(root)
+        last, unknown = dates_or_unknown(questions.text(), today=today)
         ds = [last] if last else []
         if ds:
             age = (today - max(ds)).days
-            line = f"контрольные вопросы — последний прогон {age} дн. назад"
+            line = f"контрольные вопросы ({where}) — последний прогон {age} дн. назад"
             (due if age > REVIEW_DAYS else ok).append(
                 line + (" — пора прогнать с чистого контекста" if age > REVIEW_DAYS else "")
             )
@@ -184,7 +218,8 @@ def main():
         else:
             due.append("контрольные вопросы ни разу не прогонялись — база не проверена ни разу")
     else:
-        due.append("файла контрольных вопросов нет — приёмочной проверки у базы нет")
+        due.append("контрольных вопросов нет — приёмочной проверки у базы нет. "
+                   + kb_paths.how_to_declare("questions"))
 
     # 5. Git: незакоммиченное и незапушенное
     if os.path.isdir(os.path.join(root, ".git")):
@@ -216,13 +251,16 @@ def main():
                        f"объём большой, прогони проверку целостности (kb_check.py)")
         elif n_files:
             ok.append(f"за неделю изменено файлов: {n_files} в {n_commits} коммитах")
+    else:
+        due.append("git-репозитория нет — восстановить базу после потери будет нечем, "
+                   "и историю правок никто не увидит")
 
     # 6. Рост базы против базовой линии диагностики
-    rules = find(root, ["CLAUDE.md", "AGENTS.md", "ПРАВИЛА.md"])
+    rules = kb_paths.rules_path(root)
+    total = len(collect_all(root))
     if rules:
         rtext = read(rules)
         m = re.search(r"диагностика проведена\s*:\s*(\S+)[^\n]*?файлов\s*:\s*(\d+)", rtext, re.I)
-        total = len([f for f in collect_all(root)])
         if m:
             base = int(m.group(2))
             if base and (total >= base * 2 or total - base >= 50):
@@ -234,7 +272,34 @@ def main():
             ok.append(f"файлов: {total}; базовая линия не записана — после диагностики впиши "
                       f"в правила строку «диагностика проведена: <дата>, файлов: {total}»")
     else:
-        ok.append("git-репозитория нет — восстановить базу после потери будет нечем")
+        due.append("файла правил проекта нет (CLAUDE.md / AGENTS.md) — сессии неоткуда "
+                   "узнать соглашения, и объявить отступления тоже негде")
+
+    # 7. По какой редакции контракта живёт проект.
+    #
+    # Поле kb_standard_version было объявлено способностью — «сравню версию
+    # проекта с установленной» — и не имело шага, на котором данные
+    # появляются: шаблон предлагал строку, но ничто не говорило её заполнить,
+    # и никто не замечал незаполненную. Способность без входных данных не
+    # выполняется никогда и сигнала об этом не подаёт. Проверка ниже и есть
+    # тот сигнал: незаполненное поле теперь видно.
+    if rules:
+        proj_v, proj_raw = kb_paths.project_version(root)
+        skill_v = kb_paths.skill_version()
+        if not proj_raw:
+            due.append(f"редакция контракта не записана — сессия не знает, по какой версии "
+                       f"живёт проект, а стандарт меняется. Впиши в «Соответствие» строку "
+                       f"«kb_standard_version: {skill_v or '<версия из шапки SKILL.md>'}»")
+        elif not proj_v:
+            due.append(f"редакция контракта записана словами: «{proj_raw}» — сравнить не с чем. "
+                       f"Поставь номер: «kb_standard_version: {skill_v or '<номер>'}», "
+                       f"описание можно оставить рядом")
+        elif skill_v and proj_v != skill_v:
+            due.append(f"проект записан на редакцию {proj_v}, установлен скилл {skill_v} — "
+                       f"посмотри «Выпуски скилла» в references/rationale.md, что менялось "
+                       f"между ними, применимое примени и обнови строку")
+        elif skill_v:
+            ok.append(f"редакция контракта: {proj_v} — совпадает с установленным скиллом")
 
     if due:
         print("ПОРА:")
