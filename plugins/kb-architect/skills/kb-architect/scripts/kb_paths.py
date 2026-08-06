@@ -57,6 +57,12 @@ KINDS = {
         "keys": ("журнал", "journal"),
         "headings": ("ЖУРНАЛ ЭКСПЛУАТАЦИИ", "ЖУРНАЛ"),
     },
+    "corrections": {
+        "что": "канал правок",
+        "names": ("CORRECTIONS.md", "ПРАВКИ.md"),
+        "keys": ("канал правок", "corrections"),
+        "headings": ("КАНАЛ ПРАВОК", "CORRECTIONS"),
+    },
     "questions": {
         "что": "контрольные вопросы",
         "names": ("QUESTIONS.md", "ВОПРОСЫ.md"),

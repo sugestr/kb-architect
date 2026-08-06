@@ -56,6 +56,35 @@ DATE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 
 EMPTY_VERIFY = {"", "-", "—", "tbd", "TBD", "?", "null", "none", "нет"}
 
+# Проверка заявляла «пустые verify» и этим создавала впечатление, что поле
+# проверено вообще. Отрицательный тест с проекта: заменить `verify` на
+# `verified` — и отчёт печатает «чисто». Поле, названное почти правильно,
+# не существует для проверки, но выглядит выполненным обязательством.
+FRONTMATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
+HAS_VERIFY = re.compile(r"^\s*verify\s*:", re.MULTILINE)
+LOOKALIKE = re.compile(
+    r"^\s*(verified|verify_at|подтверждено|proof)\s*:",
+    re.MULTILINE | re.IGNORECASE)
+# `verified_at` из списка изъят: справочник сам предписывает это поле
+# паттерну зеркал (`authority.md` §7, «состояние сверено с внешней системой
+# в момент X»). Проверка наказывала за выполнение собственной рекомендации —
+# нашёл внешний критик, не эксплуатация.
+STATUS = re.compile(r"^\s*status\s*:\s*([^\s#]+)", re.MULTILINE | re.IGNORECASE)
+
+# Словарь модуля зеркал: `verified_against` и `verified_at` там значат «когда
+# сверяли с внешней системой», а не «чем доказано совершённое действие». Своя
+# же проверка нашла это в собственном шаблоне — признак, что список похожих
+# имён надо ограничивать чужим словарём, а не расширять догадками.
+MIRROR = re.compile(r"^\s*(type\s*:\s*mirror|verified_against\s*:)",
+                    re.MULTILINE | re.IGNORECASE)
+
+# Статусы совершённого действия: контракт требует verify именно здесь.
+# Список короткий и закрытый — расширять его догадками значит производить шум.
+ACTION_STATUS = {
+    "sent", "submitted", "paid", "signed", "filed", "delivered", "executed",
+    "отправлено", "подано", "оплачено", "подписано", "сдано", "исполнено",
+}
+
 
 def collect(root):
     out = []
@@ -93,6 +122,7 @@ def main():
 
     today = datetime.date.today()
     broken, expired, blank = [], [], []
+    wrong_name, no_verify = [], []
     files_all = collect(root)
     ORDER = infer_order(open(f, encoding="utf-8", errors="ignore").read() for f in files_all[:400])
 
@@ -133,10 +163,25 @@ def main():
                 if d < today:
                     expired.append((rel, d, (today - d).days))
 
-        # 3. пустой verify
+        # 3. verify: пустой, подменённый именем, отсутствующий при статусе действия
         for val in VERIFY.findall(raw):
             if val.strip().strip("<>").lower() in EMPTY_VERIFY:
                 blank.append(rel)
+
+        fm = FRONTMATTER.match(raw)
+        if fm and not MIRROR.search(fm.group(1)):
+            head = fm.group(1)
+            has_verify = bool(HAS_VERIFY.search(head))
+            look = LOOKALIKE.search(head)
+            if look and not has_verify:
+                wrong_name.append((rel, look.group(1)))
+            st = STATUS.search(head)
+            # префикс, а не точное совпадение: живой проект написал
+            # `status: sent-duplicate`, и точное сравнение прошло бы мимо
+            val = st.group(1).strip().strip('"\'').lower() if st else ""
+            if val and any(val.split("-")[0] == a or val == a for a in ACTION_STATUS) \
+                    and not has_verify and not look:
+                no_verify.append((rel, val))
 
     # 4. Объём входа — единственный численный лимит контракта, и потому
     # единственный, который проверяется механически бесплатно.
@@ -216,10 +261,33 @@ def main():
             print(f"  … и ещё {len(uniq) - 20}")
         print("  Утверждение о совершённом действии без доказательства — это TBD, а не факт.\n")
 
+    if wrong_name:
+        found += len(wrong_name)
+        print(f"ПОЛЕ НАЗВАНО ПОЧТИ ПРАВИЛЬНО — {len(wrong_name)}:")
+        for rel, name in wrong_name[:20]:
+            print(f"  {rel} → `{name}:` вместо `verify:`")
+        if len(wrong_name) > 20:
+            print(f"  … и ещё {len(wrong_name) - 20}")
+        print("  Для проверки такого поля не существует, а выглядит оно выполненным")
+        print("  обязательством. Имя поля — часть поля.\n")
+
+    if no_verify:
+        found += len(no_verify)
+        print(f"СОВЕРШЁННОЕ ДЕЙСТВИЕ БЕЗ verify — {len(no_verify)}:")
+        for rel, st in no_verify[:20]:
+            print(f"  {rel} — status: {st}")
+        if len(no_verify) > 20:
+            print(f"  … и ещё {len(no_verify) - 20}")
+        print("  Контракт требует verify именно здесь: отправлено, подано, оплачено,")
+        print("  подписано. Утверждение без способа перепроверки — не факт.\n")
+
     # Отчёт всегда называет объём проверенного. «Чисто» без списка — это
     # утверждение шире выполненного: именно так пропуск проверки потолка
-    # читался как пройденная проверка.
-    scope = ["ссылки", "сроки годности", "пустые verify"]
+    # читался как пройденная проверка. И формулировка не шире сделанного:
+    # «пустые verify» звучало как «verify проверен», а поле, названное
+    # `verified`, проходило чистым.
+    scope = ["ссылки", "сроки годности",
+             "verify (пустой · подменённый именем · отсутствующий при статусе действия)"]
     if entry.found:
         scope.append(f"объём входа ({entry.where(root)})")
     elif entry_note:

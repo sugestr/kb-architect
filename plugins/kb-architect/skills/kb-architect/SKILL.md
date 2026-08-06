@@ -3,7 +3,7 @@ name: kb-architect
 description: "One-page contract for a knowledge base an AI agent reads across sessions, plus a reference library of patterns, templates and tools. Use when adopting the system in an existing project without migrating its structure, starting a new project's knowledge base, writing NOW.md or CORRECTIONS.md, deciding which metadata a file actually needs, running the control-question check for whether the base lies, handing state between sessions or devices, or auditing what broke. Also use when the user asks in Russian about 'база знаний', 'система хранения', 'как хранить факты', 'наведи порядок в проекте', 'контекст теряется между чатами', 'что дальше по проекту', 'база врёт', 'хендовер'."
 license: MIT
 metadata:
-  version: "3.22"
+  version: "3.23"
   author: "sugestr"
 ---
 
@@ -73,6 +73,10 @@ metadata:
 | `generated_from` | файл **пишет генератор** | ручная правка исчезнет при следующем рендере — правь генератор |
 
 `verify` содержит **достаточное доказательство или способ перепроверить**: номер подтверждения, ссылку на подписанный документ, выписку, запрос к системе. Не обязательно идентификатор — обязательно то, чем через полгода можно подтвердить утверждение, не полагаясь на базу.
+
+**Имя поля — часть поля.** `verified`, `verified_at`, `подтверждено` — это не `verify`: проверка их не видит, и утверждение о совершённом действии проходит как проверенное, не будучи им. Ловится механически (`kb_check.py`), потому что на добросовестность здесь полагаться нельзя: ошибиться именем дешевле, чем вспомнить каноническое.
+
+**Вход — объявленное исключение из `valid_until`.** Вход утверждает про настоящее и поля не несёт: его срок годности выражен строкой `Обновлено` и порогом свежести, который считает `kb_due.py`. Поле было бы вторым независимым источником того же факта — прямо то, что запрещает первое правило. Исключение названо здесь, а не подразумевается: иначе отсутствие поля во входе неотличимо от недоделанной миграции.
 
 Остальные метаданные ставятся по надобности и никем не проверяются.
 
