@@ -35,7 +35,6 @@ EXTRA = {
     "INDEX.md": "INDEX.md",
     "STATUS.md": "STATUS.md",
     "CHANGELOG.md": "CHANGELOG.md",
-    ".kbconfig.yml": "kbconfig.yml",
 }
 
 OPTIONAL_DIRS = {
@@ -66,7 +65,9 @@ def main() -> int:
     ap.add_argument("--knowledge-dir", default="knowledge",
                     help="имя папки знания в этом проекте (по умолчанию knowledge)")
     ap.add_argument("--extended", action="store_true",
-                    help="добавить INDEX/STATUS/CHANGELOG/.kbconfig.yml из справочника")
+                    help="добавить INDEX/STATUS/CHANGELOG из справочника")
+    ap.add_argument("--force", action="store_true",
+                    help="разрешить дописывать в уже существующие файлы проекта")
     for d in OPTIONAL_DIRS:
         ap.add_argument(f"--{d.lstrip('_')}", action="store_true", dest=d.lstrip("_"))
     args = ap.parse_args()
@@ -83,7 +84,7 @@ def main() -> int:
     os.makedirs(os.path.join(root, kdir), exist_ok=True)
     created.append(f"{kdir}/")
 
-    cfg = os.path.join(root, ".kbconfig.yml")
+    cfg = None
     if kdir != "knowledge" and os.path.exists(cfg):
         text = open(cfg, encoding="utf-8").read()
         text = text.replace("  knowledge: [knowledge]", f"  knowledge: [{kdir}]")
@@ -107,9 +108,23 @@ def main() -> int:
         # заводить ради него отдельный файл вне контракта — значит молча
         # добавить проекту сущность, которой он не просил.
         target = "INDEX.md" if os.path.exists(os.path.join(root, "INDEX.md")) else "CLAUDE.md"
-        with open(os.path.join(root, target), "a", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-        created.append(f"план областей → {target}")
+        tpath = os.path.join(root, target)
+        existed = os.path.exists(tpath)
+        # Дописывать в чужой существующий файл без спроса — это правило 4
+        # контракта, нарушенное собственным скриптом: файл только что был
+        # объявлен «пропущен, уже есть», и в него же дописывался раздел.
+        # Воспроизведено внешней критикой на реальном каталоге.
+        if existed and target in skipped and not args.force:
+            print(f"\nОСТАНОВЛЕНО: план областей должен дописаться в существующий {target},")
+            print( "а он только что объявлен пропущенным. Молча дописывать в чужой файл нельзя.")
+            print( "Вот что было бы добавлено:\n")
+            print("\n".join("    " + l for l in lines if l))
+            print(f"\nСогласен — повтори с `--force`. Не согласен — добавь руками туда, где место.")
+            created.append("план областей → НЕ записан, нужен --force")
+        else:
+            with open(tpath, "a", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            created.append(f"план областей → {target}")
 
     print("Создано: " + ", ".join(created))
     if skipped:

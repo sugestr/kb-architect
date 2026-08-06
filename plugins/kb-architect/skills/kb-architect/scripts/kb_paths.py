@@ -184,13 +184,14 @@ class Located:
     """
 
     def __init__(self, kind, path=None, section=None, how=None,
-                 declared=None, others=()):
+                 declared=None, others=(), broken=None):
         self.kind = kind
         self.path = path
         self.section = section
         self.how = how
         self.declared = declared
         self.others = list(others)
+        self.broken = broken   # объявленный путь, которого нет
 
     @property
     def found(self):
@@ -236,20 +237,36 @@ def locate(root, kind):
     root = os.path.abspath(root)
     docs = context_docs(root)
 
+    # Кандидаты по именам считаются ВСЕГДА, даже когда есть объявление.
+    # Ранний возврат на объявлении прятал второй вход: объявили `NOW.md`,
+    # рядом лежит `STATUS.md`, дубль не находился. Инвариант входа — один,
+    # и проверять это надо независимо от того, что записано в правилах.
+    files = by_name(root, spec["names"])
+
     raw, _ = declared_value(root, spec["keys"], docs)
     if raw:
         token = raw.split()[0].strip("«»\"'`,;")
         cand = os.path.join(root, token)
         if os.path.isfile(cand):
-            return Located(kind, path=cand, how="объявлен в правилах проекта",
-                           declared=raw)
+            extra = [f for f in files if os.path.abspath(f) != os.path.abspath(cand)]
+            return Located(kind, path=cand, others=extra,
+                           how="объявлен в правилах проекта", declared=raw)
         sec, where = find_section(root, spec["headings"], docs)
         if sec is not None:
             return Located(kind, section=sec, declared=raw,
                            how=f"раздел внутри {os.path.relpath(where, root)}")
+        # Объявление, похожее на путь, но никуда не ведущее, — это опечатка,
+        # а не «вычисляемый вход». Разница решающая: во втором случае
+        # проверка объёма законно не применяется, в первом она молча
+        # отключается опиской. Так fail-open вернулся через дверь,
+        # построенную для честных исключений.
+        looks_like_path = ("/" in token or token.lower().endswith(
+            (".md", ".txt", ".yml", ".yaml", ".json")))
+        if looks_like_path:
+            return Located(kind, declared=raw, broken=token, others=files,
+                           how="объявлен путём, которого нет")
         return Located(kind, declared=raw, how="объявлен не файлом")
 
-    files = by_name(root, spec["names"])
     if files:
         in_root = os.path.dirname(files[0]) == root
         return Located(kind, path=files[0], others=files[1:],

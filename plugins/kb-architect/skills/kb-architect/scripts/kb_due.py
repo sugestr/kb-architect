@@ -90,6 +90,21 @@ def read(path):
         return ""
 
 
+UPDATED = re.compile(r"^[ \t>*-]*(?:обновлено|updated|обновлён|обновлен)[ \t]*:[ \t]*(.+)$",
+                     re.IGNORECASE | re.MULTILINE)
+
+
+def freshness_of(text):
+    """Строка «Обновлено», а не максимум дат в шапке.
+
+    Контрпример внешней критики: `Обновлено: 2020-01-01` плюс посторонняя
+    свежая дата рядом — и вход объявлялся обновлённым сегодня. Максимум
+    по шапке отвечает на вопрос «какая дата тут самая свежая», а нужен
+    ответ «за какой срок отвечает автор»."""
+    m = UPDATED.search(text)
+    return m.group(1) if m else None
+
+
 def head_of(text, extra=5, cap=25):
     """Шапка входа: frontmatter целиком плюс несколько строк после него.
 
@@ -149,7 +164,9 @@ def main():
     entry = kb_paths.locate(root, "entry")
     if entry.found:
         where = entry.where(root)
-        head = head_of(entry.text())
+        raw_entry = entry.text()
+        stamp = freshness_of(raw_entry)
+        head = stamp if stamp is not None else head_of(raw_entry)
         ds, head_unknown = _parse(head, past_only=True, today=today, day_first=ORDER)
         if ds:
             age = (today - max(ds)).days
@@ -231,7 +248,15 @@ def main():
     WAITING_DAYS = 21
     if entry.found:
         wait = section(entry.text(), "ЧЕГО ЖДЁМ", "ЖДЁМ", "WAITING")
-        started = dates_in(wait, past_only=True, today=today)
+        # Счёт по строкам таблицы, а не по датам: в одной строке ожидания
+        # легально стоят две даты (с какого числа и что делать, если не будет),
+        # и подсчёт дат давал двойной результат — контрпример внешней критики.
+        rows = [ln for ln in wait.splitlines()
+                if ln.lstrip().startswith("|") and not re.match(r"^[\s|:-]+$", ln)
+                and "с какого числа" not in ln.lower()]
+        per_row = [min(d) for d in
+                   (dates_in(ln, past_only=True, today=today) for ln in rows) if d]
+        started = per_row if rows else dates_in(wait, past_only=True, today=today)
         if started:
             longest = min(started)
             age = (today - longest).days
@@ -269,8 +294,18 @@ def main():
                    "проблемы никто не заметит. " + kb_paths.how_to_declare("journal"))
 
     # 4. Контрольные вопросы
+    # Явное утверждение файла весомее даты, найденной где-то рядом:
+    # «прогонов не было» плюс дата ответа в таблице давали «последний прогон
+    # 0 дн. назад» — контрпример внешней критики. Файл прямо сказал, что
+    # прогона не было; выводить обратное из соседней даты нельзя.
+    NEVER_RUN = re.compile(r"прогон(?:ов|а)?\s+(?:не\s+было|ни\s+разу)|"
+                           r"ни\s+разу\s+не\s+прогон|not\s+run\s+yet",
+                           re.IGNORECASE)
     questions = kb_paths.locate(root, "questions")
-    if questions.found:
+    if questions.found and NEVER_RUN.search(questions.text()):
+        due.append(f"контрольные вопросы ({questions.where(root)}): файл прямо говорит, "
+                   f"что прогонов не было — база приёмочной проверки не проходила")
+    elif questions.found:
         where = questions.where(root)
         last, unknown = dates_or_unknown(questions.text(), today=today)
         ds = [last] if last else []
@@ -293,10 +328,24 @@ def main():
                    + kb_paths.how_to_declare("questions"))
 
     # 5. Git: незакоммиченное и незапушенное
-    if os.path.isdir(os.path.join(root, ".git")):
+    # Репозиторий ищется вверх по дереву: база может лежать подпапкой
+    # внутри репозитория, и «git-репозитория нет» было ложью — контрпример
+    # внешней критики, воспроизведённый на каталоге самого скилла.
+    def find_git(start):
+        cur = os.path.abspath(start)
+        while True:
+            if os.path.isdir(os.path.join(cur, ".git")):
+                return cur
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                return None
+            cur = parent
+
+    git_root = find_git(root)
+    if git_root:
         def git(*args):
             try:
-                return subprocess.run(["git", "-C", root, *args], capture_output=True,
+                return subprocess.run(["git", "-C", git_root, *args], capture_output=True,
                                       text=True, timeout=15).stdout.strip()
             except Exception:
                 return ""

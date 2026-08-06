@@ -196,7 +196,13 @@ def main():
     oversized, unchecked, entry_note = None, None, None
     size = entry.size()
     if size is None:
-        if entry.declared:
+        if entry.broken:
+            unchecked = (f"в правилах объявлен путь «{entry.broken}», которого нет. "
+                         f"Опечатка в объявлении отключает проверку так же тихо, как "
+                         f"её отсутствие"
+                         + (f"; при этом рядом лежит {os.path.relpath(entry.others[0], root)}"
+                            if entry.others else ""))
+        elif entry.declared:
             entry_note = (f"потолок входа не применяется: вход объявлен "
                           f"вычисляемым — «{entry.declared}»")
         else:
