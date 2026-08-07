@@ -179,6 +179,29 @@ def t_scope_line_always_present():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_journal_one_column():
+    """Отчёт «Медицина»: журнал, перенесённый в раздел, потерял вторую колонку.
+    Имя файла несёт одну половину смысла, шапка — обе; переезжает имя."""
+    d = base({"NOW.md": NOW_OK,
+              "SLOMALOS.md": "# журнал\n\n## СЛОМАЛОСЬ\n\n- 2026-08-06 · правило дорого\n"})
+    out = run("kb_due.py", d)
+    check("журнал одной колонкой → находка",
+          "одной колонкой" in out, out,
+          "вторая колонка обязательна, иначе разбор голосует за резку")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_journal_two_columns_silent():
+    """Обе колонки на месте — молчание, а не похвала."""
+    d = base({"NOW.md": NOW_OK,
+              "SLOMALOS.md": "# журнал\n\n## СЛОМАЛОСЬ\n\n- 2026-08-06 · дорого\n"
+                             "\n## СРАБОТАЛО\n\n- 2026-08-06 · правило поймало расхождение\n"})
+    out = run("kb_due.py", d)
+    check("обе колонки → тревоги нет",
+          "одной колонкой" not in out, out, "молчание")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     print(__doc__.strip().splitlines()[0])
     print()
