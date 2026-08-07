@@ -155,7 +155,8 @@ python3 scripts/kb_check.py <корень>
 
 ```bash
 git status                 # рабочее дерево должно быть чистым
-git add -A && git commit -m "снимок до перестройки базы"
+git add -A && git commit -m "снимок до перестройки базы"   # только если пишущий один
+# несколько пишущих — перечисли свои пути: git add путь1 путь2 …
 git branch backup/pre-kb-<дата>
 git push origin backup/pre-kb-<дата>
 git tag pre-kb-<дата> && git push origin --tags
