@@ -123,17 +123,18 @@ def head_of(text, extra=5, cap=25):
 
 
 def section(text, *titles):
-    """Кусок файла от заголовка с одним из titles до следующего заголовка."""
-    lines = text.splitlines()
-    grab, out = False, []
-    for ln in lines:
-        if ln.startswith("#"):
-            up = ln.upper()
-            grab = any(t.upper() in up for t in titles)
-            continue
-        if grab:
-            out.append(ln)
-    return "\n".join(out)
+    """Раздел файла — через общий парсер, различающий уровни заголовков.
+
+    Своя реализация обрывала раздел на **любом** следующем заголовке, в том
+    числе вложенном: после «## ЧЕГО ЖДЁМ» строка «### Внешнее» обнуляла
+    захват, и все ожидания под подзаголовками исчезали до анализа — молча,
+    без единой строки в отчёте. Найдено внешним аудитом 08.08 и
+    воспроизведено на фикстуре. Правильное правило «до следующего заголовка
+    того же или высшего уровня» уже жило рядом, в kb_paths.section, и просто
+    не использовалось здесь.
+    """
+    got = kb_paths.section(text, list(titles))
+    return got or ""
 
 
 def main():
@@ -209,6 +210,24 @@ def main():
     # проект без отметок о разборе получает не тревогу, а объяснение.
     CLOSED = re.compile(r"✔|закрыт|closed|решено|учтено|применено", re.IGNORECASE)
     corrections = kb_paths.locate(root, "corrections")
+    # Раньше весь разбор канала висел на одном условии, а всех прочих
+    # исходов не существовало вовсе: битый объявленный путь и полное
+    # отсутствие канала не давали ни одной строки. Молчание о непроверенном
+    # неотличимо от проверенного — это тот же fail-open, только в форме
+    # пропущенной ветки. Внешний аудит 08.08.
+    if corrections.broken:
+        due.append(f"канал правок объявлен по адресу «{corrections.broken}», и по этому "
+                   f"адресу его нет — канал НЕ ПРОВЕРЕН, а он обязателен по контракту")
+    elif kb_paths.declared_absent(corrections.declared):
+        due.append(f"канал правок объявлен отсутствующим («{corrections.declared}») — "
+                   f"но это единственная конструкция контракта, которая делает "
+                   f"правильное действие дешевле неправильного")
+    elif not corrections.found:
+        due.append("канала правок нет — плохие новости писать некуда, и они не будут "
+                   "написаны. " + kb_paths.how_to_declare("corrections"))
+    elif not entry.found:
+        ok.append(f"канал правок ({corrections.where(root)}) есть, но разобранность "
+                  f"относительно входа не считалась: вход не найден")
     if corrections.found and entry.found:
         where_c = corrections.where(root)
         # Запись канала правок многострочна: первая строка плюс продолжения
@@ -344,7 +363,13 @@ def main():
     elif kb_paths.declared_absent(journal.declared):
         ok.append(f"журнала нет, и это объявленное отступление: «{journal.declared}»")
     elif journal.declared:
-        ok.append(f"журнал объявлен: «{journal.declared}» — но по этому адресу его нет")
+        # Было в «в порядке»: объявление указывает в пустоту, а раздел зелёный.
+        # Опечатка в пути тихо отключала разбор журнала. Тот же класс, что
+        # объявленный несуществующий вход, который мы уже чинили, — здесь
+        # остался незамеченным. Внешний аудит 08.08, воспроизведено.
+        due.append(f"журнал объявлен по адресу «{journal.declared}», и по этому адресу "
+                   f"его нет — значит журнал НЕ ПРОВЕРЕН. Поправь путь или объяви "
+                   f"отсутствие явно")
     else:
         due.append("журнала эксплуатации нет — разбирать будет нечего, и повтор "
                    "проблемы никто не заметит. " + kb_paths.how_to_declare("journal"))
@@ -415,22 +440,52 @@ def main():
 
     git_root = find_git(root)
     if git_root:
+        # Прежняя обёртка отдавала "" и при исключении, и при ненулевом коде,
+        # и это было неотличимо от честного пустого stdout. Дальше пустые
+        # dirty и ahead складывались в строку «дерево чистое» под заголовком
+        # «в порядке». Внешний аудит 08.08 воспроизвёл: git, всегда выходящий
+        # с кодом 2 и молчащий, давал «git: дерево чистое». Полный путь от
+        # невыполненной проверки к уверенно неверному утверждению — то есть
+        # нарушение приёмочной метрики самим инструментом.
+        # Теперь неудача возвращает None, и None нигде не читается как «пусто».
+        git_sboi = []
+
         def git(*args):
             try:
-                return subprocess.run(["git", "-C", git_root, *args], capture_output=True,
-                                      text=True, timeout=15).stdout.strip()
-            except Exception:
-                return ""
-        dirty = [l for l in git("status", "--porcelain").splitlines() if l.strip()]
-        if dirty:
-            due.append(f"незакоммиченных изменений: {len(dirty)} — точка возврата не полна")
-        ahead = git("rev-list", "--count", "@{u}..HEAD")
-        if ahead.isdigit() and int(ahead) > 0:
-            due.append(f"коммитов не запушено: {ahead} — для второй линии и для завтра этого не существует")
-        elif not ahead and not dirty:
-            ok.append("git: дерево чистое, удалённого репозитория не видно — проверь, есть ли он")
-        if not dirty and ahead == "0":
-            ok.append("git: всё закоммичено и запушено")
+                r = subprocess.run(["git", "-C", git_root, *args], capture_output=True,
+                                   text=True, timeout=15)
+            except Exception as e:
+                git_sboi.append(f"{args[0]}: {e}")
+                return None
+            if r.returncode != 0:
+                prichina = (r.stderr.strip().splitlines() or [f"код {r.returncode}"])[0]
+                git_sboi.append(f"{args[0]}: {prichina}")
+                return None
+            return r.stdout.strip()
+        status_raw = git("status", "--porcelain")
+        if status_raw is None:
+            due.append("git не ответил — состояние репозитория НЕ ПРОВЕРЕНО, "
+                       "и это не то же самое, что «чисто»: " + "; ".join(git_sboi[:2]))
+            dirty = None
+        else:
+            dirty = [l for l in status_raw.splitlines() if l.strip()]
+            if dirty:
+                due.append(f"незакоммиченных изменений: {len(dirty)} — точка возврата не полна")
+
+        if dirty is not None:
+            ahead = git("rev-list", "--count", "@{u}..HEAD")
+            if ahead is None:
+                # Отсутствие upstream — законное состояние, а не сбой; но и
+                # «запушено» отсюда не следует. Раньше обе ситуации давали ""
+                # и складывались в «дерево чистое».
+                ok.append("git: незапушенное не проверено — удалённой ветки не видно "
+                          "(upstream не настроен или git не ответил). Незакоммиченного "
+                          + ("нет" if not dirty else f"{len(dirty)}"))
+            elif ahead.isdigit() and int(ahead) > 0:
+                due.append(f"коммитов не запушено: {ahead} — для второй линии и для завтра "
+                           f"этого не существует")
+            elif not dirty:
+                ok.append("git: всё закоммичено и запушено")
 
         # Ветки. Ветка — это второй источник состояния: работа существует,
         # но её нет в линии, которую читает следующая сессия. Отличить ветку
@@ -440,16 +495,23 @@ def main():
         # Проверка точная, не эвристическая: замер на пяти живых базах дал
         # одну находку.
         head = git("symbolic-ref", "--short", "HEAD")
-        if head:
-            pusto, rabota = [], []
-            for b in git("for-each-ref", "--format=%(refname:short)",
-                         "refs/heads/").splitlines():
+        vetki_raw = git("for-each-ref", "--format=%(refname:short)", "refs/heads/")
+        if head is None or vetki_raw is None:
+            if status_raw is not None:
+                ok.append("git: ветки не проверены — репозиторий не ответил на запрос о них")
+        else:
+            pusto, rabota, netu = [], [], []
+            for b in vetki_raw.splitlines():
                 b = b.strip()
                 if not b or b == head:
                     continue
                 cnt = git("rev-list", "--count", f"{head}..{b}")
-                (rabota if (cnt.isdigit() and int(cnt) > 0) else pusto).append(
-                    (b, int(cnt) if cnt.isdigit() else 0))
+                if cnt is None or not cnt.isdigit():
+                    netu.append(b)
+                elif int(cnt) > 0:
+                    rabota.append((b, int(cnt)))
+                else:
+                    pusto.append((b, 0))
             if rabota:
                 spisok = ", ".join(f"{b} ({c})" for b, c in rabota[:6])
                 due.append(f"веток с невлитой работой: {len(rabota)} — {spisok}. "
@@ -459,20 +521,26 @@ def main():
                 ok.append(f"веток без единого уникального коммита: {len(pusto)} "
                           f"({', '.join(b for b, _ in pusto[:6])}) — работа уже в {head}, "
                           f"сами ветки можно удалять")
-            if not rabota and not pusto:
+            if netu:
+                ok.append(f"веток, по которым счёт не получен: {len(netu)} "
+                          f"({', '.join(netu[:6])}) — они не проверены, а не пусты")
+            if not rabota and not pusto and not netu:
                 ok.append(f"веток кроме {head} нет")
 
         # объём изменений за неделю: время не единственный повод для проверки.
         # После большой сессии база могла обрасти быстрее, чем протухнуть.
         recent = git("log", "--since=7.days", "--pretty=%H")
-        n_commits = len([x for x in recent.splitlines() if x.strip()])
         changed = git("log", "--since=7.days", "--name-only", "--pretty=format:")
-        n_files = len({x.strip() for x in changed.splitlines() if x.strip()})
-        if n_files >= 25 or n_commits >= 15:
-            due.append(f"за неделю изменено файлов: {n_files} в {n_commits} коммитах — "
-                       f"объём большой, прогони проверку целостности (kb_check.py)")
-        elif n_files:
-            ok.append(f"за неделю изменено файлов: {n_files} в {n_commits} коммитах")
+        if recent is None or changed is None:
+            ok.append("git: объём изменений за неделю не посчитан — журнал коммитов не отдан")
+        else:
+            n_commits = len([x for x in recent.splitlines() if x.strip()])
+            n_files = len({x.strip() for x in changed.splitlines() if x.strip()})
+            if n_files >= 25 or n_commits >= 15:
+                due.append(f"за неделю изменено файлов: {n_files} в {n_commits} коммитах — "
+                           f"объём большой, прогони проверку целостности (kb_check.py)")
+            elif n_files:
+                ok.append(f"за неделю изменено файлов: {n_files} в {n_commits} коммитах")
     else:
         due.append("git-репозитория нет — восстановить базу после потери будет нечем, "
                    "и историю правок никто не увидит")

@@ -31,10 +31,36 @@ FAILED = []
 PASSED = []
 
 
-def run(script, root):
+class Vyvod(str):
+    """Вывод скрипта вместе с кодом возврата.
+
+    Строка — чтобы все проверки вида «фраза in out» работали как раньше;
+    код рядом — чтобы `check` мог отличить «скрипт отработал и промолчал»
+    от «скрипт не запустился». Аудит 08.08 показал, зачем: при подмене
+    запуска на пустую строку **восемь тестов из двадцати печатали «ок»**.
+    Отрицательное условие «плохой фразы нет» выполняется и тогда, когда
+    нет вообще ничего, — то есть контур, написанный против fail-open,
+    сам был fail-open на сорока процентах.
+    """
+    def __new__(cls, text, code):
+        o = super().__new__(cls, text)
+        o.code = code
+        return o
+
+
+# Ненулевой код — не всегда поломка: kb_check.py возвращает 1, когда нашёл
+# находки, и это штатный успех. Поломкой считается всё от 2 и выше — нет
+# папки, исключение, не запустилось.
+KOD_POLOMKI = 2
+
+
+def run(script, root, path_prefix=None):
+    env = dict(os.environ)
+    if path_prefix:
+        env["PATH"] = path_prefix + os.pathsep + env.get("PATH", "")
     p = subprocess.run([sys.executable, os.path.join(HERE, script), root],
-                       capture_output=True, text=True, timeout=120)
-    return p.stdout + p.stderr
+                       capture_output=True, text=True, timeout=120, env=env)
+    return Vyvod(p.stdout + p.stderr, p.returncode)
 
 
 def base(files):
@@ -48,6 +74,14 @@ def base(files):
 
 
 def check(name, cond, out, hint=""):
+    # Оракул сначала спрашивает, отработал ли скрипт вообще. Без этого
+    # любое отрицательное условие («в выводе нет слова X») выполняется
+    # на пустоте, и тест зеленеет на сломанном коде.
+    kod = getattr(out, "code", 0)
+    if kod is not None and kod >= KOD_POLOMKI:
+        cond, hint = False, f"скрипт завершился с кодом {kod} — проверять нечего"
+    elif not str(out).strip():
+        cond, hint = False, "скрипт не напечатал ничего — отрицательное условие ничего не значит"
     (PASSED if cond else FAILED).append((name, out, hint))
     print(("  ок   " if cond else "  ПРОВАЛ ") + name)
     if not cond and hint:
@@ -290,6 +324,60 @@ def t_dolya_otmetok_ne_bulevo():
     check("частичная разметка не даёт тревогу, а даёт справку",
           "25%" in out and "в находки не выношу" in out, out,
           "непомеченное при частичной разметке не значит неразобранное")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_git_oshibka_ne_stanovitsya_chistym_derevom():
+    """Внешний аудит 08.08, находка 3.3 и раздел 5: обёртка git глотала код
+    возврата, и ошибка команды становилась пустой строкой — неотличимой от
+    честного пустого stdout. Дальше пустые dirty и ahead складывались
+    в «дерево чистое» под заголовком «в порядке». Полный путь от невыполненной
+    проверки к уверенно неверному утверждению."""
+    d = base({"NOW.md": NOW_OK, "CLAUDE.md": "# правила\n\nвход: NOW.md\n"})
+    os.makedirs(os.path.join(d, ".git"), exist_ok=True)
+    binx = tempfile.mkdtemp(prefix="kbtest-bin-")
+    with open(os.path.join(binx, "git"), "w") as f:
+        f.write("#!/bin/sh\nexit 2\n")
+    os.chmod(os.path.join(binx, "git"), 0o755)
+    out = run("kb_due.py", d, path_prefix=binx)
+    check("отказ git не читается как «дерево чистое»",
+          "дерево чистое" not in out and "НЕ ПРОВЕРЕНО" in out, out,
+          "невыполненная проверка обязана называться невыполненной")
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(binx, ignore_errors=True)
+
+
+def t_objavlennye_no_otsutstvuyushchie_adresa():
+    """Аудит, находка 3.2: объявленный и отсутствующий журнал попадал
+    в «в порядке», а объявленный и отсутствующий канал правок не давал
+    ни одной строки вообще. Молчание о непроверенном неотличимо
+    от проверенного."""
+    d = base({"NOW.md": NOW_OK,
+              "CLAUDE.md": "# правила\n\nвход: NOW.md\nжурнал: missing/J.md\n"
+                           "канал правок: missing/C.md\n"})
+    out = run("kb_due.py", d)
+    check("битый адрес журнала — находка, а не «в порядке»",
+          "журнал объявлен по адресу" in out and "НЕ ПРОВЕРЕН" in out, out,
+          "опечатка в пути отключала разбор молча")
+    check("битый адрес канала правок не молчит",
+          "канал правок объявлен по адресу" in out, out,
+          "раньше для этого исхода не было ветки вовсе")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_ozhidaniya_pod_vlozhennym_podzagolovkom():
+    """Аудит, находка 3.1: локальная section() обрывала раздел на любом
+    следующем заголовке, включая вложенный. «## ЧЕГО ЖДЁМ» → «### Внешнее» —
+    и все ожидания исчезали до анализа, без единой строки в отчёте."""
+    d = base({"NOW.md": "Обновлено: 2026-08-08\n\n## ГДЕ МЫ\nтекст\n\n"
+                        "## ЧЕГО ЖДЁМ\n\n### Внешнее\n\n"
+                        "| что | от кого | с какого числа |\n|---|---|---|\n"
+                        "| ответ реестра | UGE | 2026-05-01 |\n",
+              "CLAUDE.md": "# правила\n\nвход: NOW.md\n"})
+    out = run("kb_due.py", d)
+    check("ожидания под подзаголовком не теряются",
+          "ожиданий: 1" in out, out,
+          "раздел читается до заголовка того же или высшего уровня")
     shutil.rmtree(d, ignore_errors=True)
 
 
