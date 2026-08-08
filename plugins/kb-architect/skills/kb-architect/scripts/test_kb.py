@@ -249,6 +249,30 @@ def t_source_state_says_when_it_did_not_ask():
           "тройка (версия, отставание, почему неизвестно); отставание None → причина названа")
 
 
+def t_branches_with_unmerged_work():
+    """Отчёт проекта ВНЖ, наблюдение 5: семь веток, пять пустых, две с работой,
+    невлитой сутки. Ветка с нулём уникальных коммитов внешне неотличима от ветки
+    с работой — сигнала не возникает, и каждая сессия добавляет ещё одну."""
+    d = base({"NOW.md": NOW_OK, "CLAUDE.md": "# правила\n\nвход: NOW.md\n"})
+    g = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+    g("init", "-q", "-b", "main")
+    g("config", "user.email", "t@t"); g("config", "user.name", "t")
+    g("add", "-A"); g("commit", "-q", "-m", "первый")
+    g("branch", "pustaya")                      # без уникальных коммитов
+    g("checkout", "-q", "-b", "s-rabotoy")
+    open(os.path.join(d, "novoe.md"), "w").write("работа\n")
+    g("add", "novoe.md"); g("commit", "-q", "-m", "работа в ветке")
+    g("checkout", "-q", "main")
+    out = run("kb_due.py", d)
+    check("ветка с невлитой работой названа",
+          "s-rabotoy" in out and "невлитой" in out, out,
+          "для следующей сессии этой работы не существует")
+    check("пустая ветка отделена от ветки с работой",
+          "pustaya" in out and "уникального коммита" in out, out,
+          "пустые — кандидаты на удаление, не тревога")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     print(__doc__.strip().splitlines()[0])
     print()
