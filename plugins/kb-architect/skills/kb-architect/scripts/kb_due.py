@@ -230,7 +230,17 @@ def main():
                 cur.append(ln)
         if cur is not None:
             lines.append("\n".join(cur))
-        marked = any(CLOSED.search(ln) for ln in lines)
+        # Отметка закрытия — не «есть или нет», а доля. Прежний код различал
+        # только два состояния: ноль отметок — «не отслеживается», хоть одна —
+        # считать все непомеченные неразобранными. Реальная база живёт между:
+        # на медицинском архиве 239 записей и 59 отметок, 25%. Проставить
+        # отметку — та же дешёвая-дорогая пара, что и внесение факта в канон,
+        # и её пропускают. Из-за этого счётчик горел неделю не падая, а
+        # шаблон отчёта сам называет постоянно горящий сигнал классом дефекта.
+        # Порог взят с потолка: половина. Ниже — справка, выше — тревога.
+        DOLYA_OTMETOK = 0.5
+        zakryto = [ln for ln in lines if CLOSED.search(ln)]
+        dolya = (len(zakryto) / len(lines)) if lines else 0.0
         entry_name = os.path.basename(entry.path) if entry.path else ""
         about_entry = re.compile(
             (re.escape(entry_name) + r"|" if entry_name else "") + r"\bвход\b|\bNOW\b|\bSTATUS\b",
@@ -238,10 +248,15 @@ def main():
         pending = [ln for ln in lines if not CLOSED.search(ln) and about_entry.search(ln)]
         if not lines:
             ok.append(f"канал правок ({where_c}) пуст")
-        elif not marked:
-            ok.append(f"канал правок ({where_c}): {len(lines)} записей и ни одной отметки "
-                      f"о разборе — что применено, отсюда не видно. Помечай применённое "
-                      f"(«✔ закрыто <дата>»), и проверка начнёт различать")
+        elif dolya < DOLYA_OTMETOK:
+            skolko = ("ни одной" if not zakryto
+                      else f"{len(zakryto)} из {len(lines)} ({dolya:.0%})")
+            ok.append(f"канал правок ({where_c}): {len(lines)} записей, отметку о разборе "
+                      f"несут {skolko} — разобранность отсюда не видна, и записей про вход "
+                      f"({len(pending)}) я по этой причине в находки не выношу: непомеченное "
+                      f"здесь не значит неразобранное. Помечай применённое "
+                      f"(«✔ закрыто <дата>» в той же записи — это дописывание, а не правка), "
+                      f"и проверка начнёт различать")
         elif pending:
             dts = [d for ln in pending for d in dates_in(ln, past_only=True, today=today)]
             when = f", самая свежая {max(dts)}" if dts else ""

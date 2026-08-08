@@ -273,6 +273,26 @@ def t_branches_with_unmerged_work():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_dolya_otmetok_ne_bulevo():
+    """Отчёт медицинского архива, наблюдение 2: счётчик горел неделю не падая.
+    Отметка закрытия — доля, а не «есть/нет»: на живой базе 239 записей и 59
+    отметок (25%). Прежний код при любой одной отметке считал все непомеченные
+    неразобранными, и раздел «ПОРА» содержал строку, которая горит всегда."""
+    corr = "# правки\n\n"
+    for i in range(1, 9):                       # 8 записей, 2 с отметкой = 25%
+        corr += "- 2026-08-0%d · `NOW.md` — запись %d\n" % (i, i)
+        if i <= 2:
+            corr += "  ✔ закрыто 2026-08-0%d\n" % i
+        corr += "\n"
+    d = base({"NOW.md": NOW_OK, "CORRECTIONS.md": corr,
+              "CLAUDE.md": "# правила\n\nвход: NOW.md\n"})
+    out = run("kb_due.py", d)
+    check("частичная разметка не даёт тревогу, а даёт справку",
+          "25%" in out and "в находки не выношу" in out, out,
+          "непомеченное при частичной разметке не значит неразобранное")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def main():
     print(__doc__.strip().splitlines()[0])
     print()

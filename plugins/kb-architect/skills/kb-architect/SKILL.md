@@ -3,7 +3,7 @@ name: kb-architect
 description: "One-page contract for a knowledge base an AI agent reads across sessions, plus a reference library of patterns, templates and tools. Use when adopting the system in an existing project without migrating its structure, starting a new project's knowledge base, writing NOW.md or CORRECTIONS.md, deciding which metadata a file actually needs, running the control-question check for whether the base lies, handing state between sessions or devices, or auditing what broke. Also use when the user asks in Russian about 'база знаний', 'система хранения', 'как хранить факты', 'наведи порядок в проекте', 'контекст теряется между чатами', 'что дальше по проекту', 'база врёт', 'хендовер'."
 license: MIT
 metadata:
-  version: "4.11"
+  version: "4.12"
   author: "sugestr"
 ---
 
@@ -118,6 +118,10 @@ metadata:
 `CORRECTIONS.md`, append-only, **писать без спроса, не бросая задачу**. Одна строка: дата, файл, что неверно, откуда знаю. Источник не править — это отдельная работа.
 
 Единственная конструкция, которая делает правильное действие дешевле неправильного, а не наоборот.
+
+**Запись в канале факт не закрывает — она его открывает.** «Отдельная работа» здесь читалась как «на этом всё», и это стоило дорого: в присланном отчёте четыре из восьми расхождений базы оказались одним отказом — факт дошёл до канала и там остался. Самый дорогой: единственное свидетельство о прививке ребёнка лежало в канале, в каноне его не было, и на вопрос «прививался ли» база отвечала «сведений нет» — уверенно и неверно. Закрывает факт **внесение в канон, названное адресом**: «✔ закрыто <дата>, внесено в `<файл>`». Дописать исход в ту же запись — не правка канала, а его продолжение; append-only запрещает переписывать существо, а не дозаписывать судьбу.
+
+Пара «дёшево записать — дорого внести» и есть механизм отказа: обе половины формально соблюдены, дешёвая исполняется всегда, дорогая по остатку, и сигнала не возникает.
 
 ## Один тест
 
