@@ -328,3 +328,57 @@ def skill_version():
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "SKILL.md")
     m = re.search(r'^\s*version:\s*"?([0-9][0-9.]*)"?', read(p), re.MULTILINE)
     return m.group(1) if m else None
+
+
+def published_version():
+    """Что лежит в источнике скилла, если он установлен из репозитория.
+
+    Три редакции расходятся независимо: загруженная в сессию, установленная
+    на диске и опубликованная в источнике. Первую отсюда не видно никогда,
+    вторую читает skill_version(), третью — эта функция.
+
+    Сети не требует: если установка сделана симлинком в git-репозиторий,
+    источник спрашивается локально. Установлен файлом — вернётся None,
+    и это говорится вслух, а не подменяется молчанием.
+
+    Возвращает (версия_в_HEAD, отстаёт_ли_рабочее_дерево) либо (None, None).
+    """
+    import subprocess
+    d = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    try:
+        top = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=10)
+        if top.returncode != 0:
+            return None, None
+        behind = subprocess.run(["git", "-C", d, "rev-list", "--count", "HEAD..@{u}"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+        return skill_version(), (int(behind) if behind.isdigit() else None)
+    except Exception:
+        return None, None
+
+
+def pull_skill():
+    """Подтянуть источник скилла — только вперёд и только на чистом дереве.
+
+    Обновление кода и применение редакции к базе — разные действия.
+    Здесь делается первое; второе делает сессия по таблице выпусков,
+    и вслух говорится, что загруженные инструкции не перечитаются:
+    обещать горячую перезагрузку нельзя, её нет.
+
+    Возвращает (было, стало) при успехе, иначе (None, причина).
+    """
+    import subprocess
+    d = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    before = skill_version()
+    try:
+        dirty = subprocess.run(["git", "-C", d, "status", "--porcelain"],
+                               capture_output=True, text=True, timeout=15).stdout.strip()
+        if dirty:
+            return None, "в рабочем дереве источника есть незакоммиченные правки"
+        r = subprocess.run(["git", "-C", d, "pull", "--ff-only"],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            return None, (r.stderr.strip().splitlines() or ["pull не прошёл"])[0]
+        return before, skill_version()
+    except Exception as e:
+        return None, f"не удалось: {e}"
