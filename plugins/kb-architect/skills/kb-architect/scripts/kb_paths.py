@@ -341,7 +341,11 @@ def published_version():
     источник спрашивается локально. Установлен файлом — вернётся None,
     и это говорится вслух, а не подменяется молчанием.
 
-    Возвращает (версия_в_HEAD, отстаёт_ли_рабочее_дерево) либо (None, None).
+    Возвращает тройку (версия, отставание, почему_неизвестно). Отставание
+    None означает **не спросили**, а не ноль: пока сюда не добавили fetch,
+    сравнение шло с последним скачанным состоянием, и давно не обновлявшаяся
+    установка уверенно печатала «новее ничего не опубликовано». Восьмой
+    случай того же класса — отсутствие проверки, неотличимое от пройденной.
     """
     import subprocess
     d = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -349,12 +353,26 @@ def published_version():
         top = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"],
                              capture_output=True, text=True, timeout=10)
         if top.returncode != 0:
-            return None, None
+            return None, None, "установка не из репозитория"
+        up = subprocess.run(["git", "-C", d, "rev-parse", "--abbrev-ref", "@{u}"],
+                            capture_output=True, text=True, timeout=10)
+        if up.returncode != 0:
+            return skill_version(), None, "у клона нет upstream — сравнивать не с чем"
+        # Без fetch сравнение идёт с последним скачанным состоянием, то есть
+        # отвечает на вопрос «что я видел в прошлый раз», притворяясь ответом
+        # на «что вышло». Сеть может быть недоступна — тогда так и говорим.
+        f = subprocess.run(["git", "-C", d, "fetch", "--quiet"],
+                           capture_output=True, text=True, timeout=45)
+        if f.returncode != 0:
+            why = (f.stderr.strip().splitlines() or ["нет связи с источником"])[0]
+            return skill_version(), None, f"источник не опрошен: {why}"
         behind = subprocess.run(["git", "-C", d, "rev-list", "--count", "HEAD..@{u}"],
                                 capture_output=True, text=True, timeout=10).stdout.strip()
-        return skill_version(), (int(behind) if behind.isdigit() else None)
-    except Exception:
-        return None, None
+        if not behind.isdigit():
+            return skill_version(), None, "не удалось посчитать отставание"
+        return skill_version(), int(behind), None
+    except Exception as e:
+        return None, None, f"источник не опрошен: {e}"
 
 
 def pull_skill():

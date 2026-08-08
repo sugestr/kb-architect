@@ -3,7 +3,7 @@ name: kb-architect
 description: "One-page contract for a knowledge base an AI agent reads across sessions, plus a reference library of patterns, templates and tools. Use when adopting the system in an existing project without migrating its structure, starting a new project's knowledge base, writing NOW.md or CORRECTIONS.md, deciding which metadata a file actually needs, running the control-question check for whether the base lies, handing state between sessions or devices, or auditing what broke. Also use when the user asks in Russian about 'база знаний', 'система хранения', 'как хранить факты', 'наведи порядок в проекте', 'контекст теряется между чатами', 'что дальше по проекту', 'база врёт', 'хендовер'."
 license: MIT
 metadata:
-  version: "4.7"
+  version: "4.8"
   author: "sugestr"
 ---
 
@@ -181,3 +181,22 @@ metadata:
 - `scripts/kb_lookup.py` — поиск по базе перед выводом об отсутствии.
 - `scripts/kb_apply.py` — разбор новой редакции против этой базы: что менялось между версиями и чего это здесь касается. Заканчивается вопросом владельцу, а не правкой.
 - `scripts/kb_paths.py` — где у проекта вход, журнал и вопросы: объявление в правилах, известные имена, раздел внутри документа. Общий для проверок, чтобы искать одно и то же одинаково.
+
+## Откуда этот скилл
+
+Источник — **https://github.com/sugestr/kb-architect**, свежий выпуск в `releases/latest`.
+Адрес записан здесь потому, что копия, установленная файлом, узнать его больше неоткуда:
+пятнадцать выпусков подряд скилл не называл собственного репозитория и оттого выглядел
+актуальным в любой редакции.
+
+Обновляться умеет не всякая установка, и это надо знать **до** того, как обещать проверку:
+
+- **Симлинк на клон** — установка знает источник из самого git: `kb_due.py` печатает,
+  на сколько отстала, `kb_paths.pull_skill()` подтягивает вперёд на чистом дереве.
+- **Копия файлом** — `.skill`, скилл аккаунта, копия в `~/.codex/skills` — не знает ничего,
+  кроме адреса выше. Обновляется руками, редакция замирает на дате копирования и внешне
+  неотличима от свежей.
+
+**Загруженная редакция не перечитывается.** Даже успешный `pull` не заменяет инструкции,
+уже загруженные в идущую сессию: новую редакцию берёт следующая. Обещать горячую
+перезагрузку нельзя — её нет.

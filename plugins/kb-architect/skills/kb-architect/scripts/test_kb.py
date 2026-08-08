@@ -237,6 +237,18 @@ def t_questions_run_log_only():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_source_state_says_when_it_did_not_ask():
+    """Восьмой fail-open: сравнение шло с последним скачанным состоянием,
+    поэтому давно не обновлявшаяся установка печатала «новее ничего нет».
+    «Не спросили» обязано быть отличимо от нуля."""
+    sys.path.insert(0, HERE)
+    import kb_paths
+    r = kb_paths.published_version()
+    check("ответ об источнике различает «ноль» и «не знаю»",
+          isinstance(r, tuple) and len(r) == 3 and (r[1] is not None or bool(r[2])), repr(r),
+          "тройка (версия, отставание, почему неизвестно); отставание None → причина названа")
+
+
 def main():
     print(__doc__.strip().splitlines()[0])
     print()
