@@ -38,7 +38,7 @@ def ver_key(v):
 def releases_between(low, high):
     """Строки таблицы выпусков в (low, high] — по возрастанию."""
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                     os.pardir, "references", "rationale.md")
+                     os.pardir, "references", "releases.md")
     rows = []
     for v, text in ROW.findall(kb_paths.read(p)):
         try:
