@@ -211,8 +211,25 @@ def main():
     corrections = kb_paths.locate(root, "corrections")
     if corrections.found and entry.found:
         where_c = corrections.where(root)
-        lines = [ln for ln in corrections.text().splitlines()
-                 if ln.lstrip().startswith(("- ", "* "))]
+        # Запись канала правок многострочна: первая строка плюс продолжения
+        # до следующей записи или заголовка. Разбор построчно искал отметку
+        # закрытия только в первой строке, marked всегда выходил False, и
+        # ветка «неразобранное про вход» была недостижима в принципе — то
+        # есть проверка, написанная против fail-open, сама была fail-open.
+        lines, cur = [], None
+        for ln in corrections.text().splitlines():
+            if ln.lstrip().startswith(("- ", "* ")):
+                if cur is not None:
+                    lines.append("\n".join(cur))
+                cur = [ln]
+            elif ln.startswith("#"):
+                if cur is not None:
+                    lines.append("\n".join(cur))
+                cur = None
+            elif cur is not None:
+                cur.append(ln)
+        if cur is not None:
+            lines.append("\n".join(cur))
         marked = any(CLOSED.search(ln) for ln in lines)
         entry_name = os.path.basename(entry.path) if entry.path else ""
         about_entry = re.compile(
@@ -322,16 +339,32 @@ def main():
     # «прогонов не было» плюс дата ответа в таблице давали «последний прогон
     # 0 дн. назад» — контрпример внешней критики. Файл прямо сказал, что
     # прогона не было; выводить обратное из соседней даты нельзя.
-    NEVER_RUN = re.compile(r"прогон(?:ов|а)?\s+(?:не\s+было|ни\s+разу)|"
-                           r"ни\s+разу\s+не\s+прогон|not\s+run\s+yet",
+    NEVER_RUN = re.compile(r"прогон\w*\s+(?:ещё\s+|еще\s+)?не\s+(?:было|провод|дела|запуска)|"
+                           r"ни\s+разу\s+не\s+прогон|прогон(?:ов|а)?\s+нет|not\s+run\s+yet",
                            re.IGNORECASE)
     questions = kb_paths.locate(root, "questions")
-    if questions.found and NEVER_RUN.search(questions.text()):
+    # Дата прогона берётся из журнала прогонов, а не откуда попало в файле.
+    # Контрпример: заголовок колонки «Верный ответ (на 2026-08-02)» —
+    # это дата эталона, и она засчитывалась как дата прогона. Эталон
+    # редактируют чаще, чем прогоняют, и чем активнее с файлом работают,
+    # тем надёжнее он выглядит проверенным.
+    if questions.found:
+        run_log = kb_paths.section(questions.text(),
+                                   ("ЖУРНАЛ ПРОГОНОВ", "ПРОГОНЫ", "ЖУРНАЛ"))
+        q_text = run_log if run_log is not None else None
+    else:
+        q_text = None
+    if questions.found and NEVER_RUN.search(q_text if q_text is not None else questions.text()):
         due.append(f"контрольные вопросы ({questions.where(root)}): файл прямо говорит, "
                    f"что прогонов не было — база приёмочной проверки не проходила")
     elif questions.found:
         where = questions.where(root)
-        last, unknown = dates_or_unknown(questions.text(), today=today)
+        if q_text is None:
+            due.append(f"контрольные вопросы ({where}): журнала прогонов нет — "
+                       f"когда проверяли базу, отсюда не видно. Заведи раздел "
+                       f"«Журнал прогонов» и пиши дату каждого прогона")
+            q_text = ""
+        last, unknown = dates_or_unknown(q_text, today=today)
         ds = [last] if last else []
         if ds:
             age = (today - max(ds)).days

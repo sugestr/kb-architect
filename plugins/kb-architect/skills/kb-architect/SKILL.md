@@ -3,7 +3,7 @@ name: kb-architect
 description: "One-page contract for a knowledge base an AI agent reads across sessions, plus a reference library of patterns, templates and tools. Use when adopting the system in an existing project without migrating its structure, starting a new project's knowledge base, writing NOW.md or CORRECTIONS.md, deciding which metadata a file actually needs, running the control-question check for whether the base lies, handing state between sessions or devices, or auditing what broke. Also use when the user asks in Russian about 'база знаний', 'система хранения', 'как хранить факты', 'наведи порядок в проекте', 'контекст теряется между чатами', 'что дальше по проекту', 'база врёт', 'хендовер'."
 license: MIT
 metadata:
-  version: "4.3"
+  version: "4.4"
   author: "sugestr"
 ---
 
@@ -73,6 +73,8 @@ metadata:
 | `generated_from` | файл **пишет генератор** | ручная правка исчезнет при следующем рендере — правь генератор |
 
 `verify` содержит **достаточное доказательство или способ перепроверить**: номер подтверждения, ссылку на подписанный документ, выписку, запрос к системе. Не обязательно идентификатор — обязательно то, чем через полгода можно подтвердить утверждение, не полагаясь на базу.
+
+**`verify` — способ перепроверки, а не выполненная перепроверка.** Заполненное поле говорит, что автор знает, чем проверить, и ничего не говорит о том, что он проверил. Читается оно при этом как гарантия — наблюдение с проекта, где поле содержало команду сверки, а файл расходился с живой системой на три позиции. Проверка ловит пустое поле и подменённое имя; исполнение она не ловит и не может.
 
 **Имя поля — часть поля.** `verified`, `verified_at`, `подтверждено` — это не `verify`: проверка их не видит, и утверждение о совершённом действии проходит как проверенное, не будучи им. Ловится механически (`kb_check.py`), потому что на добросовестность здесь полагаться нельзя: ошибиться именем дешевле, чем вспомнить каноническое.
 
