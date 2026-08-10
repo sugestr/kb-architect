@@ -76,6 +76,45 @@ def t_shared_project_move_is_a_two_system_gate():
           out, "не простой mv: backup, один checkout, Claude + Codex acceptance")
 
 
+def t_reorganization_starts_from_purpose_and_separates_path_consumers():
+    """Отчёт 10.08: старая карта не задаёт будущую ось, output не равен live path."""
+    ref = skill_text("references/adopt-existing.md")
+    out = Vyvod(ref, 0)
+    check("перестройка начинает с назначения и различает живой путь и снимок",
+          "устойчивый объект и назначение проекта" in ref
+          and "не готовая папочная схема" in ref
+          and "активные потребители" in ref
+          and "исторических снимках" in ref
+          and "не считают автоматическим запретом" in ref,
+          out, "purpose gate до описи; active dependency != immutable output")
+
+
+def t_move_backup_is_not_a_second_canon():
+    """Отчёт 10.08: слово backup было принято за второй репозиторий."""
+    ref = skill_text("references/move-project.md")
+    out = Vyvod(ref, 0)
+    check("backup переноса различает checkout, remote, bundle и данные вне Git",
+          "канонический checkout" in ref
+          and "remote-recovery" in ref
+          and "замороженный файл всех refs" in ref
+          and "snapshot данных вне Git" in ref
+          and "второй remote" in ref,
+          out, "recovery layers названы и не становятся рабочими копиями")
+
+
+def t_domain_skill_location_follows_scope_not_agent():
+    """Отчёт 10.08: один project-local навык или одна cross-project доставка."""
+    ref = skill_text("references/collaboration.md")
+    out = Vyvod(ref, 0)
+    check("место доменного скилла определяется областью, не агентом",
+          "областью действия, а не именем агента" in ref
+          and "repo-local" in ref
+          and "управляемая общая установка" in ref
+          and "fail-closed" in ref
+          and "не копируют отдельно под Claude и Codex" in ref,
+          out, "один канон навыка для проекта или нескольких проектов")
+
+
 def t_update_names_optional_capabilities():
     """4.19 установился, но проекты не узнали о новой работе Claude + Codex.
 
