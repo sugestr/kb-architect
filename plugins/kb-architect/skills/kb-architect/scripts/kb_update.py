@@ -19,6 +19,7 @@ kb_update.py — привести файловые установки скилл
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import os
 import re
 import shutil
@@ -44,6 +45,25 @@ def versiya(path):
     m = re.search(r'^\s+version:\s*"([^"]+)"',
                   open(p, encoding="utf-8").read(), re.M)
     return m.group(1) if m else None
+
+
+def fingerprint(path):
+    """Hash управляемого дерева: номер версии сам по себе не доказывает parity."""
+    rows = []
+    for root, dirs, files in os.walk(path):
+        dirs[:] = sorted(d for d in dirs if d not in {".git", "__pycache__"})
+        for name in sorted(files):
+            if name == ".DS_Store" or name.endswith(".pyc"):
+                continue
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, path).replace(os.sep, "/")
+            if os.path.islink(full):
+                data = ("symlink:" + os.readlink(full)).encode()
+            else:
+                with open(full, "rb") as stream:
+                    data = stream.read()
+            rows.append(rel.encode() + b"\0" + hashlib.sha256(data).digest())
+    return hashlib.sha256(b"\n".join(rows)).hexdigest()
 
 
 def git(d, *args, timeout=60):
@@ -224,12 +244,17 @@ def update_from_source(src, args, source_label):
                   "при --сделать станет управляемой копией GitHub public")
             continue
         current = versiya(path)
-        if current == source_version and not was_link:
+        same_content = (not was_link and fingerprint(path) == fingerprint(src))
+        if current == source_version and same_content:
             print(f"{name:12} копия, редакция {current} — совпадает с source")
             continue
         if not args.do_update:
-            print(f"{name:12} копия отстала: {current} против {source_version} — "
-                  "обновится при --сделать")
+            if current == source_version:
+                print(f"{name:12} редакция {current}, но содержимое отличается — "
+                      "обновится при --сделать")
+            else:
+                print(f"{name:12} копия отстала: {current} против {source_version} — "
+                      "обновится при --сделать")
             continue
         new_version, backup, replace_error = safe_replace(src, path, current)
         if replace_error:

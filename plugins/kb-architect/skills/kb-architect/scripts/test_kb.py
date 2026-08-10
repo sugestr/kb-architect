@@ -640,7 +640,7 @@ def t_update_nazyvaet_otstavshie_kopii():
 
 
 def t_update_safe_replace_keeps_backup():
-    """Владелец: копию обновлять автоматически, но обратимо и с тестами."""
+    """Владелец: обновлять и same-version drift, обратимо и с тестами."""
     home = tempfile.mkdtemp(prefix="kbtest-update-home-")
     source = base({
         "SKILL.md": "---\nname: kb-architect\nmetadata:\n  version: \"9.9\"\n---\n",
@@ -649,7 +649,7 @@ def t_update_safe_replace_keeps_backup():
     destination = os.path.join(home, ".codex", "skills", "kb-architect")
     os.makedirs(destination)
     with open(os.path.join(destination, "SKILL.md"), "w", encoding="utf-8") as f:
-        f.write("---\nname: kb-architect\nmetadata:\n  version: \"1.0\"\n---\n")
+        f.write("---\nname: kb-architect\nmetadata:\n  version: \"9.9\"\n---\nlegacy\n")
     claude_parent = os.path.join(home, ".claude", "skills")
     os.makedirs(claude_parent)
     claude_destination = os.path.join(claude_parent, "kb-architect")
@@ -664,7 +664,7 @@ def t_update_safe_replace_keeps_backup():
     backups = os.path.join(home, ".codex", "skills", ".backups")
     claude_backups = os.path.join(home, ".claude", "skills", ".backups")
     check("updater ставит через тесты и сохраняет предыдущую копию",
-          "копия обновлена: 1.0 → 9.9" in out
+          "копия обновлена: 9.9 → 9.9" in out
           and "симлинк заменён управляемой копией: 9.9 → 9.9" in out
           and os.path.isdir(backups)
           and len(os.listdir(backups)) == 1
@@ -672,8 +672,10 @@ def t_update_safe_replace_keeps_backup():
           and len(os.listdir(claude_backups)) == 1
           and not os.path.islink(claude_destination)
           and "9.9" in open(os.path.join(destination, "SKILL.md"),
-                            encoding="utf-8").read(),
-          out, "staging/test/backup/replace/post-test")
+                            encoding="utf-8").read()
+          and "legacy" not in open(os.path.join(destination, "SKILL.md"),
+                                   encoding="utf-8").read(),
+          out, "same version still requires tree parity before skipping")
     shutil.rmtree(home, ignore_errors=True)
     shutil.rmtree(source, ignore_errors=True)
 
