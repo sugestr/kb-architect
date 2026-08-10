@@ -217,13 +217,14 @@ def update_from_source(src, args, source_label):
         if not os.path.lexists(path):
             print(f"{name:12} не установлен")
             continue
-        if os.path.islink(path) and not args.do_update:
+        was_link = os.path.islink(path)
+        if was_link and not args.do_update:
             target = os.path.realpath(path)
             print(f"{name:12} симлинк → {target}, редакция {versiya(path)} — "
                   "при --сделать станет управляемой копией GitHub public")
             continue
         current = versiya(path)
-        if current == source_version:
+        if current == source_version and not was_link:
             print(f"{name:12} копия, редакция {current} — совпадает с source")
             continue
         if not args.do_update:
@@ -234,7 +235,8 @@ def update_from_source(src, args, source_label):
         if replace_error:
             print(f"{name:12} НЕ ОБНОВЛЁН: {replace_error}")
             return 2
-        print(f"{name:12} копия обновлена: {current} → {new_version}")
+        action = "симлинк заменён управляемой копией" if was_link else "копия обновлена"
+        print(f"{name:12} {action}: {current} → {new_version}")
         print(f"{'':12} backup: {backup}")
 
     print()

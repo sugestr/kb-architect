@@ -564,6 +564,10 @@ def t_update_safe_replace_keeps_backup():
     os.makedirs(destination)
     with open(os.path.join(destination, "SKILL.md"), "w", encoding="utf-8") as f:
         f.write("---\nname: kb-architect\nmetadata:\n  version: \"1.0\"\n---\n")
+    claude_parent = os.path.join(home, ".claude", "skills")
+    os.makedirs(claude_parent)
+    claude_destination = os.path.join(claude_parent, "kb-architect")
+    os.symlink(source, claude_destination)
     env = dict(os.environ)
     env["HOME"] = home
     p = subprocess.run(
@@ -572,10 +576,15 @@ def t_update_safe_replace_keeps_backup():
         capture_output=True, text=True, timeout=180, env=env)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     backups = os.path.join(home, ".codex", "skills", ".backups")
+    claude_backups = os.path.join(home, ".claude", "skills", ".backups")
     check("updater ставит через тесты и сохраняет предыдущую копию",
           "копия обновлена: 1.0 → 9.9" in out
+          and "симлинк заменён управляемой копией: 9.9 → 9.9" in out
           and os.path.isdir(backups)
           and len(os.listdir(backups)) == 1
+          and os.path.isdir(claude_backups)
+          and len(os.listdir(claude_backups)) == 1
+          and not os.path.islink(claude_destination)
           and "9.9" in open(os.path.join(destination, "SKILL.md"),
                             encoding="utf-8").read(),
           out, "staging/test/backup/replace/post-test")
