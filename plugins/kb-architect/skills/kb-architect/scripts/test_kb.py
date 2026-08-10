@@ -61,6 +61,85 @@ def t_parallel_writers_need_worktrees():
           "явно разделены последовательная и параллельная запись")
 
 
+def t_shared_project_move_is_a_two_system_gate():
+    """Владелец: каталог в общем поле означает совместимость, а не только mv."""
+    ref = skill_text("references/move-project.md")
+    skill = skill_text("SKILL.md")
+    out = Vyvod(ref + "\n" + skill, 0)
+    check("перенос в общее поле требует один канон и две приёмки",
+          "перенеси себя в общее поле" in skill
+          and "~/Documents/Projects" in ref
+          and "один канонический checkout" in ref
+          and "Две независимые приёмки" in ref
+          and "Само нахождение каталога" in ref
+          and "временный симлинк" in ref,
+          out, "не простой mv: backup, один checkout, Claude + Codex acceptance")
+
+
+def t_update_names_optional_capabilities():
+    """4.19 установился, но проекты не узнали о новой работе Claude + Codex.
+
+    Старый kb_apply.py читал только метки обязательных дел и при переходе
+    4.18 → 4.20 печатал «ДЕЛ НЕТ». Новая способность без сигнала снаружи
+    неотличима от отсутствующей.
+    """
+    d = base({"NOW.md": NOW_OK,
+              "CLAUDE.md": "# правила\n\nkb_standard_version: 4.18\n"})
+    out = run("kb_apply.py", d)
+    check("обновление показывает возможности, а не только обязанности",
+          "НОВЫЕ ВОЗМОЖНОСТИ НА РЕШЕНИЕ" in out
+          and "[4.19]" in out
+          and "Claude и Codex" in out
+          and "принято / отклонено /" in out,
+          out, "4.19 видна как решение проекта, даже когда обязательных дел нет")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_knowledge_roles_are_domain_neutral_and_auditable():
+    """Владелец: одна модель должна годиться от медицины до философии."""
+    ref = skill_text("references/knowledge-roles.md")
+    adopt = skill_text("references/adopt-existing.md")
+    out = Vyvod(ref + "\n" + adopt, 0)
+    roles = ("источник", "наблюдение", "утверждение", "интерпретация",
+             "решение", "вопрос", "производное представление")
+    check("роли знания — стартовая модель и legacy-чек-лист, не онтология",
+          all(role in ref for role in roles)
+          and "«Человек сказал X» и «X истинно»" in ref
+          and "не семь папок" in ref
+          and "Аудит исторического проекта" in ref
+          and "knowledge-roles.md" in adopt,
+          out, "происхождение + факт/интерпретация + адаптация без схемы папок")
+
+
+def t_garbage_collection_is_evidence_safe_and_recoverable():
+    """Владелец: дубли и квитанции не должны бесконечно раздувать поле."""
+    ref = skill_text("references/garbage-collection.md")
+    deleted = skill_text("assets/templates/DELETED.md")
+    out = Vyvod(ref + "\n" + deleted, 0)
+    check("сборка мусора проверяет доказательства, ссылки и восстановление",
+          "retention authority" in ref
+          and "единственным доказательством" in ref
+          and "обратный поиск ссылок" in ref
+          and "Recoverable quarantine" in ref
+          and "восстановить один выборочный" in ref
+          and "Факт" in deleted,
+          out, "не удалять квитанцию только потому, что её редко открывают")
+
+
+def t_service_distribution_is_public_not_development_symlink():
+    """Владелец: свежая стабильная редакция приходит из public GitHub."""
+    ref = skill_text("references/service-layer.md")
+    tpl = skill_text("assets/templates/CLAUDE.md")
+    updater = skill_text("scripts/kb_update.py")
+    out = Vyvod(ref + "\n" + tpl + "\n" + updater, 0)
+    check("сервисный контур использует public и исключает lab-symlink",
+          "--public --сделать" in ref
+          and "GitHub public https://github.com/sugestr/kb-architect" in tpl
+          and "не каналом установки" in ref
+          and "PUBLIC_REPOSITORY" in updater,
+          out, "public stable distribution, private development authority")
+
+
 def t_templates_do_not_silently_add_obligations():
     """Аудит 4.13: справочник и копируемые шаблоны не образуют скрытое ядро."""
     rules = skill_text("assets/templates/CLAUDE.md")
@@ -462,6 +541,8 @@ def t_update_nazyvaet_otstavshie_kopii():
     os.makedirs(scripts)
     shutil.copy2(os.path.join(HERE, "kb_update.py"), scripts)
     shutil.copy2(os.path.join(SKILL_ROOT, "SKILL.md"), skill)
+    with open(os.path.join(scripts, "test_kb.py"), "w", encoding="utf-8") as f:
+        f.write("import sys\nprint('fixture ok')\nsys.exit(0)\n")
     subprocess.run(["git", "init", "-q", d], capture_output=True)
     out = subprocess.run([sys.executable, os.path.join(scripts, "kb_update.py")],
                          capture_output=True, text=True, timeout=120)
@@ -470,6 +551,36 @@ def t_update_nazyvaet_otstavshie_kopii():
           "Источник:" in txt and "уровня приложения" in txt, txt,
           "явный repo-backed fixture, а не случайный .git вокруг test_kb.py")
     shutil.rmtree(d, ignore_errors=True)
+
+
+def t_update_safe_replace_keeps_backup():
+    """Владелец: копию обновлять автоматически, но обратимо и с тестами."""
+    home = tempfile.mkdtemp(prefix="kbtest-update-home-")
+    source = base({
+        "SKILL.md": "---\nname: kb-architect\nmetadata:\n  version: \"9.9\"\n---\n",
+        "scripts/test_kb.py": "import sys\nprint('fixture ok')\nsys.exit(0)\n",
+    })
+    destination = os.path.join(home, ".codex", "skills", "kb-architect")
+    os.makedirs(destination)
+    with open(os.path.join(destination, "SKILL.md"), "w", encoding="utf-8") as f:
+        f.write("---\nname: kb-architect\nmetadata:\n  version: \"1.0\"\n---\n")
+    env = dict(os.environ)
+    env["HOME"] = home
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_update.py"),
+         "--source", source, "--do"],
+        capture_output=True, text=True, timeout=180, env=env)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    backups = os.path.join(home, ".codex", "skills", ".backups")
+    check("updater ставит через тесты и сохраняет предыдущую копию",
+          "копия обновлена: 1.0 → 9.9" in out
+          and os.path.isdir(backups)
+          and len(os.listdir(backups)) == 1
+          and "9.9" in open(os.path.join(destination, "SKILL.md"),
+                            encoding="utf-8").read(),
+          out, "staging/test/backup/replace/post-test")
+    shutil.rmtree(home, ignore_errors=True)
+    shutil.rmtree(source, ignore_errors=True)
 
 
 def main():
