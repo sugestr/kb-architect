@@ -1,12 +1,52 @@
 # kb-architect
 
-**Чтобы проект помнил себя между чатами — и чтобы агент заметил, когда база ему врёт.**
+[Русский](#русский) · [English](#english)
 
-Скилл для Claude и Codex. Ставится один раз, дальше работает во всех проектах.
+**Один и тот же skill для Claude и Codex: чтобы проект помнил себя между чатами —
+и чтобы агент заметил, когда база ему врёт.**
 
-> *An Agent Skill: a one-page contract for a knowledge base an AI agent reads across sessions, plus an optional reference library. Contents in Russian; triggers on Russian and English phrasing. MIT.*
+**The same skill for Claude and Codex: it keeps a project coherent across sessions
+and helps the agent notice when the knowledge base is confidently wrong.**
+
+> *An Agent Skill: a one-page knowledge-base contract, an optional pattern library,
+> and tested maintenance tools. Russian contract and reference library; bilingual
+> public overview; Russian and English triggers. MIT.*
 
 ---
+
+## English
+
+`kb-architect` is a lightweight knowledge-base contract for long-lived AI-assisted
+projects. It works with **both Claude and Codex**: the platforms may use different
+entry files, but they read one project canon rather than maintaining two copies.
+
+It helps a project:
+
+- keep one authoritative source for each class of current state;
+- separate sources, observations, claims, interpretations and decisions;
+- expose stale knowledge and unsupported “done/paid/sent” claims;
+- test whether a fresh session notices contradictions instead of choosing one;
+- hand work between sessions, Claude, Codex and neighbouring projects;
+- use one checkout sequentially and separate Git worktrees for parallel writers;
+- update the skill from stable PUBLIC GitHub releases and report reproducible defects;
+- audit legacy projects and remove duplicates without discarding evidence.
+
+The built-in lookup is lexical and asks for translations and everyday synonyms.
+An empty result is **not** proof that the knowledge is absent. Projects with
+measured retrieval misses can add a local or external semantic/vector index as a
+derived search layer: it may locate candidates, but every answer is verified in
+the source file and the index never becomes a second canon.
+
+The mandatory core is one page. Everything else is optional and adopted only when
+the project has a concrete problem. The core is intentionally frozen while evidence
+is collected from real use; this is a research prototype with an acceptance suite,
+not a claim of universal maturity.
+
+The same stable public release is installed for Claude and Codex. Project knowledge
+and platform-specific entry points remain in the project repository; the skill does
+not create a second project copy or a proprietary memory service.
+
+## Русский
 
 ## Знакомо?
 
@@ -88,13 +128,22 @@
 
 | | |
 |---|---|
-| **Нет** | векторного поиска, графа, индекса, сервера, зависимостей. Обычные markdown-файлы в git |
+| **Не требует** | векторного поиска, графа, сервера или внешней БД: минимум работает на markdown-файлах в git |
 | **Нет** | масштаба. На сотнях тысяч записей работать не будет |
 | **Есть** | срок годности у утверждения, отдельный от даты правки |
 | **Есть** | один канон на класс состояния и запрет вести второй параллельно |
 | **Есть** | тест на способность не соврать уверенно |
 
-Одно другому не мешает: если система памяти уже стоит, контракт ложится поверх. Он про то, чему в базе можно верить, а не про то, как её листать.
+Встроенный `kb_lookup.py` — лексический поиск: он просит явно перечислить переводы и
+обиходные синонимы. Пустая выдача **не доказывает**, что знания нет. Если проект
+несколько раз не нашёл существующий факт, к контракту разумно добавить semantic/vector
+retrieval как производный индекс. Он ищет кандидатов, но ответ проверяется в исходном
+файле, а индекс не становится вторым каноном. Условия — в опциональном модуле
+`semantic_retrieval`.
+
+Одно другому не мешает: если система памяти или векторный поиск уже стоят, контракт
+ложится поверх. Он про то, чему в найденном можно верить, а не только про то, как его
+найти.
 
 Так же он ложится и **под** доменный скилл — медицинский советник, юридический помощник: предмет остаётся за ними, механика хранения за контрактом, на стыке одна строка объявления. С одним условием, которое стоило отдельного наблюдения: доменный скилл на контракт **ссылается, а не пересказывает его**. Пересказ переживает оригинал и продолжает выглядеть верным.
 
