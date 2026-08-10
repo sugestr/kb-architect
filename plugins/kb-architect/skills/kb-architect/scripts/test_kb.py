@@ -95,6 +95,34 @@ def t_move_preserves_app_identity_and_chat_history():
           out, "project identity сохраняется; UI cleanup не уничтожает историю")
 
 
+def t_shared_move_names_ai_projects_not_the_folder():
+    """Уточнение владельца 11.08: звёздочка — UI-метка двух AI, не путь."""
+    ref = skill_text("references/move-project.md")
+    skill = skill_text("SKILL.md")
+    out = Vyvod(ref + "\n" + skill, 0)
+    check("перенос различает UI-имя, каталог и repo slug",
+          "`* <каноническое имя проекта>`" in ref
+          and "метка в интерфейсе искусственного интеллекта" in ref
+          and "не часть имени папки" in ref
+          and "slug основного Git-репозитория" in ref
+          and "переименовать отображаемый Claude project" in ref
+          and "переименовать отображаемый Codex local project в `* <каноническое имя проекта>`" in ref
+          and "Миграцию может вести Codex" in ref
+          and "все чаты прежнего Claude project" in ref
+          and "все задачи/чаты прежнего local project" in ref
+          and "каждый чат/задача" in ref
+          and "перепривязать его, не создавая новый" in ref
+          and "добавить target" in ref
+          and "сделать target основной" in ref
+          and "удалить source из списка" in ref
+          and "прежний project ID" in ref
+          and "list_projects" in ref
+          and "list_threads" in ref
+          and "root существующего Codex project неизменяем" in ref
+          and "получают `* `" in skill,
+          out, "оба AI получают * name; folder и repo остаются без звёздочки")
+
+
 def t_reorganization_starts_from_purpose_and_separates_path_consumers():
     """Отчёт 10.08: старая карта не задаёт будущую ось, output не равен live path."""
     ref = skill_text("references/adopt-existing.md")
