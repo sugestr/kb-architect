@@ -63,6 +63,7 @@ def main():
     src, err = istochnik()
     if not src:
         print("Источник отсюда не виден: " + err)
+        print("Для обычной installed-копии без .git это штатно и не означает, что версия повреждена.")
         print("Этот скрипт запускают из установки, сделанной клоном или симлинком")
         print("на репозиторий. Адрес источника — в SKILL.md, раздел «Откуда этот скилл».")
         return 2
@@ -110,7 +111,9 @@ def main():
 
     # 3. То, что машина сделать не может
     top, _ = git(src, "rev-parse", "--show-toplevel")
-    paket = os.path.join(top, "kb-architect.skill") if top else ""
+    candidates = ([os.path.join(top, "kb-architect.skill"),
+                   os.path.join(top, "package", "kb-architect.skill")] if top else [])
+    paket = next((p for p in candidates if os.path.exists(p)), "")
     print()
     print("─" * 66)
     print("Скилл уровня приложения (Claude в браузере и Cowork) отсюда недостижим:")

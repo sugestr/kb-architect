@@ -454,13 +454,22 @@ def t_update_nazyvaet_otstavshie_kopii():
     делает git pull в папке скилла и потому работает только там, где эта
     папка репозиторий. Замер на живой машине: одна установка из трёх.
     kb_update.py обязан назвать остальные, а не молчать о них."""
-    out = subprocess.run([sys.executable, os.path.join(HERE, "kb_update.py")],
+    # Тест обязан работать и из обычной installed-копии, у которой нет .git.
+    # Поэтому источник создаётся явно, а не заимствуется у окружения теста.
+    d = tempfile.mkdtemp(prefix="kbtest-update-source-")
+    skill = os.path.join(d, "kb-architect")
+    scripts = os.path.join(skill, "scripts")
+    os.makedirs(scripts)
+    shutil.copy2(os.path.join(HERE, "kb_update.py"), scripts)
+    shutil.copy2(os.path.join(SKILL_ROOT, "SKILL.md"), skill)
+    subprocess.run(["git", "init", "-q", d], capture_output=True)
+    out = subprocess.run([sys.executable, os.path.join(scripts, "kb_update.py")],
                          capture_output=True, text=True, timeout=120)
     txt = Vyvod(out.stdout + out.stderr, out.returncode)
-    check("обзор установок называет источник и недостижимую установку",
-          ("Источник:" in txt or "Источник отсюда не виден" in txt)
-          and "уровня приложения" in txt, txt,
-          "молчание о том, что две установки из трёх не обновляются, — тот же отказ")
+    check("обзор установок воспроизводим вне checkout установленной копии",
+          "Источник:" in txt and "уровня приложения" in txt, txt,
+          "явный repo-backed fixture, а не случайный .git вокруг test_kb.py")
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def main():
