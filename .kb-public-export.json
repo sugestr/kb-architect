@@ -1,0 +1,8 @@
+{
+  "config_sha256": "7c2e6f8ffd32e135071e81a920efb9ef412edd7d50401fff6790fcbc7180a5f8",
+  "payload_tree_sha256": "d479f6ebb217ac169aff5447552e81760c07ed32b32c56ca44a9cb6aa4d1e03a",
+  "schema": 1,
+  "source_commit": "2d3b51b4edb51e8b12f718980303c8f581be55cf",
+  "source_repository": "sugestr/kb-architect-lab",
+  "version": "4.19"
+}

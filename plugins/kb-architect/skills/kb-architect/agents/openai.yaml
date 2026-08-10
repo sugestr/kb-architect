@@ -1,0 +1,4 @@
+interface:
+  display_name: "KB Architect"
+  short_description: "Knowledge-base contracts and agent handoffs"
+  default_prompt: "Use $kb-architect to audit this project's knowledge base and preserve state safely across sessions and agents."

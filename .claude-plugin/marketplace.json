@@ -1,0 +1,14 @@
+{
+  "name": "sugestr",
+  "owner": {
+    "name": "sugestr",
+    "url": "https://github.com/sugestr"
+  },
+  "plugins": [
+    {
+      "name": "kb-architect",
+      "source": "./plugins/kb-architect",
+      "description": "Контракт базы знаний для проектов, которые ведёт ИИ-агент: одна обязательная страница плюс справочник, который ничего не обязывает"
+    }
+  ]
+}
