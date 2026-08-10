@@ -76,6 +76,25 @@ def t_shared_project_move_is_a_two_system_gate():
           out, "не простой mv: backup, один checkout, Claude + Codex acceptance")
 
 
+def t_move_preserves_app_identity_and_chat_history():
+    """Два переноса 10–11.08: folder grant приняли за membership проекта."""
+    ref = skill_text("references/move-project.md")
+    out = Vyvod(ref, 0)
+    check("перенос различает checkout, app-projects и историю чатов",
+          "Доступ чата к папке не делает его участником project" in ref
+          and "сохранять существующий id" in ref
+          and "chat membership" in ref
+          and "codex app <canonical-path>" in ref
+          and "ChatGPT project ради чистоты" in ref
+          and "Один самостоятельный репозиторий" in ref
+          and "Вспомогательный root" in ref
+          and "Backup автоматически не удалять" in ref
+          and "сначала разрешает только read-only" in ref
+          and "по одному проекту" in ref
+          and "Владелец выбирает точные строки" in ref,
+          out, "project identity сохраняется; UI cleanup не уничтожает историю")
+
+
 def t_reorganization_starts_from_purpose_and_separates_path_consumers():
     """Отчёт 10.08: старая карта не задаёт будущую ось, output не равен live path."""
     ref = skill_text("references/adopt-existing.md")
