@@ -29,6 +29,7 @@ It helps a project:
 - hand work between sessions, Claude, Codex and neighbouring projects;
 - use one checkout sequentially and separate Git worktrees for parallel writers;
 - update the skill from stable PUBLIC GitHub releases and report reproducible defects;
+- keep specialized project skills recoverable: one Git source, explicit professional role and authority ladder, and separate Claude/Codex discovery checks;
 - audit legacy projects and remove duplicates without discarding evidence.
 
 The built-in lookup is lexical and asks for translations and everyday synonyms.
@@ -145,7 +146,13 @@ retrieval как производный индекс. Он ищет кандид
 ложится поверх. Он про то, чему в найденном можно верить, а не только про то, как его
 найти.
 
-Так же он ложится и **под** доменный скилл — медицинский советник, юридический помощник: предмет остаётся за ними, механика хранения за контрактом, на стыке одна строка объявления. С одним условием, которое стоило отдельного наблюдения: доменный скилл на контракт **ссылается, а не пересказывает его**. Пересказ переживает оригинал и продолжает выглядеть верным.
+Так же он ложится и **под** доменный скилл — профессионального советника или
+предметного аудитора. Доменный skill задаёт роль, иерархию источников, порог
+доказательности, условия остановки и запреты; KB хранит факты конкретного проекта,
+а scripts выполняют детерминированную работу. Для Claude и Codex сохраняется один
+Git-канон skill с отдельными тонкими точками обнаружения и fresh-clone проверкой.
+Доменный скилл на контракт **ссылается, а не пересказывает его**: пересказ переживает
+оригинал и продолжает выглядеть верным.
 
 ## Откуда это взялось
 

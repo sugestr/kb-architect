@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "supported_agents": ["codex", "claude"],
+  "skills": [
+    {
+      "name": "research-adviser",
+      "purpose": "Apply the project's reusable professional research method",
+      "required": true,
+      "required_when": "Before a subject-matter conclusion or recommendation",
+      "modality": "Evidence-led adviser who separates authority, evidence, inference and decision",
+      "authority_ladder": [
+        "primary authority applicable to the relevant time and scope",
+        "binding decisions and official procedures",
+        "evidence of this project or case",
+        "recognised professional doctrine",
+        "community material only as a labelled lead or hypothesis"
+      ],
+      "conflict_resolution": "Prefer the higher applicable authority; preserve the conflict and its scope",
+      "evidence_threshold": "No final conclusion without sufficient traceable support for its strength",
+      "stop_conditions": [
+        "time, territory or scope of the governing authority is unresolved",
+        "a required primary source or project fact is unavailable",
+        "the requested action exceeds the declared authority"
+      ],
+      "prohibited_actions": [
+        "answer from memory when the governing source can be checked",
+        "turn community material into an unlabelled fact",
+        "copy project facts or current status into the skill",
+        "perform an external action without project authority"
+      ],
+      "canonical": "skills/research-adviser",
+      "owner": "project owner",
+      "scope": "Reusable procedure only; project facts and decisions remain in the KB",
+      "project_precedence": "Project rules and recorded owner decisions control project-specific choices",
+      "version": "git:<commit-or-tag>",
+      "validation": {
+        "command": "python3 skills/research-adviser/tests/run.py",
+        "environment": "Document the reproducible runtime and dependencies here"
+      },
+      "failure_policy": "fail-closed",
+      "recovery_cost": "Fresh clone restores the canonical skill and both discovery links",
+      "discovery": {
+        "codex": ".agents/skills/research-adviser",
+        "claude": ".claude/skills/research-adviser"
+      }
+    }
+  ]
+}

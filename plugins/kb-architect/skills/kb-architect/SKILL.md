@@ -1,9 +1,9 @@
 ---
 name: kb-architect
-description: "Knowledge-base contract and optional patterns, templates and tools for durable AI projects. Use to start, adopt, audit, update or restructure a knowledge base; separate sources, facts, interpretations and decisions; test whether it lies; collect duplicates safely; preserve context and handoffs; coordinate Claude/Codex or multiple projects; move a project to a shared folder; automate stable skill updates and defect reports. Triggers include 'база знаний', 'как хранить факты', 'отдели факты от интерпретаций', 'исторический проект', 'сборка мусора', 'структура плохая', 'обнови скилл', 'два агента', 'перенеси себя в общее поле', 'база врёт', 'хендовер'."
+description: "Knowledge-base contract, optional patterns and tested tools for durable AI projects. Use to start, audit, update, restructure or move a KB; separate facts from interpretations; preserve handoffs; coordinate Claude/Codex; audit recoverable project skills; collect duplicates safely. Triggers: 'база знаний', 'project skill', 'исторический проект', 'сборка мусора', 'обнови скилл', 'два агента', 'перенеси себя в общее поле', 'база врёт'."
 license: MIT
 metadata:
-  version: "4.25"
+  version: "4.26"
   author: "sugestr"
 ---
 
@@ -43,6 +43,7 @@ metadata:
 | «перестрой базу», «здесь бардак, переделай» | отдельная процедура: **бэкап в ветку и тег**, опись, план на утверждение, изменения по шагам, откат одной командой | `references/adopt-existing.md`, часть 2 |
 | «собери мусор», «удали дубли», «почисти квитанции» | read-only опись → ссылки/доказательства/срок → точный план → quarantine → выборочное восстановление | `references/garbage-collection.md` |
 | «проверь целостность», «всё ли на месте» | четыре проверки, которые не шумят: битые ссылки внутри базы, истёкшие сроки годности, пустые `verify`, объём входа против потолка | `scripts/kb_check.py` |
+| «проверь внутренние скиллы проекта» | роль, один Git-канон, dual discovery и fresh-clone recovery; без skills реестр не нужен | `references/modules.md` → `capability_skills`, `scripts/kb_skills.py` |
 | «вышла новая редакция — что она значит для нас» | достаёт строки выпусков между записанной и установленной, помечает те, чего в этой базе есть чем коснуться, и **ничего не применяет**: применение меняет соглашения проекта, а это решение владельца | `scripts/kb_apply.py` |
 | «что просрочено», «с чего начать сегодня» | две секунды: протух ли вход, есть ли ожидания с прошедшей датой, когда была последняя датированная запись журнала и прогон вопросов. Это не доказывает, что журнал был разобран: отдельной даты review контракт не требует | `scripts/kb_due.py` |
 | **«обновись»**, «примени новую редакцию скилла» | `kb_apply.py` печатает отдельно обязательные дела и новые возможности на решение, а не историю выпусков. Инструменты приезжают сами; возможности не становятся правилами проекта без исхода `принято / отклонено / отложено`. Дальше — прогон проверок | `scripts/kb_apply.py` |
@@ -192,9 +193,10 @@ metadata:
 
 ## Шаблоны и инструменты
 
-- `assets/templates/` — заготовки: `NOW.md`, `CORRECTIONS.md`, `SLOMALOS.md`, `QUESTIONS.md`, правила проекта, конфиг, решение, попытка.
+- `assets/templates/` — заготовки: `NOW.md`, `CORRECTIONS.md`, `SLOMALOS.md`, `QUESTIONS.md`, правила проекта, optional `kb-skills.json`, решение, попытка.
 - `scripts/kb_init.py` — развернуть минимум одной командой.
 - `scripts/kb_check.py` — целостность: битые ссылки, истёкшие сроки, пустые `verify`, объём входа против потолка. Каждая проверка либо находит поломку, либо молчит, а отчёт называет объём проверенного: «чисто» без списка однажды означало «не искали».
+- `scripts/kb_skills.py` — role/authority, один канон, dual discovery и recovery optional project skills.
 - `scripts/kb_due.py` — что просрочено, включая состояние git и редакцию контракта, по которой живёт проект.
 - `scripts/kb_lookup.py` — поиск по базе перед выводом об отсутствии.
 - `references/releases.md` — ≈16 тыс. — **машинная история выпусков; открывать целиком не нужно и дорого.** Её читает скрипт ниже.

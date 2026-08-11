@@ -156,10 +156,119 @@ def t_domain_skill_location_follows_scope_not_agent():
     check("место доменного скилла определяется областью, не агентом",
           "областью действия, а не именем агента" in ref
           and "repo-local" in ref
-          and "управляемая общая установка" in ref
+          and "pinned cross-repo dependency" in ref
+          and ".agents/skills/" in ref
+          and ".claude/skills/" in ref
           and "fail-closed" in ref
           and "не копируют отдельно под Claude и Codex" in ref,
           out, "один канон навыка для проекта или нескольких проектов")
+
+
+def skill_registry(name, canonical, codex, claude):
+    return {
+        "schema": 1,
+        "supported_agents": ["codex", "claude"],
+        "skills": [{
+            "name": name,
+            "purpose": "fixture procedure",
+            "required": True,
+            "required_when": "subject work",
+            "modality": "evidence-led professional adviser",
+            "authority_ladder": ["applicable primary authority", "case evidence", "secondary analysis", "community lead"],
+            "conflict_resolution": "higher applicable authority wins; preserve the conflict",
+            "evidence_threshold": "cite sufficient project evidence before a conclusion",
+            "stop_conditions": ["applicability unresolved", "required source unavailable"],
+            "prohibited_actions": ["invent missing facts", "act beyond owner authority"],
+            "canonical": canonical,
+            "owner": "project owner",
+            "scope": "procedure only; project facts stay in KB",
+            "project_precedence": "PROJECT_RULES.md",
+            "version": "fixture-1",
+            "validation": {"command": "python3 tests.py", "environment": "python 3"},
+            "failure_policy": "fail-closed",
+            "recovery_cost": "fresh clone plus declared dependencies",
+            "discovery": {"codex": codex, "claude": claude},
+        }],
+    }
+
+
+def run_skills(root, home=None):
+    env = dict(os.environ)
+    if home:
+        env["HOME"] = home
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_skills.py"), root],
+        capture_output=True, text=True, timeout=120, env=env)
+    return Vyvod(p.stdout + p.stderr, p.returncode)
+
+
+def t_required_global_only_skill_blocks_recovery():
+    """11.08: fresh clone kept the KB but lost a required user-global procedure."""
+    d = base({})
+    home = os.path.join(d, "home")
+    canonical = os.path.join(home, ".codex", "skills", "domain-auditor")
+    os.makedirs(canonical)
+    with open(os.path.join(canonical, "SKILL.md"), "w", encoding="utf-8") as f:
+        f.write("---\nname: domain-auditor\n---\n")
+    registry = skill_registry("domain-auditor", canonical,
+                              ".agents/skills/domain-auditor",
+                              ".claude/skills/domain-auditor")
+    with open(os.path.join(d, ".kb-skills.json"), "w", encoding="utf-8") as f:
+        import json
+        json.dump(registry, f)
+    out = run_skills(d, home)
+    check("обязательный global-only skill блокирует fresh-clone readiness",
+          out.code == 1 and "required skill is user-global only" in out,
+          out, "global install is delivery, not a recoverable project source")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_broken_project_skill_discovery_is_visible():
+    """11.08: a declared discovery link must not fail open after a move."""
+    d = base({"skills/domain-auditor/SKILL.md": "---\nname: domain-auditor\n---\n"})
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    os.symlink("../../skills/missing", os.path.join(d, ".agents", "skills", "domain-auditor"))
+    os.symlink("../../skills/domain-auditor", os.path.join(d, ".claude", "skills", "domain-auditor"))
+    registry = skill_registry("domain-auditor", "skills/domain-auditor",
+                              ".agents/skills/domain-auditor",
+                              ".claude/skills/domain-auditor")
+    import json
+    with open(os.path.join(d, ".kb-skills.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", ".kb-skills.json", "skills",
+                    ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("битая discovery-ссылка называется ошибкой",
+          out.code == 1 and "broken codex discovery symlink" in out,
+          out, "missing link cannot look like agent acceptance")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_project_without_specialized_skill_is_valid():
+    """11.08: no domain skill is not itself a defect."""
+    d = base({"README.md": "ordinary project\n"})
+    out = run_skills(d)
+    check("проект без specialized skill не получает пустой реестр и ошибку",
+          out.code == 0 and "not declared (valid)" in out and "errors=0" in out,
+          out, "registry exists only when the project really has project skills")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_capability_registry_expresses_role_not_only_location():
+    """Дополнение владельца 11.08: discovery alone does not define a profession."""
+    import json
+    data = json.loads(skill_text("assets/templates/kb-skills.json"))
+    entry = data["skills"][0]
+    fields = ("modality", "authority_ladder", "conflict_resolution",
+              "evidence_threshold", "stop_conditions", "prohibited_actions")
+    out = Vyvod(str(entry), 0)
+    check("реестр задаёт профессиональную модальность и границы",
+          all(entry.get(field) for field in fields)
+          and "project facts" in entry["scope"].lower()
+          and "community" in " ".join(entry["authority_ladder"]).lower(),
+          out, "role, source ladder, evidence, conflict, stop and prohibited actions")
 
 
 def t_update_names_optional_capabilities():

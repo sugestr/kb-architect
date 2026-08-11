@@ -1,4 +1,4 @@
 interface:
   display_name: "KB Architect"
-  short_description: "Knowledge-base contracts, shared projects, and handoffs"
-  default_prompt: "Use $kb-architect to audit this project's knowledge base, apply skill updates deliberately, or move one canonical checkout into a shared Claude/Codex project root."
+  short_description: "Knowledge bases, project skills, shared work, handoffs"
+  default_prompt: "Use $kb-architect to audit this project's knowledge base and specialized skills, apply updates deliberately, or move one canonical checkout into a shared Claude/Codex project root."
