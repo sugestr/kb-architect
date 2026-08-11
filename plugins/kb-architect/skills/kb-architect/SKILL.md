@@ -3,7 +3,7 @@ name: kb-architect
 description: "Knowledge-base contract, optional patterns and tested tools for durable AI projects. Use to start, audit, update, restructure or move a KB; separate facts from interpretations; preserve handoffs; coordinate Claude/Codex; audit recoverable project skills; collect duplicates safely. Triggers: 'база знаний', 'project skill', 'исторический проект', 'сборка мусора', 'обнови скилл', 'два агента', 'перенеси себя в общее поле', 'база врёт'."
 license: MIT
 metadata:
-  version: "4.26"
+  version: "4.27"
   author: "sugestr"
 ---
 

@@ -78,7 +78,8 @@ def base_traits(root):
     t["контрольные вопросы"] = quest.found
     t["журнал прогонов"] = quest.found and kb_paths.section(
         quest.text(), ("ЖУРНАЛ ПРОГОНОВ", "ПРОГОНЫ")) is not None
-    t["git"] = os.path.isdir(os.path.join(root, ".git"))
+    marker = os.path.join(root, ".git")
+    t["git"] = os.path.isdir(marker) or os.path.isfile(marker)
     rules = kb_paths.rules_path(root)
     rtext = kb_paths.read(rules) if rules else ""
     t["несколько пишущих"] = bool(re.search(r"владени|несколько пишущих|две линии|"
@@ -135,9 +136,15 @@ def main():
     vozmozhnosti = []
     for v, text in rows:
         for m in ACT.findall(text):
-            dela.append((v, " ".join(m.split())))
+            value = " ".join(m.split())
+            # Releases 4.17/4.21 name the marker syntax itself as `⟦Д: …⟧`.
+            # The ellipsis is documentation, not an instruction to a project.
+            if value not in {"…", "..."}:
+                dela.append((v, value))
         for m in CHOICE.findall(text):
-            vozmozhnosti.append((v, " ".join(m.split())))
+            value = " ".join(m.split())
+            if value not in {"…", "..."}:
+                vozmozhnosti.append((v, value))
 
     print(f"Проект на {proj}, установлен скилл {inst}. Между ними выпусков: {len(rows)}.\n")
 

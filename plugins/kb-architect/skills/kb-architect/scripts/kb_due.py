@@ -431,7 +431,10 @@ def main():
     def find_git(start):
         cur = os.path.abspath(start)
         while True:
-            if os.path.isdir(os.path.join(cur, ".git")):
+            marker = os.path.join(cur, ".git")
+            # В обычном checkout .git — каталог, в linked worktree — файл
+            # с адресом административного каталога. Оба являются Git-корнем.
+            if os.path.isdir(marker) or os.path.isfile(marker):
                 return cur
             parent = os.path.dirname(cur)
             if parent == cur:

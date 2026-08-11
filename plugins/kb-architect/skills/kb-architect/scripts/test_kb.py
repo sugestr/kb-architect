@@ -507,6 +507,48 @@ def t_git_enclosing_repo():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_git_linked_worktree():
+    """Шесть project-skill аудитов 11.08: linked worktree имеет .git-файл,
+    но kb_due.py объявлял его нерепозиторием. Это поддерживаемый режим
+    параллельных писателей, поэтому диагностика обязана видеть Git."""
+    d = base({"NOW.md": NOW_OK, "CLAUDE.md": "# правила\n\nвход: NOW.md\n"})
+    subprocess.run(["git", "init", "-q", d], capture_output=True)
+    subprocess.run(["git", "-C", d, "config", "user.email", "test@example.invalid"],
+                   capture_output=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "kb test"],
+                   capture_output=True)
+    subprocess.run(["git", "-C", d, "add", "NOW.md", "CLAUDE.md"],
+                   capture_output=True)
+    subprocess.run(["git", "-C", d, "commit", "-q", "-m", "fixture"],
+                   capture_output=True)
+    parent = tempfile.mkdtemp(prefix="kbtest-worktree-")
+    worktree = os.path.join(parent, "linked")
+    subprocess.run(["git", "-C", d, "worktree", "add", "-q", "-b", "audit", worktree],
+                   capture_output=True)
+    out = run("kb_due.py", worktree)
+    check("linked worktree не объявляется «без репозитория»",
+          os.path.isfile(os.path.join(worktree, ".git"))
+          and "git-репозитория нет" not in out, out,
+          ".git-файл распознаётся так же, как .git-каталог")
+    subprocess.run(["git", "-C", d, "worktree", "remove", "--force", worktree],
+                   capture_output=True)
+    shutil.rmtree(parent, ignore_errors=True)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_apply_ignores_marker_syntax_examples():
+    """Отчёт local MCP 11.08: описание синтаксиса `⟦Д: …⟧` в строках
+    4.17/4.21 превращалось в два фиктивных обязательных действия."""
+    d = base({"NOW.md": NOW_OK,
+              "CLAUDE.md": "# правила\n\nkb_standard_version: 4.16\n"})
+    out = run("kb_apply.py", d)
+    check("пример маркера не становится действием проекта",
+          "[4.17] …" not in out and "[4.21] …" not in out
+          and "ОБЯЗАТЕЛЬНЫХ ДЕЛ НЕТ" in out, out,
+          "парсер пропускает placeholder-маркеры и сохраняет реальные дела")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def t_verify_lookalike():
     """Отчёт из эксплуатации: `verified` вместо `verify` проходил как чисто."""
     d = base({"NOW.md": NOW_OK,
