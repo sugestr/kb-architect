@@ -20,15 +20,18 @@ kb_update.py — привести файловые установки скилл
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_REPOSITORY = "https://github.com/sugestr/kb-architect.git"
+DEFAULT_TTL_HOURS = 24
 
 # Закрытый список известных файловых установок этой машины. Другие места
 # обновляются только явным отдельным механизмом, а не угадываются обходом диска.
@@ -36,6 +39,128 @@ MESTA = [
     ("Claude Code", "~/.claude/skills/kb-architect"),
     ("Codex", "~/.codex/skills/kb-architect"),
 ]
+
+
+def cache_path():
+    override = os.environ.get("KB_ARCHITECT_UPDATE_CACHE")
+    if override:
+        return os.path.abspath(os.path.expanduser(override))
+    root = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache")
+    return os.path.join(root, "kb-architect", "update-state.json")
+
+
+def load_cache():
+    try:
+        with open(cache_path(), encoding="utf-8") as stream:
+            data = json.load(stream)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def save_cache(data):
+    """Atomic local receipt. Failure is reported, never promoted to PASS."""
+    target = cache_path()
+    parent = os.path.dirname(target)
+    try:
+        os.makedirs(parent, exist_ok=True)
+        fd, staged = tempfile.mkstemp(prefix=".update-state-", dir=parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(data, stream, ensure_ascii=False, sort_keys=True)
+                stream.write("\n")
+            os.replace(staged, target)
+        except Exception:
+            try:
+                os.unlink(staged)
+            except OSError:
+                pass
+            raise
+        return None
+    except Exception as exc:
+        return str(exc)
+
+
+def managed_installs_match(receipt):
+    expected_version = receipt.get("version")
+    expected_fingerprint = receipt.get("fingerprint")
+    if not expected_version or not expected_fingerprint:
+        return False
+    found = 0
+    for _name, raw_path in MESTA:
+        path = os.path.expanduser(raw_path)
+        if not os.path.lexists(path):
+            continue
+        found += 1
+        if (os.path.islink(path) or versiya(path) != expected_version
+                or fingerprint(path) != expected_fingerprint):
+            return False
+    return found > 0
+
+
+def public_head():
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", PUBLIC_REPOSITORY, "refs/heads/main"],
+            capture_output=True, text=True, timeout=30)
+    except Exception as exc:
+        return None, str(exc)
+    if result.returncode != 0:
+        why = (result.stderr.strip().splitlines() or
+               [f"код {result.returncode}"])[0]
+        return None, why
+    row = result.stdout.strip().split()
+    return (row[0], None) if row else (None, "public main не найден")
+
+
+def fast_public_check(ttl_hours):
+    """Return 0 when a receipt proves no clone is needed; None means full gate."""
+    receipt = load_cache()
+    now = time.time()
+    if receipt and managed_installs_match(receipt):
+        checked = receipt.get("checked_at_epoch")
+        if isinstance(checked, (int, float)) and now - checked < ttl_hours * 3600:
+            print("Быстрая проверка: локальная квитанция свежая; GitHub не опрашивался")
+            print(f"  редакция: {receipt.get('version')}")
+            print(f"  public HEAD: {receipt.get('remote_head') or 'UNKNOWN'}")
+            return 0
+
+        head, error = public_head()
+        if error:
+            print("Быстрая проверка: UNKNOWN — GitHub public не опрошен: " + error)
+            print("  прежняя установленная копия не объявляется свежей")
+            return 0
+        if head == receipt.get("remote_head"):
+            receipt["checked_at_epoch"] = now
+            receipt["checked_at"] = datetime.now(timezone.utc).isoformat()
+            cache_error = save_cache(receipt)
+            if cache_error:
+                print("Быстрая проверка: public HEAD не изменился, но квитанция не записана")
+                print("  UNKNOWN: " + cache_error)
+                return 0
+            print("Быстрая проверка: public HEAD не изменился; clone и тесты не нужны")
+            print(f"  редакция: {receipt.get('version')}")
+            print(f"  public HEAD: {head}")
+            return 0
+
+    print("Быстрая проверка: квитанции или parity недостаточно; запускается полный gate")
+    return None
+
+
+def record_public_receipt(src):
+    top, _ = git(src, "rev-parse", "--show-toplevel")
+    head, _ = git(top or src, "rev-parse", "HEAD")
+    receipt = {
+        "schema": 1,
+        "repository": PUBLIC_REPOSITORY,
+        "remote_head": head,
+        "version": versiya(src),
+        "fingerprint": fingerprint(src),
+        "checked_at_epoch": time.time(),
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    return save_cache(receipt)
 
 
 def versiya(path):
@@ -289,8 +414,22 @@ def main():
     group.add_argument("--source", help="явный checkout для теста или maintainer-workflow")
     group.add_argument("--public", action="store_true",
                        help="всегда брать стабильный снимок из GitHub public")
+    parser.add_argument("--fast", action="store_true",
+                        help="TTL + ls-remote; полный clone только при изменении/parity gap")
+    parser.add_argument("--ttl-hours", type=float, default=DEFAULT_TTL_HOURS,
+                        help="срок локальной квитанции быстрого режима (по умолчанию 24)")
     parser.add_argument("--сделать", "--do", action="store_true", dest="do_update")
     args = parser.parse_args()
+
+    if args.fast and not args.public:
+        parser.error("--fast применяется только вместе с --public")
+    if args.ttl_hours < 0:
+        parser.error("--ttl-hours не может быть отрицательным")
+
+    if args.public and args.fast:
+        fast_result = fast_public_check(args.ttl_hours)
+        if fast_result is not None:
+            return fast_result
 
     temp_root = None
     try:
@@ -312,7 +451,12 @@ def main():
         if not src:
             print("Источник не получен: " + str(err))
             return 2
-        return update_from_source(src, args, label)
+        result = update_from_source(src, args, label)
+        if result == 0 and args.public:
+            cache_error = record_public_receipt(src)
+            if cache_error:
+                print("Квитанция быстрого режима не записана: UNKNOWN — " + cache_error)
+        return result
     finally:
         if temp_root:
             shutil.rmtree(temp_root, ignore_errors=True)

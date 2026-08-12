@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL_ROOT = os.path.dirname(HERE)
@@ -42,12 +43,62 @@ def t_agent_message_transport_and_no_chatter():
     ref = skill_text("references/collaboration.md")
     tpl = skill_text("assets/templates/agent-message.md")
     out = Vyvod(ref + "\n" + tpl, 0)
-    fields = ("message_id:", "from_project:", "to_project:", "response_required:")
+    fields = ("message_id:", "from_project:", "to_project:", "response_required:",
+              "delivery_target:", "delivery_state:", "collector:")
     check("сообщение агента одинаково для файла, канала и владельца",
           all(x in tpl for x in fields)
           and "не зависит от транспорта" in ref
+          and "prepared" in ref and "delivered" in ref and "acknowledged" in ref
+          and "истории source-задачи" in ref
           and "статусные сообщения" in ref.lower(), out,
-          "адресованный конверт, transport-invariant семантика и anti-chatter")
+          "envelope, delivery states, dedup-before-request and anti-chatter")
+
+
+def t_report_only_envelope_cancels_old_write_authority():
+    """11–12.08: короткий report-only follow-up почти продолжил старый write plan."""
+    ref = skill_text("references/collaboration.md")
+    router = skill_text("SKILL.md")
+    out = Vyvod(ref + "\n" + router, 0)
+    check("текущий report-only envelope отменяет старую write-authority",
+          "отменяют старое разрешение на запись" in ref
+          and "точные разрешённые targets" in ref
+          and "старое разрешение на запись не переносится" in router,
+          out, "current task scope wins before first write")
+
+
+def t_thin_router_preserves_frozen_contract_by_reference():
+    """Ночной замер: полный entry 40 955 Б читался даже для простой маршрутизации."""
+    router = skill_text("SKILL.md")
+    contract = skill_text("references/contract.md")
+    rules = (
+        "Ни один класс текущего состояния не обслуживается двумя",
+        "Не утверждать поведение внешней системы из памяти",
+        "Производное представление правят в источнике",
+        "Реорганизация — только с предварительного согласия",
+    )
+    out = Vyvod(router + "\n" + contract, 0)
+    check("тонкий entry маршрутизирует к неизменному обязательному контракту",
+          len(router.encode("utf-8")) <= 10_000
+          and "references/contract.md" in router
+          and "## Три поля" not in router
+          and all(rule in contract for rule in rules)
+          and "CORRECTIONS.md" in contract
+          and "один сменный слот" in contract,
+          out, "router <=10KB; four rules, corrections and control test stay in contract")
+
+
+def t_project_entry_is_two_layer_and_keeps_stop_gates():
+    """Шесть проектов: entry rules достигали 52 КБ; authority нельзя потерять."""
+    tpl = skill_text("assets/templates/CLAUDE.md")
+    out = Vyvod(tpl, 0)
+    check("project boot entry короткий, routed и fail-closed",
+          len(tpl.encode("utf-8")) <= 8_000
+          and "короткий boot canon" in tpl
+          and "подробные правила" in tpl
+          and "Authority и stop-gates" in tpl
+          and "обязательный domain skill" in tpl
+          and "`UNKNOWN`, не PASS" in tpl,
+          out, "static details move out; current, authority, checks and role trigger remain")
 
 
 def t_parallel_writers_need_worktrees():
@@ -328,11 +379,52 @@ def t_service_distribution_is_public_not_development_symlink():
     updater = skill_text("scripts/kb_update.py")
     out = Vyvod(ref + "\n" + tpl + "\n" + updater, 0)
     check("сервисный контур использует public и исключает lab-symlink",
-          "--public --сделать" in ref
+          "--public --fast --сделать" in ref
           and "GitHub public https://github.com/sugestr/kb-architect" in tpl
           and "не каналом установки" in ref
+          and "git ls-remote" in ref
           and "PUBLIC_REPOSITORY" in updater,
           out, "public stable distribution, private development authority")
+
+
+def t_fast_update_uses_fresh_receipt_without_network():
+    """Ночной замер: полный public clone/test стоил 12.94 с при каждом входе."""
+    import importlib.util
+    import json
+
+    home = tempfile.mkdtemp(prefix="kbtest-fast-home-")
+    destination = os.path.join(home, ".codex", "skills", "kb-architect")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    shutil.copytree(SKILL_ROOT, destination)
+    spec = importlib.util.spec_from_file_location(
+        "kb_update_fixture", os.path.join(HERE, "kb_update.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    cache = os.path.join(home, "update-state.json")
+    with open(cache, "w", encoding="utf-8") as stream:
+        json.dump({
+            "schema": 1,
+            "repository": module.PUBLIC_REPOSITORY,
+            "remote_head": "fixture-head",
+            "version": module.versiya(destination),
+            "fingerprint": module.fingerprint(destination),
+            "checked_at_epoch": time.time(),
+        }, stream)
+    env = dict(os.environ)
+    env["HOME"] = home
+    env["KB_ARCHITECT_UPDATE_CACHE"] = cache
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_update.py"),
+         "--public", "--fast", "--do"],
+        capture_output=True, text=True, timeout=30, env=env)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("fresh receipt skips GitHub clone and full test gate",
+          out.code == 0
+          and "GitHub не опрашивался" in out
+          and "полный gate" not in out
+          and "Источник:" not in out,
+          out, "fresh local receipt + installed fingerprint is enough inside TTL")
+    shutil.rmtree(home, ignore_errors=True)
 
 
 def t_templates_do_not_silently_add_obligations():
@@ -544,8 +636,9 @@ def t_apply_ignores_marker_syntax_examples():
     out = run("kb_apply.py", d)
     check("пример маркера не становится действием проекта",
           "[4.17] …" not in out and "[4.21] …" not in out
-          and "ОБЯЗАТЕЛЬНЫХ ДЕЛ НЕТ" in out, out,
-          "парсер пропускает placeholder-маркеры и сохраняет реальные дела")
+          and "[5.0] при следующем обновлении" in out
+          and "ТРЕБУЮТ ДЕЙСТВИЯ" in out, out,
+          "парсер пропускает placeholder-маркеры и сохраняет реальное дело 5.0")
     shutil.rmtree(d, ignore_errors=True)
 
 
