@@ -101,6 +101,68 @@ def t_project_entry_is_two_layer_and_keeps_stop_gates():
           out, "static details move out; current, authority, checks and role trigger remain")
 
 
+def t_interactive_result_precedes_durable_tail():
+    """13.08: copyable draft waited 19 minutes behind intake/check/commit/push."""
+    ref = skill_text("references/operations.md")
+    router = skill_text("SKILL.md")
+    draft = "покажи владельцу явно помеченный черновик"
+    durable = "один общий точечный commit и"
+    out = Vyvod(ref + "\n" + router, 0)
+    check("interactive draft is not blocked by the durable tail",
+          draft in ref
+          and durable in ref
+          and ref.index(draft) < ref.index(durable)
+          and "time to first useful result" in ref
+          and "time to durable completion" in ref
+          and "Не коммить" in ref
+          and "60 секунд" in ref
+          and "три последовательных tool round-trip" in ref
+          and "коммуникационный порог" in ref
+          and "integration audit" in ref
+          and "durable tail не" in router,
+          out, "show a checked draft first; save one coherent block afterwards")
+
+
+def t_warm_turn_does_not_restart_project_boot():
+    """13.08: service entry was read as a per-message cycle in a warm task."""
+    router = skill_text("SKILL.md")
+    service = skill_text("references/service-layer.md")
+    template = skill_text("assets/templates/CLAUDE.md")
+    out = Vyvod(router + "\n" + service + "\n" + template, 0)
+    check("warm turn reuses boot receipt and keeps service work off answer path",
+          "Новый пользовательский turn — не новый вход" in router
+          and "только ответ" in router
+          and "не при каждом сообщении" in service
+          and "не запускай этот цикл снова" in service
+          and "задерживать первый низкорисковый полезный ответ" in service
+          and "один раз на новую task/session" in template,
+          out, "one boot per task; answer-only, mixed and risky paths stay distinct")
+
+
+def t_moved_project_retires_stale_runtime_bindings():
+    """13.08: old task kept deleted cwd and could not write the canonical target."""
+    ref = skill_text("references/move-project.md")
+    out = Vyvod(ref, 0)
+    check("old runtime binding is stale for writes after a project move",
+          "fresh target-bound session" in ref
+          and "stale for writes" in ref
+          and "frozen `cwd`" in ref
+          and "пробный безопасный" in ref
+          and "не означает сохранение рабочего runtime" in ref,
+          out, "preserve history but move writes to a proven target-bound session")
+
+
+def t_entry_ack_can_close_without_closing_subject():
+    """12.08: open subject was mistaken for an entry update still waiting."""
+    ref = skill_text("references/operations.md")
+    out = Vyvod(ref, 0)
+    check("entry acknowledgement does not close the subject correction",
+          "два независимых состояния" in ref
+          and "✔ Вход учтён YYYY-MM-DD; предметное расхождение остаётся открытым" in ref
+          and "Не закрывай предмет искусственно" in ref,
+          out, "partial receipt closes only the entry-sync debt")
+
+
 def t_parallel_writers_need_worktrees():
     """Отчёт 10.08: ветка не изолирует двух писателей в одном рабочем дереве."""
     ref = skill_text("references/collaboration.md")
@@ -320,6 +382,105 @@ def t_capability_registry_expresses_role_not_only_location():
           and "project facts" in entry["scope"].lower()
           and "community" in " ".join(entry["authority_ladder"]).lower(),
           out, "role, source ladder, evidence, conflict, stop and prohibited actions")
+
+
+def environment_registry(provider_status="unavailable", provider_kind="managed-connector"):
+    provider = {"status": provider_status, "kind": provider_kind}
+    if provider_status == "accepted":
+        provider.update({
+            "provider": "mail-provider", "identity": "owner-mailbox",
+            "scope": "read-only", "authority": "current task",
+            "validation": "read-only probe", "accepted_at": "2026-08-13",
+        })
+    return {
+        "schema": 1,
+        "cloud_policy": "allowed",
+        "supported_runtimes": ["codex-local", "claude-local", "codex-cloud"],
+        "capabilities": [{
+            "id": "email.personal.read",
+            "purpose": "read task-relevant mail",
+            "required_when": "mail request",
+            "required_by_default": False,
+            "sensitivity": "private",
+            "failure_policy": "fail-closed",
+            "prohibited_actions": ["send without authority"],
+            "providers": {"codex-cloud": provider},
+            "fallback": "owner export",
+        }],
+    }
+
+
+def environment_fixture(registry):
+    import json
+    d = base({
+        "AGENTS.md": "# portable entry\nproject root: .\n",
+        "CLAUDE.md": "# portable entry\nproject root: .\n",
+        ".kb-environments.json": json.dumps(registry),
+    })
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "remote", "add", "origin",
+                    "https://example.invalid/owner/project.git"], check=True)
+    subprocess.run(["git", "-C", d, "add", "AGENTS.md", "CLAUDE.md",
+                    ".kb-environments.json"], check=True)
+    return d
+
+
+def run_environments(root, *args):
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_environments.py"), root, *args],
+        capture_output=True, text=True, timeout=120)
+    return Vyvod(p.stdout + p.stderr, p.returncode)
+
+
+def t_runtime_capability_template_separates_identity_scope_and_authority():
+    """13.08: local mail access was nearly inferred for an isolated cloud task."""
+    import json
+    data = json.loads(skill_text("assets/templates/kb-environments.json"))
+    item = data["capabilities"][0]
+    cloud = item["providers"]["codex-cloud"]
+    module = skill_text("references/modules.md")
+    out = Vyvod(str(item) + "\n" + module, 0)
+    check("runtime registry separates logical capability from each provider",
+          item["id"] == "email.personal.read"
+          and all(cloud.get(field) for field in
+                  ("status", "kind", "provider", "identity", "scope",
+                   "authority", "validation"))
+          and "Одинаковое имя сервера не доказывает" in module
+          and "не на каждый обычный вопрос" in module,
+          out, "logical email capability; per-runtime identity/scope/authority and routed audit")
+
+
+def t_optional_cloud_connector_does_not_block_repo_work():
+    """13.08: missing connector must block its task, not all Git work."""
+    d = environment_fixture(environment_registry())
+    out = run_environments(d, "--runtime", "codex-cloud")
+    check("optional unavailable cloud capability leaves portable project ready",
+          out.code == 0 and "optional capabilities unavailable here" in out
+          and "errors=0" in out,
+          out, "optional mail is named unavailable without blocking repo work")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_required_cloud_connector_fails_closed():
+    """13.08: 'check my mail' requires an accepted provider in this runtime."""
+    d = environment_fixture(environment_registry("pending"))
+    out = run_environments(d, "--runtime", "codex-cloud",
+                           "--require", "email.personal.read")
+    check("required pending cloud mail capability fails closed",
+          out.code == 1 and "required but status is pending" in out,
+          out, "no accepted provider means BLOCKED, not a claimed mailbox check")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_host_only_mcp_cannot_be_accepted_as_cloud_provider():
+    """13.08: a Mac-local MCP declaration is not cloud acceptance evidence."""
+    d = environment_fixture(environment_registry("accepted", "local-mcp"))
+    out = run_environments(d, "--runtime", "codex-cloud",
+                           "--require", "email.personal.read")
+    check("host-only MCP cannot masquerade as Codex Cloud provider",
+          out.code == 1 and "codex-cloud cannot accept host-only kind local-mcp" in out,
+          out, "cloud needs a separately accepted managed connector or remote MCP")
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def t_update_names_optional_capabilities():

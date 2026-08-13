@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "cloud_policy": "allowed",
+  "supported_runtimes": ["codex-local", "claude-local", "codex-cloud"],
+  "capabilities": [
+    {
+      "id": "email.personal.read",
+      "purpose": "Find and read owner-authorized messages for the current task",
+      "required_when": "Only when the current request explicitly needs this mailbox",
+      "required_by_default": false,
+      "sensitivity": "private",
+      "failure_policy": "fail-closed",
+      "prohibited_actions": [
+        "send, delete, label or otherwise mutate mail without separate authority",
+        "treat the same connector name as proof of the same account or scope",
+        "copy credentials into this registry or the repository"
+      ],
+      "providers": {
+        "codex-local": {
+          "status": "accepted",
+          "kind": "local-mcp",
+          "provider": "<exact server id from the canonical local MCP inventory>",
+          "identity": "<account alias, never a credential>",
+          "scope": "read-only mail search and message reading",
+          "authority": "current-task owner request plus project stop-gates",
+          "source": "<path or pointer to the canonical MCP inventory>",
+          "validation": "<safe read-only capability probe>",
+          "accepted_at": "<date and evidence>"
+        },
+        "claude-local": {
+          "status": "pending",
+          "kind": "local-mcp",
+          "provider": "<exact server id>",
+          "identity": "<account alias>",
+          "scope": "<scope>",
+          "authority": "<authority>",
+          "source": "<canonical inventory pointer>",
+          "validation": "<safe read-only capability probe>"
+        },
+        "codex-cloud": {
+          "status": "pending",
+          "kind": "managed-connector",
+          "provider": "<configured cloud connector or remote MCP id>",
+          "identity": "<account alias>",
+          "scope": "<scope accepted in this cloud environment>",
+          "authority": "<authority>",
+          "validation": "<safe read-only probe in a fresh cloud task>",
+          "accepted_at": "<date and evidence after acceptance>"
+        }
+      },
+      "fallback": "Ask the owner for an export or run the task in an accepted runtime; do not claim the mailbox was checked"
+    }
+  ]
+}

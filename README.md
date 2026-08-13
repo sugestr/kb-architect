@@ -30,6 +30,7 @@ It helps a project:
 - use one checkout sequentially and separate Git worktrees for parallel writers;
 - update the skill from stable PUBLIC GitHub releases and report reproducible defects;
 - keep specialized project skills recoverable: one Git source, explicit professional role and authority ladder, and separate Claude/Codex discovery checks;
+- make cloud work explicit and testable: repo-portable entry rules plus a per-runtime capability map for local MCPs, managed connectors, accounts and scopes;
 - audit legacy projects and remove duplicates without discarding evidence.
 
 The built-in lookup is lexical and asks for translations and everyday synonyms.
@@ -46,6 +47,12 @@ not a claim of universal maturity.
 The same stable public release is installed for Claude and Codex. Project knowledge
 and platform-specific entry points remain in the project repository; the skill does
 not create a second project copy or a proprietary memory service.
+
+Cloud-ready does not mean that a local Mac integration was copied into a container.
+For requests such as “check my email”, a project can declare one logical capability
+and independently accept its local Codex, local Claude and Codex Cloud providers.
+The account, scope and read-only probe must match; a missing required provider stops
+that part of the task without blocking unrelated repository work.
 
 ## Русский
 
@@ -92,6 +99,11 @@ not create a second project copy or a proprietary memory service.
 ```
 
 Задаст три вопроса — кто будет это читать, на какие крупные куски делится проект, кто будет писать файлы. Дальше структуру придумает под ответы, а не по шаблону.
+
+Новый проект сразу строится переносимым между локальной и облачной работой: активные
+инструкции используют пути внутри репозитория, а внешние возможности — например,
+«читать мою почту» — объявляются отдельно для каждой среды. Одинаковое имя MCP не
+считается доказательством того же аккаунта или тех же прав.
 
 **Потом просто работаешь.** Скилл сам решает, что куда класть. Ты его не читаешь и справочник не открываешь — это делает чат, и только когда упёрся в конкретную проблему.
 

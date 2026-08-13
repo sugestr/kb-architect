@@ -1,9 +1,9 @@
 ---
 name: kb-architect
-description: "Knowledge-base contract, optional patterns and tested tools for durable AI projects. Use to start, audit, update, restructure or move a KB; separate facts from interpretations; preserve handoffs; coordinate Claude/Codex; audit recoverable project skills; collect duplicates safely. Triggers: 'база знаний', 'project skill', 'исторический проект', 'сборка мусора', 'обнови скилл', 'два агента', 'перенеси себя в общее поле', 'база врёт'."
+description: "Knowledge-base contract and tested tools for durable AI projects. Start, audit, update, restructure or move a KB; coordinate local/cloud Claude and Codex; audit project skills and runtime capabilities. Triggers: 'база знаний', 'project skill', 'облачный проект', 'MCP', 'исторический проект', 'сборка мусора', 'обнови скилл', 'два агента', 'перенеси себя в общее поле', 'база врёт'."
 license: MIT
 metadata:
-  version: "5.0"
+  version: "5.1"
   author: "sugestr"
 ---
 
@@ -28,6 +28,7 @@ metadata:
 | Обновить стабильный скилл и применить выпуск | `references/service-layer.md`; для быстрой проверки `scripts/kb_update.py --public --fast --сделать` |
 | Работать нескольким агентам, принять или передать сообщение | `references/collaboration.md` + `assets/templates/agent-message.md` |
 | Проверить внутренний профессиональный skill | `references/modules.md` → `capability_skills` + `scripts/kb_skills.py` |
+| Подготовить облачную работу или проверить MCP/почту в разных средах | `references/modules.md` → `runtime_capabilities` + `scripts/kb_environments.py` |
 | Разобрать входящее, сверить реальность, найти факт | `references/operations.md`; перед выводом об отсутствии — `scripts/kb_lookup.py` |
 | Проверить целостность или просрочку | `scripts/kb_check.py` и/или `scripts/kb_due.py` |
 | Отделить факт, интерпретацию и решение | `references/knowledge-roles.md` |
@@ -45,6 +46,8 @@ metadata:
   как новые проектные правила и не добавляй обязательств из справочника молча.
 - В зрелом проекте локальные правила и domain skill имеют приоритет для роли,
   authority, source ladder, stop/escalation и запрещённых действий.
+- Git не переносит в облако local MCP, Keychain и ignored-файлы. Внешнюю
+  возможность принимай для runtime, account, scope и safe probe.
 - Высокорисковое, внешнее или необратимое действие требует проектных источников и
   владельческого гейта независимо от того, насколько простой вопрос его вызвал.
 - В последовательной работе используется один checkout. Параллельные писатели
@@ -57,12 +60,27 @@ metadata:
 
 ## Дешёвый рабочий цикл
 
+Новый пользовательский turn — не новый вход в проект. В одной живой задаче не
+повторяй boot/service cycle, если root, current pointer, редакция скилла и
+authority-context не изменились. Квитанция живёт в контексте задачи; отдельный файл
+ради неё не нужен.
+
+До вызова инструментов выбери критический путь:
+
+- **только ответ:** current state → точечный KB lookup → ответ; updater, полный
+  audit, inbox, Git, defect report и memory не входят в этот путь сами по себе;
+- **ответ + долговременное изменение:** ранний проверенный результат → durable tail;
+- **опасное/внешнее действие:** сначала относящийся к нему authority/source gate.
+
 1. Прочитать короткий проектный вход и текущее состояние.
 2. Запустить только принятые проектом локальные проверки. Их PASS относится лишь
    к перечисленному охвату; ошибка или непройденный запуск — `UNKNOWN`, не PASS.
 3. Открыть один routed reference или project skill только при соответствующем
    триггере.
-4. Записать результат в канон, corrections или исход сообщения; не создавать
+4. Если запрос одновременно требует полезный текст сейчас и долговременный intake,
+   показать помеченный черновик сразу после достаточной сверки; durable tail не
+   ставить перед первым полезным результатом.
+5. Записать результат в канон, corrections или исход сообщения; не создавать
    вторую копию текущего состояния.
 
 ## Сообщения и отчёты
