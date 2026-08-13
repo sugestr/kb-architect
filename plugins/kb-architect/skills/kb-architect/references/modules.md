@@ -263,8 +263,8 @@ Domain skill отвечает на вопрос «как профессиона�
 зависимостей не создаёт пустой реестр.
 
 Проект хранит `.kb-environments.json` с логическими capability id, например
-`email.personal.read`, и отдельным provider для `codex-local`, `claude-local` и
-`codex-cloud`. Для каждой среды фиксируются:
+`email.personal.read`, и отдельным provider для `codex-local`, `claude-local`,
+`codex-cloud` и `claude-cloud`. Для каждой среды фиксируются:
 
 - `status`: `accepted`, `pending`, `unavailable` или `not-applicable`;
 - `kind` и точный provider/server id;
@@ -275,10 +275,11 @@ Domain skill отвечает на вопрос «как профессиона�
 
 Одинаковое имя сервера не доказывает тот же аккаунт, scope или данные. Локальный MCP,
 macOS Keychain, `~/...` и ignored-файл не появляются в облачном контейнере. В Codex
-Cloud capability может дать штатный managed connector, доступный remote MCP или
-repo-local инструмент с безопасно настроенной средой; каждый вариант принимается
-отдельно. Секрет не записывается в Git: registry хранит только место/способ доставки
-и границы, а не значение.
+Cloud или claude.ai capability может дать штатный managed connector, доступный remote
+MCP или repo-local инструмент с безопасно настроенной средой; каждая платформа и
+каждый вариант принимаются отдельно. Нельзя записывать Claude cloud provider как
+`claude-local` или `codex-cloud` ради прохождения checker-а. Секрет не записывается в
+Git: registry хранит только место/способ доставки и границы, а не значение.
 
 Команда «посмотри у меня в почте» сначала разрешает логическую capability, точный
 mailbox и current-task authority. Затем среда должна иметь `accepted` provider для

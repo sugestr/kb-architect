@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "cloud_policy": "allowed",
-  "supported_runtimes": ["codex-local", "claude-local", "codex-cloud"],
+  "supported_runtimes": ["codex-local", "claude-local", "codex-cloud", "claude-cloud"],
   "capabilities": [
     {
       "id": "email.personal.read",
@@ -41,6 +41,16 @@
           "status": "pending",
           "kind": "managed-connector",
           "provider": "<configured cloud connector or remote MCP id>",
+          "identity": "<account alias>",
+          "scope": "<scope accepted in this cloud environment>",
+          "authority": "<authority>",
+          "validation": "<safe read-only probe in a fresh cloud task>",
+          "accepted_at": "<date and evidence after acceptance>"
+        },
+        "claude-cloud": {
+          "status": "pending",
+          "kind": "managed-connector",
+          "provider": "<configured claude.ai connector or remote MCP id>",
           "identity": "<account alias>",
           "scope": "<scope accepted in this cloud environment>",
           "authority": "<authority>",

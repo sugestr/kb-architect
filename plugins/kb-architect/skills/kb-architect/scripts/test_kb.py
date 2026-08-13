@@ -483,6 +483,44 @@ def t_host_only_mcp_cannot_be_accepted_as_cloud_provider():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_shared_boot_rejects_absolute_local_root_consistently():
+    """13.08: service-layer exact-root wording contradicted the portable template."""
+    registry = environment_registry()
+    d = environment_fixture(registry)
+    entry = os.path.join(d, "AGENTS.md")
+    with open(entry, "w", encoding="utf-8") as f:
+        f.write("# shared entry\ncanonical root: /" + "Users/example/project\n")
+    subprocess.run(["git", "-C", d, "add", "AGENTS.md"], check=True)
+    out = run_environments(d, "--runtime", "codex-local")
+    service = skill_text("references/service-layer.md")
+    template = skill_text("assets/templates/CLAUDE.md")
+    check("shared boot canon uses a repo-relative root consistently",
+          out.code == 1
+          and "shared boot canon must use a repo-relative root" in out
+          and "переносимый repo-relative root" in service
+          and "project root: ." in service
+          and "project root: ." in template,
+          out, "absolute local path is acceptance evidence, not a cloud-shared instruction")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_claude_cloud_is_a_first_class_runtime():
+    """13.08: an accepted claude.ai connector must not be mislabeled as local/Codex."""
+    registry = environment_registry("accepted")
+    registry["supported_runtimes"].append("claude-cloud")
+    provider = registry["capabilities"][0]["providers"].pop("codex-cloud")
+    registry["capabilities"][0]["providers"]["claude-cloud"] = provider
+    d = environment_fixture(registry)
+    out = run_environments(d, "--runtime", "claude-cloud",
+                           "--require", "email.personal.read")
+    check("claude-cloud provider is declared and accepted independently",
+          out.code == 0
+          and "accepted in claude-cloud" in out
+          and "errors=0" in out,
+          out, "claude.ai is neither claude-local nor codex-cloud")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def t_update_names_optional_capabilities():
     """4.19 установился, но проекты не узнали о новой работе Claude + Codex.
 

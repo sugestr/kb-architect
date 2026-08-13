@@ -17,7 +17,8 @@ import subprocess
 import sys
 
 
-RUNTIMES = {"codex-local", "claude-local", "codex-cloud"}
+RUNTIMES = {"codex-local", "claude-local", "codex-cloud", "claude-cloud"}
+CLOUD_RUNTIMES = {"codex-cloud", "claude-cloud"}
 STATUSES = {"accepted", "pending", "unavailable", "not-applicable"}
 CLOUD_LOCAL_KINDS = {"local-mcp", "local-filesystem", "macos-keychain"}
 # Split the macOS home prefix so the public leakage scanner does not mistake this
@@ -68,7 +69,8 @@ def entry_portability(root: Path, runtimes: list[str], errors: list[str]) -> Non
         for lineno, line in enumerate(text.splitlines(), 1):
             if ABSOLUTE.search(line) and not line.lstrip().startswith("# historical"):
                 errors.append(
-                    f"{name}:{lineno}: active instruction contains a host-specific path"
+                    f"{name}:{lineno}: active instruction contains a host-specific path; "
+                    "shared boot canon must use a repo-relative root"
                 )
 
 
@@ -91,9 +93,9 @@ def accepted_provider(entry: object, runtime: str, capability: str,
             f"{capability}: accepted {runtime} provider missing {', '.join(missing)}"
         )
         return False
-    if runtime == "codex-cloud" and entry.get("kind") in CLOUD_LOCAL_KINDS:
+    if runtime in CLOUD_RUNTIMES and entry.get("kind") in CLOUD_LOCAL_KINDS:
         errors.append(
-            f"{capability}: codex-cloud cannot accept host-only kind {entry.get('kind')}"
+            f"{capability}: {runtime} cannot accept host-only kind {entry.get('kind')}"
         )
         return False
     if entry.get("kind") == "local-mcp" and not entry.get("source"):
@@ -129,7 +131,7 @@ def validate(root: Path, registry: Path, runtime: str,
     if runtime not in runtimes:
         errors.append(f"runtime {runtime} is not declared supported")
     policy = data.get("cloud_policy")
-    if runtime == "codex-cloud" and policy != "allowed":
+    if runtime in CLOUD_RUNTIMES and policy != "allowed":
         errors.append(f"cloud_policy is {policy!r}, not 'allowed'")
     entry_portability(root, runtimes, errors)
 
