@@ -538,6 +538,26 @@ def t_55_one_time_keychain_enrollment_builds_a_derived_vault():
           out, "Keychain is source; owner-scoped enrollment creates an erasable cache")
 
 
+def t_56_modern_passwords_enrollment_is_owner_mediated_and_trace_free():
+    """A working AutoFill credential can be unreachable to exact Keychain lookup."""
+    module = skill_text("references/modules.md")
+    start = module.index("Современная запись Apple Passwords")
+    recipe = module[start:module.index("Такое разрешение можно дать", start)]
+    compact = " ".join(recipe.split())
+    out = Vyvod(recipe, 0)
+    check("modern Passwords uses one owner-mediated derived-vault handoff",
+          "source недоступен этому provider" in compact
+          and "не отсутствие credential" in compact
+          and "Не создавать ради обхода второй generic-password source" in compact
+          and "alias, ожидаемые domain/account и `cloud_policy`" in compact
+          and "stdout, clipboard, argv/env, файл или лог" in compact
+          and "Cancel, пустой выбор, mismatch или отказ не создают запись" in compact
+          and "системным Passwords AutoFill" in compact
+          and "ручная передача через чат не становится fallback" in compact
+          and "Refresh такой записи снова требует owner-mediated UI" in compact,
+          out, "one selected modern credential reaches the vault without a secret trace")
+
+
 def t_optional_cloud_connector_does_not_block_repo_work():
     """13.08: missing connector must block its task, not all Git work."""
     d = environment_fixture(environment_registry())

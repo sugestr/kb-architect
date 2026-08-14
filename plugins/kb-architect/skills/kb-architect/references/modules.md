@@ -379,6 +379,21 @@ enrollment, а не постоянное право сканировать ли�
 5. Завершить отчётом `service alias → accepted / handoff / unavailable`, без секретов.
    Неясная запись остаётся на месте; догадка по похожему имени не считается выбором.
 
+Современная запись Apple Passwords может работать через AutoFill, но быть недоступной
+`security`/обычному `SecItem` helper из-за data-protection keychain и access groups.
+Такой `not found` означает **source недоступен этому provider**, а не отсутствие
+credential. Не создавать ради обхода второй generic-password source.
+
+Принятый owner-mediated UI helper может перенести ровно одну выбранную credential в
+тот же derived vault. Перед сохранением он показывает alias, ожидаемые domain/account
+и `cloud_policy`; сверяет account и требует явное подтверждение владельца. Значение
+остаётся в UI-процессе и напрямую записывается в сейф — не проходит через stdout,
+clipboard, argv/env, файл или лог. Cancel, пустой выбор, mismatch или отказ не создают
+запись. Если native picker недоступен, допустимо защищённое поле с системным Passwords
+AutoFill внутри того же helper; ручная передача через чат не становится fallback.
+Refresh такой записи снова требует owner-mediated UI: background-доступ к исходной
+Passwords записи не обещается.
+
 Такое разрешение можно дать сразу для класса вроде «медицинские системы» или «доступы,
 нужные активным проектам»: отдельная ACL на каждый проект не возникает. Оно расходуется
 после одного enrollment-pass; повторный просмотр личного Keychain требует новой прямой
