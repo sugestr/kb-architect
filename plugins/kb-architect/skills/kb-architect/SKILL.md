@@ -1,9 +1,9 @@
 ---
 name: kb-architect
-description: "Knowledge-base contract and tested tools for durable AI projects. Start, audit, update, restructure or move a KB; coordinate local/cloud Claude and Codex; audit project skills and runtime capabilities. Triggers: 'база знаний', 'project skill', 'облачный проект', 'MCP', 'исторический проект', 'сборка мусора', 'обнови скилл', 'два агента', 'перенеси себя в общее поле', 'база врёт'."
+description: "Knowledge-base contract and tools for durable AI projects. Start, audit, update, restructure or move a KB; coordinate Claude/Codex; audit domain skills, runtime and credential access. Use for KBs, project skills, cloud/MCP/Keychain, пароль/карточка, agent purchases, cleanup, two-agent work and 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "5.4"
+  version: "5.5"
   author: "sugestr"
 ---
 
@@ -29,6 +29,7 @@ metadata:
 | Работать нескольким агентам, принять или передать сообщение | `references/collaboration.md` + `assets/templates/agent-message.md` |
 | Проверить внутренний профессиональный skill | `references/modules.md` → `capability_skills` + `scripts/kb_skills.py` |
 | Подготовить облачную работу или проверить MCP/почту в разных средах | `references/modules.md` → `runtime_capabilities` + `scripts/kb_environments.py` |
+| Пароли, карты, Remote или покупка | `references/modules.md` → `agent_vault_and_external_actions` |
 | Разобрать входящее, сверить реальность, найти факт | `references/operations.md`; перед выводом об отсутствии — `scripts/kb_lookup.py` |
 | Проверить целостность или просрочку | `scripts/kb_check.py` и/или `scripts/kb_due.py` |
 | Отделить факт, интерпретацию и решение | `references/knowledge-roles.md` |

@@ -484,6 +484,60 @@ def t_54_apply_requests_safe_credential_cleanup():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_55_agent_vault_keeps_read_simple_and_actions_gated():
+    """14.08: owner chose one system-wide local read profile, not per-project ACLs."""
+    module = skill_text("references/modules.md")
+    skill = skill_text("SKILL.md")
+    start = module.index("## `agent_vault_and_external_actions`")
+    recipe = module[start:]
+    out = Vyvod(recipe + "\n" + skill, 0)
+    check("agent vault grants broad local read without broad purchase authority",
+          "одна общая системная граница, не разрешения по\n   проектам" in recipe
+          and "не добавляет обязательного\nproject registry" in recipe
+          and "чтение из принятого сейфа не требует отдельного вопроса" in recipe
+          and "merchant/допустимый класс и максимальную общую сумму" in recipe
+          and "повторный вопрос перед оплатой не нужен" in recipe
+          and "3-D Secure" in recipe and "owner handoff" in recipe
+          and "локальный Keychain не существует в контейнере" in recipe
+          and "пароль" in skill and "карточка" in skill,
+          out, "one accepted local vault; current task gates use; irreversible challenge hands off")
+
+
+def t_55_agent_vault_does_not_make_generic_shell_a_secret_broker():
+    """A one-time convenience grant must not silently authorize every executable."""
+    module = skill_text("references/modules.md")
+    start = module.index("## `agent_vault_and_external_actions`")
+    recipe = module[start:]
+    out = Vyvod(recipe, 0)
+    check("agent vault is mediated by an accepted helper",
+          "Не выдавать то же\n   право универсальному shell, Terminal или произвольному процессу" in recipe
+          and "Субагенты обращаются через тот же\n   принятый helper" in recipe
+          and "не вывести список или значения всего сейфа" in recipe,
+          out, "system-wide for Codex tasks does not mean system-wide for arbitrary code")
+
+
+def t_55_one_time_keychain_enrollment_builds_a_derived_vault():
+    """Keychain stays canonical; owner does not retype existing values."""
+    module = skill_text("references/modules.md")
+    start = module.index("### Разовое первичное наполнение")
+    recipe = module[start:module.index("По прямой задаче владельца", start)]
+    compact = " ".join(recipe.split())
+    out = Vyvod(recipe, 0)
+    check("one-time Keychain enrollment builds a replaceable derived vault",
+          "один раз проверить" in compact
+          and "повторно не вводит" in compact
+          and "все логины и пароли к медицинским системам" in compact
+          and "оканчивающаяся на 7011" in compact
+          and "не выводя значения" in compact
+          and "не менять и не удалять исходную запись" in compact
+          and "никогда не становится каноном" in compact
+          and "Карты не импортировать массово" in compact
+          and "без секретов" in compact
+          and "расходуется после одного enrollment-pass" in compact
+          and "повторный просмотр личного Keychain требует новой" in compact,
+          out, "Keychain is source; owner-scoped enrollment creates an erasable cache")
+
+
 def t_optional_cloud_connector_does_not_block_repo_work():
     """13.08: missing connector must block its task, not all Git work."""
     d = environment_fixture(environment_registry())
