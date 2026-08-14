@@ -450,6 +450,40 @@ def t_runtime_capability_template_separates_identity_scope_and_authority():
           out, "logical email capability; per-runtime identity/scope/authority and routed audit")
 
 
+def t_keychain_is_storage_canon_not_blanket_non_disclosure():
+    """14.08: owner permits task-scoped reveal; Git still stores only the locator."""
+    module = skill_text("references/modules.md")
+    patterns = skill_text("references/patterns.md")
+    out = Vyvod(module + "\n" + patterns, 0)
+    check("Keychain rule separates storage, task use and disclosure traces",
+          "Это правило хранения, а не запрет агенту" in module
+          and "tool output, shell history или чат" in module
+          and "Always Allow" in module
+          and "Cloud runtime локальный\nKeychain по-прежнему не наследует" in module
+          and "агент может получить значение" in patterns
+          and "ключ или пароль расшифровки" in patterns.lower()
+          and "канон остаётся в Keychain/secret store" in patterns
+          and "Разовый перенос существующего plaintext" in patterns
+          and "ставится на ротацию/отзыв" in patterns,
+          out, "Git keeps a locator; authorized local use is allowed and auditable")
+
+
+def t_54_apply_requests_safe_credential_cleanup():
+    """14.08: every updating project must see the owner's one-time cleanup duty."""
+    d = base({"NOW.md": NOW_OK,
+              "CLAUDE.md": "# правила\n\nkb_standard_version: 5.3\n"})
+    out = run("kb_apply.py", d)
+    check("5.4 application names safe Keychain cleanup",
+          "[5.4]" in out
+          and "credential cleanup" in out
+          and "не выводя значения" in out
+          and "точными locator-ами" in out
+          and "поставь на ротацию" in out
+          and "явно разреши Claude/Codex" in out,
+          out, "migration verifies Keychain before deleting plaintext duplicates")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def t_optional_cloud_connector_does_not_block_repo_work():
     """13.08: missing connector must block its task, not all Git work."""
     d = environment_fixture(environment_registry())
