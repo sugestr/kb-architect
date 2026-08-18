@@ -30,6 +30,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kb_paths
+
 TEXT_EXT = {".md", ".txt", ".json", ".yml", ".yaml", ".csv", ".tsv", ".py", ".org", ".rst"}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".obsidian"}
 MAX_FILES_SHOWN = 8
@@ -67,6 +70,53 @@ def search(files, root, variants):
     return hits
 
 
+def search_refs(root, refs, variants):
+    """Совпадения в неслитых ветках: [(ветка, файл, строка или None)].
+
+    Рабочее дерево — не весь репозиторий. Отчёт 18.08: полис лежал в ветке,
+    не влитой четыре дня, поиск ответил «в базе нет», и документ выкачали и
+    разобрали заново. Вывод «этого нет» обязан покрывать и то, что доставлено,
+    но не слито, — иначе он говорит о рабочем дереве, а звучит про базу.
+    """
+    git_root = kb_paths.find_git(root)
+    if not git_root:
+        return []
+    # Файл, который есть в рабочем дереве, из веток не показывается: канон
+    # уже ответил, а вторая копия того же — шум, от которого отчёт перестают
+    # читать. Показывается только то, чего в каноне нет.
+    hits = []
+    for ref in refs:
+        for v in variants:
+            v = v.strip()
+            if not v:
+                continue
+            out, _ = kb_paths.git_out(git_root, "grep", "-I", "-i", "-n",
+                                      "-e", v, ref)
+            for line in (out or "").split("\n"):
+                if not line:
+                    continue
+                # формат: <ref>:<путь>:<номер>:<строка>
+                parts = line.split(":", 3)
+                if len(parts) < 4:
+                    continue
+                hits.append((ref, parts[1], parts[3].strip()[:SNIPPET]))
+            names, _ = kb_paths.git_out(git_root, "ls-tree", "-r",
+                                        "--name-only", ref)
+            for path in (names or "").split("\n"):
+                if path and re.search(re.escape(v), path, re.IGNORECASE):
+                    hits.append((ref, path, None))
+    # один файл — одна строка, первая находка
+    seen, out = set(), []
+    for ref, path, line in hits:
+        if (ref, path) in seen:
+            continue
+        if os.path.exists(os.path.join(root, path)):
+            continue
+        seen.add((ref, path))
+        out.append((ref, path, line))
+    return out
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
@@ -80,29 +130,52 @@ def main():
         return 2
 
     files = collect(root)
-    print(f"База: {root} — {len(files)} текстовых файлов\n")
+    vetki, vetki_why = kb_paths.unmerged_refs(root)
+    refs = [v.name for v in vetki]
+    if refs:
+        gde = f"{len(files)} текстовых файлов + неслитых веток: {len(refs)}"
+    elif vetki_why:
+        gde = f"{len(files)} текстовых файлов; неслитые ветки не проверены — {vetki_why}"
+    else:
+        gde = f"{len(files)} текстовых файлов; неслитых веток нет"
+    print(f"База: {root} — {gde}\n")
 
     found_any = False
     for topic in topics:
         variants = topic.split("|")
         hits = search(files, root, variants)
         shown = " / ".join(v.strip() for v in variants)
+        vne = search_refs(root, refs, variants) if refs else []
 
-        if not hits:
+        if not hits and not vne:
             print(f"── {shown}")
-            print(f"   НЕ НАЙДЕНО. Искали: {shown}")
+            print(f"   НЕ НАЙДЕНО. Искали: {shown} — в {gde}")
             print( "   Прежде чем писать «этого нет»: добавь переводы и обиходные")
             print( "   синонимы и прогони ещё раз. Один язык — это не поиск.\n")
             continue
 
         found_any = True
-        print(f"── {shown} — найдено в {len(hits)} файлах:")
-        for rel, line in hits[:MAX_FILES_SHOWN]:
-            print(f"   {rel}")
-            if line:
-                print(f"      … {line}")
-        if len(hits) > MAX_FILES_SHOWN:
-            print(f"   … и ещё {len(hits) - MAX_FILES_SHOWN}")
+        if hits:
+            print(f"── {shown} — найдено в {len(hits)} файлах:")
+            for rel, line in hits[:MAX_FILES_SHOWN]:
+                print(f"   {rel}")
+                if line:
+                    print(f"      … {line}")
+            if len(hits) > MAX_FILES_SHOWN:
+                print(f"   … и ещё {len(hits) - MAX_FILES_SHOWN}")
+        else:
+            print(f"── {shown} — в рабочем дереве нет.")
+
+        if vne:
+            print(f"   ЕСТЬ ВНЕ КАНОНА — {len(vne)} файлов в неслитых ветках:")
+            for ref, path, line in vne[:MAX_FILES_SHOWN]:
+                print(f"   {ref}: {path}")
+                if line:
+                    print(f"      … {line}")
+            if len(vne) > MAX_FILES_SHOWN:
+                print(f"   … и ещё {len(vne) - MAX_FILES_SHOWN}")
+            print( "   Это доставлено, но не влито. Не переделывай работу заново")
+            print( "   и не пиши «в базе нет»: сначала слияние или явный отказ.")
         print()
 
     if found_any:

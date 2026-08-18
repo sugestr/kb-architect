@@ -949,6 +949,88 @@ def t_apply_ignores_marker_syntax_examples():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def vetka_fixture(files_in_branch, also_on_main=None):
+    """Репозиторий с одной неслитой веткой. Возвращает путь к корню."""
+    d = base({"NOW.md": NOW_OK, "CLAUDE.md": "# правила\n\nвход: NOW.md\n",
+              "kanon/staryy.md": "# канон\n\nтекст\n"})
+    git = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", d], capture_output=True)
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "kb test")
+    git("add", "-A")
+    git("commit", "-q", "-m", "fixture")
+    git("checkout", "-q", "-b", "oblachnaya")
+    for name, text in files_in_branch.items():
+        path = os.path.join(d, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    git("add", "-A")
+    git("commit", "-q", "-m", "работа облачной сессии")
+    git("checkout", "-q", "main")
+    for name, text in (also_on_main or {}).items():
+        path = os.path.join(d, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    if also_on_main:
+        git("add", "-A")
+        git("commit", "-q", "-m", "то же содержимое в каноне")
+    return d
+
+
+def t_58_unmerged_branch_is_a_finding():
+    """Отчёт 18.08: коммит и push состоялись, ветка не слита, и 32 файла
+    доказательств четыре дня отсутствовали в каноне при чистом дереве."""
+    d = vetka_fixture({"dokazatelstva/CLAIMS.md": "# требования\n\nRTA-EXCESS 1580\n"})
+    out = run("kb_check.py", d)
+    check("неслитая ветка с содержимым вне канона становится находкой",
+          "НЕ СЛИТО В КАНОН" in out and "oblachnaya" in out
+          and "dokazatelstva/CLAIMS.md" in out
+          and "неслитые ветки (1)" in out, out,
+          "чистое рабочее дерево не доказывает, что работа в каноне")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_58_moved_directory_is_not_a_loss():
+    """Первый счёт того же случая назвал 27 потерянных путей, из которых
+    потерян был один файл: считать надо по имени и содержимому, не по пути."""
+    polis = "# полис\n\nпокрытие misfuelling, пункт 3(g)\n"
+    d = vetka_fixture({"vetka/booking-polis.md": polis},
+                      also_on_main={"kanon/policy-document.md": polis})
+    out = run("kb_check.py", d)
+    check("переезд и переименование не выдаются за потерю содержимого",
+          "НЕ СЛИТО В КАНОН" not in out
+          and "СОДЕРЖИМОЕ УЖЕ В КАНОНЕ" in out, out,
+          "тот же документ под другим именем — не потеря; путь и имя этого не показывают")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_58_lookup_searches_unmerged_refs():
+    """Полис лежал в неслитой ветке, поиск ответил «в базе нет», и документ
+    выкачали и разобрали заново — вместе с неверной оценкой владельцу."""
+    d = vetka_fixture({"dokazatelstva/polis.md": "# полис\n\nпокрытие misfuelling\n"})
+    p = subprocess.run([sys.executable, os.path.join(HERE, "kb_lookup.py"),
+                        d, "misfuelling"],
+                       capture_output=True, text=True, timeout=120)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("поиск смотрит в неслитые ветки прежде, чем сказать «этого нет»",
+          "НЕ НАЙДЕНО" not in out and "ЕСТЬ ВНЕ КАНОНА" in out
+          and "polis.md" in out, out,
+          "вывод об отсутствии обязан покрывать доставленное, но не слитое")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_58_no_repository_is_named_not_silently_passed():
+    """Проверка, которая не выполнилась, обязана отличаться от пройденной."""
+    d = base({"NOW.md": NOW_OK, "CLAUDE.md": "# правила\n\nвход: NOW.md\n"})
+    out = run("kb_check.py", d)
+    check("без репозитория неприменимость названа, а не молчит",
+          "неслитые ветки — неприменимо" in out, out,
+          "строка «Проверено» называет объём выполненного, включая пропуски")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def t_verify_lookalike():
     """Отчёт из эксплуатации: `verified` вместо `verify` проходил как чисто."""
     d = base({"NOW.md": NOW_OK,
