@@ -3,7 +3,7 @@ name: kb-architect
 description: "Knowledge-base contract and tools for durable AI projects. Start, audit, update, restructure or move a KB; coordinate Claude/Codex; audit domain skills, runtime and credential access. Use for KBs, project skills, cloud/MCP/Keychain, пароль/карточка, agent purchases, cleanup, two-agent work and 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "5.8"
+  version: "5.9"
   author: "sugestr"
 ---
 

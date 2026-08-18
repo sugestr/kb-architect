@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-kb_check.py — целостность базы. Пять проверок, которые не шумят.
+kb_check.py — целостность базы. Шесть проверок, которые не шумят.
 
     python3 kb_check.py <корень базы>
 
@@ -31,6 +31,10 @@ kb_check.py — целостность базы. Пять проверок, ко
      ветку и не влитая, — второй контур: рабочее дерево чисто, а знания
      в базе нет. Проверка называет ветки, их возраст и файлы, которых
      в HEAD нет ни под каким именем.
+
+  6. Исходящее в собственном инбоксе.  Сообщение другому проекту,
+     лежащее у отправителя, не доставлено, что бы ни писал его
+     delivery_state: адресат сюда не смотрит.
 
 Чего здесь намеренно нет: проверок «файл зарегистрирован в карте», «паспорт
 неполон», «размер файла знания». Они либо шумят, либо проверяют форму вместо
@@ -92,6 +96,46 @@ ACTION_STATUS = {
     "sent", "submitted", "paid", "signed", "filed", "delivered", "executed",
     "отправлено", "подано", "оплачено", "подписано", "сдано", "исполнено",
 }
+
+
+MSG_FIELD = {
+    "type": re.compile(r"^\s*type\s*:\s*(\S+)", re.MULTILINE | re.IGNORECASE),
+    "from": re.compile(r"^\s*from_project\s*:\s*(.+)$", re.MULTILINE | re.IGNORECASE),
+    "to": re.compile(r"^\s*to_project\s*:\s*(.+)$", re.MULTILINE | re.IGNORECASE),
+    "state": re.compile(r"^\s*delivery_state\s*:\s*(\S+)", re.MULTILINE | re.IGNORECASE),
+}
+
+
+def imena_proekta(root):
+    """Как этот проект называет сам себя: каталог и slug удалённого репозитория."""
+    imena = {os.path.basename(os.path.abspath(root)).lower()}
+    git_root = kb_paths.find_git(root)
+    if git_root:
+        url, _ = kb_paths.git_out(git_root, "remote", "get-url", "origin", timeout=10)
+        if url:
+            hvost = url.strip().rstrip("/").rsplit("/", 1)[-1]
+            imena.add(hvost[:-4].lower() if hvost.endswith(".git") else hvost.lower())
+    return {i for i in imena if i}
+
+
+def nash(znachenie, imena):
+    z = (znachenie or "").strip().strip("`*_\"' ").lower()
+    return any(i and i in z for i in imena)
+
+
+def inbox_dir(root):
+    """Каталог входящих: объявленный строкой либо по известным именам."""
+    dec, _ = kb_paths.declared_value(root, ("инбокс входящих", "inbox входящих",
+                                            "incoming inbox"))
+    if dec:
+        path = os.path.join(root, dec.strip().strip("`*_\"' ").lstrip("/"))
+        if os.path.isdir(path):
+            return path
+    for name in ("_inbox", "inbox", "входящие"):
+        path = os.path.join(root, name)
+        if os.path.isdir(path):
+            return path
+    return None
 
 
 def skl(n, one, few, many):
@@ -241,11 +285,64 @@ def main():
     # Считается по именам файлов, а не только по путям: переезд каталога
     # выдаёт переименование за потерю всего содержимого. Первый счёт того же
     # случая назвал 27 потерянных путей, из которых потерян был один файл.
+    # 6. Исходящее, лежащее в собственном инбоксе.
+    #
+    # Инбокс — входящий лоток. Сообщение, адресованное другому проекту и
+    # оставленное здесь, доставленным не становится: адресат туда не смотрит,
+    # а отправитель уже отчитался. Случай 18.08 — лаборатория написала
+    # задание проекту в свой же inbox и сказала «передано»; правило
+    # prepared/delivered существовало и было нарушено, потому что записать
+    # себе стоит нисколько, а доставить — надо знать чужой путь.
+    svoi = imena_proekta(root)
+    inbox = inbox_dir(root)
+    chuzhie, nedostavleno = [], []
+    if inbox:
+        for dirpath, dirnames, filenames in os.walk(inbox):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for fn in sorted(filenames):
+                if not fn.lower().endswith(".md"):
+                    continue
+                full = os.path.join(dirpath, fn)
+                fm = FRONTMATTER.match(kb_paths.read(full))
+                if not fm:
+                    continue        # документ владельца шапки не обязан иметь
+                head = fm.group(1)
+                tip = MSG_FIELD["type"].search(head)
+                if not tip or "agent-message" not in tip.group(1).lower():
+                    continue
+                rel = os.path.relpath(full, root)
+                ot = MSG_FIELD["from"].search(head)
+                komu = MSG_FIELD["to"].search(head)
+                state = MSG_FIELD["state"].search(head)
+                if ot and nash(ot.group(1), svoi):
+                    nedostavleno.append((rel, (komu.group(1).strip() if komu else "не назван"),
+                                         state.group(1).strip() if state else "не назван"))
+                elif komu and not nash(komu.group(1), svoi):
+                    chuzhie.append((rel, komu.group(1).strip()))
+
     vetki, vetki_why = kb_paths.unmerged_refs(root)
     poterya = [v for v in vetki if v.lost]
     lishnie = [v for v in vetki if not v.lost]
 
     found = 0
+
+    if nedostavleno:
+        found += len(nedostavleno)
+        print(f"ИСХОДЯЩЕЕ В СОБСТВЕННОМ ИНБОКСЕ — {skl(len(nedostavleno), 'сообщение', 'сообщения', 'сообщений')}:")
+        for rel, komu, state in nedostavleno[:10]:
+            print(f"  {rel} → адресат {komu}, delivery_state: {state}")
+        print("  Инбокс — входящий лоток. Своё сообщение здесь не доставлено,")
+        print("  каким бы ни был delivery_state: адресат сюда не смотрит.")
+        print("  Доставка — файл в инбоксе адресата, его коммит или квитанция")
+        print("  с тем же message_id. До этого состояние — prepared.\n")
+
+    if chuzhie:
+        found += len(chuzhie)
+        print(f"В ИНБОКСЕ СООБЩЕНИЯ НЕ ЭТОМУ ПРОЕКТУ — {skl(len(chuzhie), 'файл', 'файла', 'файлов')}:")
+        for rel, komu in chuzhie[:10]:
+            print(f"  {rel} → адресовано: {komu}")
+        print("  Либо доставлено не туда, либо проект сменил имя. В обоих случаях")
+        print("  адресат этого не видел.\n")
 
     if vetki_why and vetki_why != "репозитория нет":
         found += 1
@@ -368,6 +465,7 @@ def main():
         scope.append("неслитые ветки — НЕ ПРОВЕРЕНО")
     else:
         scope.append(f"неслитые ветки ({len(vetki)})")
+    scope.append("адресация инбокса" if inbox else "адресация инбокса — неприменимо (инбокса нет)")
     if entry.found:
         scope.append(f"объём входа ({entry.where(root)})")
     elif entry_note:

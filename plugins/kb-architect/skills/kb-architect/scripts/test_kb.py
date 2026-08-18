@@ -1031,6 +1031,34 @@ def t_58_no_repository_is_named_not_silently_passed():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_59_outgoing_message_in_own_inbox_is_a_finding():
+    """18.08: лаборатория положила задание проекту в свой же inbox и сказала
+    «передано»; адресат проверил свой инбокс и нашёл его пустым."""
+    msg = ("---\ntype: agent-message\nmessage_id: m1\n"
+           "from_project: moya-baza\nto_project: chuzhoy-proekt\n"
+           "delivery_state: delivered\n---\n\n# задание\n")
+    vhod = ("---\ntype: agent-message\nmessage_id: m2\n"
+            "from_project: chuzhoy-proekt\nto_project: moya-baza\n"
+            "delivery_state: delivered\n---\n\n# входящее\n")
+    d = tempfile.mkdtemp(prefix="kbtest-") + "/moya-baza"
+    os.makedirs(d)
+    for name, text in {"NOW.md": NOW_OK,
+                       "CLAUDE.md": "# правила\n\nвход: NOW.md\n",
+                       "_inbox/2026-08-18_zadanie.md": msg,
+                       "_inbox/2026-08-18_vhodyashchee.md": vhod}.items():
+        path = os.path.join(d, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    out = run("kb_check.py", d)
+    check("исходящее в собственном инбоксе — находка, входящее — нет",
+          "ИСХОДЯЩЕЕ В СОБСТВЕННОМ ИНБОКСЕ" in out
+          and "zadanie" in out and "vhodyashchee" not in out
+          and "адресация инбокса" in out, out,
+          "delivery_state: delivered не делает запись у себя доставкой")
+    shutil.rmtree(os.path.dirname(d), ignore_errors=True)
+
+
 def t_verify_lookalike():
     """Отчёт из эксплуатации: `verified` вместо `verify` проходил как чисто."""
     d = base({"NOW.md": NOW_OK,
