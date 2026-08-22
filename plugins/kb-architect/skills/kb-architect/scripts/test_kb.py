@@ -78,13 +78,51 @@ def t_thin_router_preserves_frozen_contract_by_reference():
     )
     out = Vyvod(router + "\n" + contract, 0)
     check("тонкий entry маршрутизирует к неизменному обязательному контракту",
-          len(router.encode("utf-8")) <= 10_000
+          len(router.encode("utf-8")) <= 8_192
           and "references/contract.md" in router
           and "## Три поля" not in router
           and all(rule in contract for rule in rules)
           and "CORRECTIONS.md" in contract
           and "один сменный слот" in contract,
-          out, "router <=10KB; four rules, corrections and control test stay in contract")
+          out, "router <=8KiB; four rules, corrections and control test stay in contract")
+
+
+def t_layer_cost_is_measured_from_the_single_router():
+    """23.08: raw file count drifted 12 to 18; savings lacked a reproducible measure."""
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_cost.py"), "--json", "--check"],
+        capture_output=True, text=True, timeout=120)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    try:
+        data = __import__("json").loads(p.stdout)
+    except (ValueError, TypeError):
+        data = {}
+    routes = data.get("routes", [])
+    ordinary = next(
+        (x for x in routes if x.get("task", "").startswith("Обычная работа")), {})
+    measured = next(
+        (x for x in routes if "стоимость слоёв" in x.get("task", "")), {})
+    check("стоимость entry и routed-слоёв воспроизводима без второго route registry",
+          p.returncode == 0
+          and data.get("entry_bytes", 99_999) <= 8_192
+          and data.get("modules") <= 10
+          and len(routes) >= 15
+          and ordinary.get("extra_bytes") == 0
+          and "references/measurement.md" in measured.get("resources", []),
+          out, "parse SKILL table; entry <=8KiB; ordinary route adds no common reference")
+
+
+def t_analytical_delta_keeps_canon_and_primary_scope_visible():
+    """20.08: old policy looked new and an incomplete SUM replaced a MiFID total."""
+    ref = skill_text("references/operations.md")
+    out = Vyvod(ref, 0)
+    check("аналитика различает канон, новую дельту и охват производного агрегата",
+          "уже в каноне" in ref
+          and "новая дельта" in ref
+          and "Переформулированный канон не становится новой находкой" in ref
+          and "агрегат производного слоя" in ref
+          and "первичный документ" in ref,
+          out, "canon path vs new delta; derived scope cannot overrule fuller primary evidence")
 
 
 def t_project_entry_is_two_layer_and_keeps_stop_gates():

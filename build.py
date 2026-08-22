@@ -31,7 +31,7 @@ def main() -> int:
     match = re.search(r'^  version: "([^"]+)"$', text, re.MULTILINE)
     if not match:
         raise SystemExit("metadata.version not found")
-    limit = int(os.environ.get("SKILL_LIMIT", "40960"))
+    limit = int(os.environ.get("SKILL_LIMIT", "8192"))
     size = len(text.encode("utf-8"))
     if size > limit:
         raise SystemExit(f"ПОТОЛОК ПРЕВЫШЕН: SKILL.md {size} байт при пределе {limit}")
