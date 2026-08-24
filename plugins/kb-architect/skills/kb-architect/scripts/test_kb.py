@@ -893,6 +893,49 @@ def t_declared_entry_and_second_file():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_512_report_inbox_is_a_direct_existing_directory():
+    """24.08, tg-archive: строка указывала на inventory, где адреса не было."""
+    indirect = base({
+        "NOW.md": NOW_OK,
+        "config/inventory.md": "# runtime inventory\n\nАдреса отчётов здесь нет.\n",
+        "CLAUDE.md": "# правила\n\nвход: NOW.md\n"
+                     "сервисный контур kb-architect: принят\n"
+                     "инбокс отчётов: config/inventory.md\n",
+    })
+    out = run("kb_check.py", indirect)
+    check("файл-указатель не выдаётся за каталог доставки отчёта",
+          "ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН" in out
+          and "указывает на файл" in out,
+          out, "точный report target обязан быть существующим каталогом")
+    shutil.rmtree(indirect, ignore_errors=True)
+
+    missing = base({
+        "NOW.md": NOW_OK,
+        "CLAUDE.md": "# правила\n\nвход: NOW.md\n"
+                     "сервисный контур kb-architect: принят\n",
+    })
+    out = run("kb_check.py", missing)
+    check("принятый сервисный контур без report inbox не молчит",
+          "ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН" in out
+          and "прямой адрес" in out,
+          out, "принятие contour делает route проверяемым обязательством проекта")
+    shutil.rmtree(missing, ignore_errors=True)
+
+    direct = base({
+        "NOW.md": NOW_OK,
+        "reports/.keep": "",
+        "CLAUDE.md": "# правила\n\nвход: NOW.md\n"
+                     "сервисный контур kb-architect: принят\n"
+                     "инбокс отчётов: reports\n",
+    })
+    out = run("kb_check.py", direct)
+    check("существующий прямой report inbox проходит проверку",
+          out.code == 0 and "инбокс отчётов (reports)" in out
+          and "ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН" not in out,
+          out, "direct repo-relative directory is accepted")
+    shutil.rmtree(direct, ignore_errors=True)
+
+
 def t_stale_entry_with_foreign_date():
     """Критика 5.6: посторонняя свежая дата в шапке маскирует протухший вход."""
     d = base({"NOW.md": "Обновлено: 2020-01-01\nисточник: выгрузка от 2026-08-06\n\n## ГДЕ МЫ\nтекст\n"})
@@ -1377,6 +1420,58 @@ def t_update_safe_replace_keeps_backup():
           out, "same version still requires tree parity before skipping")
     shutil.rmtree(home, ignore_errors=True)
     shutil.rmtree(source, ignore_errors=True)
+
+
+def t_512_update_cycle_cannot_hide_unapplied_project_delta():
+    """24.08: tg-archive downloaded releases but stayed declared at 5.3."""
+    project = base({
+        "NOW.md": NOW_OK,
+        "CLAUDE.md": "# rules\n\nkb_standard_version: 5.3\n",
+    })
+    out = run("kb_apply.py", project)
+    service = skill_text("references/service-layer.md")
+    template = skill_text("assets/templates/CLAUDE.md")
+    combined = Vyvod(str(out) + "\n" + service + "\n" + template, out.code)
+    check("доставленная, но неприменённая редакция остаётся машинно видимой",
+          out.code == 1
+          and "NEEDS_APPLICATION" in out
+          and "--project <корень-проекта>" in service
+          and "--project <корень-проекта>" in template
+          and "код 0 означает" in service,
+          combined, "one entry command runs update + apply; stale project exits 1")
+    shutil.rmtree(project, ignore_errors=True)
+
+
+def t_512_update_project_option_really_runs_apply():
+    """Команда из service-layer должна исполнять второй шаг, не только описывать."""
+    source = base({
+        "SKILL.md": skill_text("SKILL.md"),
+        "references/releases.md": skill_text("references/releases.md"),
+        "scripts/kb_apply.py": skill_text("scripts/kb_apply.py"),
+        "scripts/kb_paths.py": skill_text("scripts/kb_paths.py"),
+        "scripts/test_kb.py": "print('fixture source tests passed')\n",
+    })
+    project = base({
+        "NOW.md": NOW_OK,
+        "CLAUDE.md": "# rules\n\nkb_standard_version: 5.3\n",
+    })
+    local_home = tempfile.mkdtemp(prefix="kbtest-update-project-home-")
+    env = dict(os.environ)
+    env["HOME"] = local_home
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_update.py"),
+         "--source", source, "--project", project],
+        capture_output=True, text=True, timeout=180, env=env)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("update --project действительно запускает project application",
+          out.code == 1
+          and "ПРИМЕНЕНИЕ К ПРОЕКТУ" in out
+          and "NEEDS_APPLICATION" in out
+          and "[5.4]" in out,
+          out, "the single entry command executes kb_apply and propagates exit 1")
+    shutil.rmtree(source, ignore_errors=True)
+    shutil.rmtree(project, ignore_errors=True)
+    shutil.rmtree(local_home, ignore_errors=True)
 
 
 def main():

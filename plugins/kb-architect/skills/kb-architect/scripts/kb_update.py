@@ -6,6 +6,7 @@ kb_update.py — привести файловые установки скилл
     python3 kb_update.py
     python3 kb_update.py --public
     python3 kb_update.py --public --сделать
+    python3 kb_update.py --public --fast --сделать --project <корень-проекта>
     python3 kb_update.py --source <checkout-или-каталог-скилла>
     python3 kb_update.py --source <путь> --сделать
 
@@ -15,6 +16,8 @@ kb_update.py — привести файловые установки скилл
 
 Обновляется файл на диске, не prompt уже идущей сессии. Среда без файловой
 установки (браузер, Cowork) получает точный ручной шаг и не считается обновлённой.
+`--project` тем же циклом запускает разбор project delta; незакрытая дельта
+возвращает код 1 и не может молча выглядеть полностью применённым обновлением.
 """
 
 import argparse
@@ -130,7 +133,7 @@ def fast_public_check(ttl_hours):
         if error:
             print("Быстрая проверка: UNKNOWN — GitHub public не опрошен: " + error)
             print("  прежняя установленная копия не объявляется свежей")
-            return 0
+            return 2
         if head == receipt.get("remote_head"):
             receipt["checked_at_epoch"] = now
             receipt["checked_at"] = datetime.now(timezone.utc).isoformat()
@@ -138,7 +141,7 @@ def fast_public_check(ttl_hours):
             if cache_error:
                 print("Быстрая проверка: public HEAD не изменился, но квитанция не записана")
                 print("  UNKNOWN: " + cache_error)
-                return 0
+                return 2
             print("Быстрая проверка: public HEAD не изменился; clone и тесты не нужны")
             print(f"  редакция: {receipt.get('version')}")
             print(f"  public HEAD: {head}")
@@ -260,6 +263,27 @@ def test_skill(path):
         tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
         return False, "тесты не прошли: " + " | ".join(tail)
     return True, ""
+
+
+def apply_project(skill, project):
+    """Вторая половина update cycle: показать незакрытую project delta."""
+    root = os.path.abspath(os.path.expanduser(project))
+    script = os.path.join(skill, "scripts", "kb_apply.py")
+    if not os.path.isdir(root):
+        print(f"Применение не запущено: нет каталога проекта {root}")
+        return 2
+    if not os.path.isfile(script):
+        print(f"Применение не запущено: в source нет {script}")
+        return 2
+    print()
+    print("═" * 66)
+    print(f"ПРИМЕНЕНИЕ К ПРОЕКТУ: {root}")
+    try:
+        result = subprocess.run([sys.executable, script, root], timeout=180)
+    except Exception as exc:
+        print("Применение не запущено: " + str(exc))
+        return 2
+    return result.returncode
 
 
 def safe_replace(source, destination, old_version):
@@ -418,6 +442,8 @@ def main():
                         help="TTL + ls-remote; полный clone только при изменении/parity gap")
     parser.add_argument("--ttl-hours", type=float, default=DEFAULT_TTL_HOURS,
                         help="срок локальной квитанции быстрого режима (по умолчанию 24)")
+    parser.add_argument("--project",
+                        help="после доставки сразу проверить дельту этого проекта")
     parser.add_argument("--сделать", "--do", action="store_true", dest="do_update")
     args = parser.parse_args()
 
@@ -429,6 +455,8 @@ def main():
     if args.public and args.fast:
         fast_result = fast_public_check(args.ttl_hours)
         if fast_result is not None:
+            if fast_result == 0 and args.project:
+                return apply_project(os.path.dirname(HERE), args.project)
             return fast_result
 
     temp_root = None
@@ -456,6 +484,8 @@ def main():
             cache_error = record_public_receipt(src)
             if cache_error:
                 print("Квитанция быстрого режима не записана: UNKNOWN — " + cache_error)
+        if result == 0 and args.project:
+            result = apply_project(src, args.project)
         return result
     finally:
         if temp_root:

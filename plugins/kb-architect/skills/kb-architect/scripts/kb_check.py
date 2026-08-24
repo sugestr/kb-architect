@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-kb_check.py — целостность базы. Шесть проверок, которые не шумят.
+kb_check.py — целостность базы. Семь проверок, которые не шумят.
 
     python3 kb_check.py <корень базы>
 
@@ -9,7 +9,7 @@ kb_check.py — целостность базы. Шесть проверок, к
 срабатываний — то есть выключался на второй день. Выключенный линтер хуже
 отсутствующего: на нём висит всё обещание проверяемости.
 
-Здесь четыре проверки. Каждая либо находит настоящую поломку, либо молчит.
+Здесь семь проверок. Каждая либо находит настоящую поломку, либо молчит.
 Молчит — но не за счёт того, что не выполнилась: отчёт всегда печатает,
 что именно проверено, и промах поиска входа сам становится находкой.
 
@@ -35,6 +35,10 @@ kb_check.py — целостность базы. Шесть проверок, к
   6. Исходящее в собственном инбоксе.  Сообщение другому проекту,
      лежащее у отправителя, не доставлено, что бы ни писал его
      delivery_state: адресат сюда не смотрит.
+
+  7. Адрес инбокса отчётов.  Принятый сервисный контур обязан назвать
+     существующий каталог напрямую. Ссылка на файл, где путь якобы должен
+     находиться, не является маршрутом доставки.
 
 Чего здесь намеренно нет: проверок «файл зарегистрирован в карте», «паспорт
 неполон», «размер файла знания». Они либо шумят, либо проверяют форму вместо
@@ -136,6 +140,40 @@ def inbox_dir(root):
         if os.path.isdir(path):
             return path
     return None
+
+
+def report_inbox_state(root):
+    """Проверяемый адрес отчётов: прямой существующий каталог или находка.
+
+    Косвенный указатель намеренно не разыменовывается. Иначе декларация
+    становится обещанием, что в другом файле когда-нибудь найдётся ещё одна
+    декларация, а отправитель всё равно не получает точного target.
+    """
+    keys = ("инбокс отчётов", "report inbox", "defect report inbox")
+    raw, source = kb_paths.declared_value(root, keys)
+    service, _ = kb_paths.declared_value(
+        root, ("сервисный контур kb-architect", "kb-architect service layer"))
+    accepted = bool(service and service.strip().lower() in
+                    {"принят", "accepted", "enabled", "включён", "включен"})
+
+    if not raw:
+        if accepted:
+            return None, ("сервисный контур принят, но прямой адрес каталога "
+                          "строкой «инбокс отчётов: …» не объявлен"), None
+        return None, None, "неприменимо (не объявлен)"
+
+    value = os.path.expanduser(raw.strip().strip("`*_\"' "))
+    path = value if os.path.isabs(value) else os.path.join(root, value)
+    path = os.path.normpath(path)
+    where = os.path.relpath(source, root) if source else "правила проекта"
+    shown = path if os.path.isabs(value) else value
+    if os.path.isdir(path):
+        return path, None, shown
+    if os.path.exists(path):
+        return None, (f"{where}: «{raw}» указывает на файл, а нужен каталог "
+                      "доставки"), None
+    return None, (f"{where}: «{raw}» не является существующим каталогом; "
+                  "укажи прямой абсолютный или repo-relative путь"), None
 
 
 def skl(n, one, few, many):
@@ -323,6 +361,7 @@ def main():
     vetki, vetki_why = kb_paths.unmerged_refs(root)
     poterya = [v for v in vetki if v.lost]
     lishnie = [v for v in vetki if not v.lost]
+    report_inbox, report_inbox_error, report_inbox_note = report_inbox_state(root)
 
     found = 0
 
@@ -343,6 +382,13 @@ def main():
             print(f"  {rel} → адресовано: {komu}")
         print("  Либо доставлено не туда, либо проект сменил имя. В обоих случаях")
         print("  адресат этого не видел.\n")
+
+    if report_inbox_error:
+        found += 1
+        print("ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН — нет прямого каталога доставки.")
+        print(f"  {report_inbox_error}.")
+        print("  Указатель на inventory или runtime-конфиг не заменяет адрес:")
+        print("  отправитель должен получить проверяемый target без второго поиска.\n")
 
     if vetki_why and vetki_why != "репозитория нет":
         found += 1
@@ -466,6 +512,12 @@ def main():
     else:
         scope.append(f"неслитые ветки ({len(vetki)})")
     scope.append("адресация инбокса" if inbox else "адресация инбокса — неприменимо (инбокса нет)")
+    if report_inbox:
+        scope.append(f"инбокс отчётов ({report_inbox_note})")
+    elif report_inbox_error:
+        scope.append("инбокс отчётов — НЕ ПРОВЕРЕН")
+    else:
+        scope.append(f"инбокс отчётов — {report_inbox_note}")
     if entry.found:
         scope.append(f"объём входа ({entry.where(root)})")
     elif entry_note:
