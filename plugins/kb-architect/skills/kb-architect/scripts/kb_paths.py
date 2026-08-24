@@ -376,15 +376,25 @@ def published_version():
 
 
 def find_git(start):
-    """Корень репозитория, охватывающего путь. Файл `.git` — linked worktree."""
-    cur = os.path.abspath(start)
-    while True:
-        if os.path.exists(os.path.join(cur, ".git")):
-            return cur
-        parent = os.path.dirname(cur)
-        if parent == cur:
-            return None
-        cur = parent
+    """Корень репозитория, охватывающего путь, подтверждённый самим Git.
+
+    Имя `.git` — лишь возможный маркер: cloud/sandbox runtime может создать
+    служебный пустой каталог с таким именем над рабочим scratch. Проверка по
+    наличию файла принимала его за repository root и превращала честное
+    «неприменимо» в ошибку git. `rev-parse` одинаково понимает обычный checkout
+    и linked worktree с `.git`-файлом и fail-closed отвергает ложный маркер.
+    """
+    import subprocess
+    try:
+        probe = subprocess.run(
+            ["git", "-C", os.path.abspath(start), "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if probe.returncode != 0:
+        return None
+    top = probe.stdout.strip()
+    return os.path.abspath(top) if top and os.path.isdir(top) else None
 
 
 def git_out(root, *args, timeout=30):

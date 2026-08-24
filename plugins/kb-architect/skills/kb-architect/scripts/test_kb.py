@@ -936,6 +936,34 @@ def t_512_report_inbox_is_a_direct_existing_directory():
     shutil.rmtree(direct, ignore_errors=True)
 
 
+def t_513_invalid_parent_git_marker_is_not_a_repository():
+    """24.08, два Codex Cloud scratch-контейнера: у `/tmp` либо `/workspace`
+    находился служебный каталог `.git`, который не был Git-репозиторием.
+    Поиск по одному имени маркера объявлял вложенный fixture репозиторием,
+    проверка веток закономерно падала и превращала два честных теста в 77/79.
+    Маркер — только кандидат; Git обязан подтвердить настоящий top-level.
+    """
+    outer = tempfile.mkdtemp(prefix="kbtest-cloud-scratch-")
+    os.makedirs(os.path.join(outer, ".git"))
+    project = os.path.join(outer, "project")
+    os.makedirs(os.path.join(project, "reports"))
+    with open(os.path.join(project, "NOW.md"), "w", encoding="utf-8") as f:
+        f.write(NOW_OK)
+    with open(os.path.join(project, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write("# rules\n\nentry: NOW.md\n"
+                "kb-architect service layer: accepted\n"
+                "report inbox: reports\n")
+
+    out = run("kb_check.py", project)
+    check("служебный invalid .git над scratch не становится Git root",
+          out.code == 0
+          and "неслитые ветки — неприменимо (репозитория нет)" in out
+          and "инбокс отчётов (reports)" in out
+          and "НЕ ПРОВЕРЕН" not in out,
+          out, "git rev-parse, а не имя .git, подтверждает repository scope")
+    shutil.rmtree(outer, ignore_errors=True)
+
+
 def t_stale_entry_with_foreign_date():
     """Критика 5.6: посторонняя свежая дата в шапке маскирует протухший вход."""
     d = base({"NOW.md": "Обновлено: 2020-01-01\nисточник: выгрузка от 2026-08-06\n\n## ГДЕ МЫ\nтекст\n"})
