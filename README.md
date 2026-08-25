@@ -2,286 +2,353 @@
 
 [Русский](#русский) · [English](#english)
 
-**Один и тот же skill для Claude и Codex: чтобы проект помнил себя между чатами —
-и чтобы агент заметил, когда база ему врёт.**
+**Beta toolkit for durable Claude and Codex projects: one knowledge canon,
+recoverable professional roles, and checks that make confident contradictions
+visible.**
 
-**The same skill for Claude and Codex: it keeps a project coherent across sessions
-and helps the agent notice when the knowledge base is confidently wrong.**
+**Бета-инструментарий для долгих проектов Claude и Codex: один канон знаний,
+восстанавливаемые профессиональные роли и проверки, которые делают уверенные
+противоречия видимыми.**
 
-> *An Agent Skill: a one-page knowledge-base contract, an optional pattern library,
-> and tested maintenance tools. Russian contract and reference library; bilingual
-> public overview; Russian and English triggers. MIT.*
+> Agent Skill · one-page frozen core · optional reference library · tested
+> maintenance tools · Russian contract and references · bilingual overview · MIT
 
 ---
 
 ## English
 
-`kb-architect` is a lightweight knowledge-base contract for long-lived AI-assisted
-projects. It works with **both Claude and Codex**: the platforms may use different
-entry files, but they read one project canon rather than maintaining two copies.
+`kb-architect` is a lightweight operating contract for AI-assisted projects that
+must survive new chats, new agents and changing facts. It does not add another
+memory database. It tells the project which files are authoritative, how current
+claims expire, how contradictions are handled, and what a fresh session must verify
+before it confidently acts on old knowledge.
 
-It helps a project:
+Try it when a project already has useful files but repeatedly loses context, keeps
+two versions of “what is current”, or moves work between Claude and Codex. A tiny
+one-off project probably does not need it.
 
-- keep one authoritative source for each class of current state;
-- separate sources, observations, claims, interpretations and decisions;
-- expose stale knowledge and unsupported “done/paid/sent” claims;
-- test whether a fresh session notices contradictions instead of choosing one;
-- hand work between sessions, Claude, Codex and neighbouring projects;
-- use one checkout sequentially and separate Git worktrees for parallel writers;
-- update the skill from stable PUBLIC GitHub releases and report reproducible defects;
-- keep specialized project skills recoverable: one Git source, explicit professional role and authority ladder, and separate Claude/Codex discovery checks;
-- make cloud work explicit and testable: repo-portable entry rules plus a per-runtime capability map for local MCPs, managed connectors, accounts and scopes;
-- audit legacy projects and remove duplicates without discarding evidence.
+### Send this to a beta tester
 
-The built-in lookup is lexical and asks for translations and everyday synonyms.
-An empty result is **not** proof that the knowledge is absent. Projects with
-measured retrieval misses can add a local or external semantic/vector index as a
-derived search layer: it may locate candidates, but every answer is verified in
-the source file and the index never becomes a second canon.
+Give them the [latest release](https://github.com/sugestr/kb-architect/releases/latest)
+and this five-step route:
 
-The mandatory core is one page. Everything else is optional and adopted only when
-the project has a concrete problem. The core is intentionally frozen while evidence
-is collected from real use; this is a research prototype with an acceptance suite,
-not a claim of universal maturity.
+1. Install the skill and open a real, ongoing project with its existing files.
+2. Paste the starter prompt below. The first pass is explanation and inspection, not a blind rewrite.
+3. Continue two or three normal project tasks in separate chats.
+4. Run the fresh-chat check below.
+5. Submit one [beta report](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md), including “no useful difference” if that is what happened.
 
-The same stable public release is installed for Claude and Codex. Project knowledge
-and platform-specific entry points remain in the project repository; the skill does
-not create a second project copy or a proprietary memory service.
+Starter prompt:
 
-Cloud-ready does not mean that a local Mac integration was copied into a container.
-For requests such as “check my email”, a project can declare one logical capability
-and independently accept its local Codex, local Claude and Codex Cloud providers.
-The account, scope and read-only probe must match; a missing required provider stops
-that part of the task without blocking unrelated repository work.
-
-## Русский
-
-## Знакомо?
-
-Понедельник. Объясняешь чату, что за проект, что уже решено, чего ждём и от кого. К вечеру он разобрался и начал приносить пользу.
-
-Вторник, новый чат. Всё сначала.
-
-Через месяц ты заводишь файлы, чтобы не повторяться. Файлов становится двадцать. В двух из них написано разное про один и тот же срок — один ты правил в марте, другой в мае, и какой из них верный, уже не помнишь. Чат открывает тот, что попался первым, и **уверенно** называет неправильную дату. Ты веришь: он же прочитал базу.
-
-Вот с этим. Проблема не в том, что памяти мало. Проблема в том, что **база выглядит надёжной и врёт**, и заметить это некому.
-
-## Что придумали
-
-Три вещи, и все три простые.
-
-**У знания есть срок годности, отдельный от даты правки.** Обычная дата в файле говорит, когда его последний раз трогали. Читателю нужно другое: за какой срок автор отвечает. Конспект того, что творится в чужой системе, может быть мёртв три месяца при идеально свежей дате правки — его просто никто не трогал, а мир изменился. Поэтому у утверждения про настоящее есть срок, и он важнее возраста файла.
-
-**На каждый вопрос — ровно один источник.** Не «постарайся не дублировать», а жёстко: у каждого класса состояния один канон, остальное собирается из него. Два независимо обновляемых списка «что дальше» означают, что чат выберет из них случайно — и ты об этом не узнаешь.
-
-**Проверка, которая ловит враньё, а не пробелы.** Берёшь четыре-шесть вопросов, которые реально задаёшь проекту, и прогоняешь их в чистом чате. Смотришь **не на ответ**, а на то, заметит ли чат, что источники расходятся, или бодро выдаст одну из версий. Десять минут, работает на любой базе.
-
-Всё остальное в скилле — надстройки, которые берутся по надобности. Обязательна одна
-страница `references/contract.md`; короткий `SKILL.md` только маршрутизирует к ней и
-нужной процедуре.
-
-## Как это работает у тебя
-
-Ставишь скилл. Дальше говоришь обычными словами — команд запоминать не надо.
-
-**У проекта уже есть свои файлы:**
-
-```
-присоедини контракт к этому проекту
+```text
+I am beta-testing kb-architect on this project. Explain in plain language why it may
+help here, what it will change, and what it will leave untouched. Then inspect the
+project read-only and show me its competing sources of current state, stale claims,
+and a minimal adoption plan. Do not change files until I approve the plan. If this
+project makes professional judgements, do not invent expertise: tell me which
+project-owned professional roles I have provided and which decisions remain outside
+their authority.
 ```
 
-Тридцать-девяносто минут. Папки, имена файлов, привычки — не трогает. Заведёт место, где видно текущее состояние, канал для сообщений об ошибках и контрольные вопросы. Найдёт два конкурирующих списка «что дальше» — покажет и спросит, какой актуален, а не выберет сам.
+Fresh-chat check:
 
-**Новый проект:**
-
-```
-заведи базу знаний этого проекта
-```
-
-Задаст три вопроса — кто будет это читать, на какие крупные куски делится проект, кто будет писать файлы. Дальше структуру придумает под ответы, а не по шаблону.
-
-Новый проект сразу строится переносимым между локальной и облачной работой: активные
-инструкции используют пути внутри репозитория, а внешние возможности — например,
-«читать мою почту» — объявляются отдельно для каждой среды. Одинаковое имя MCP не
-считается доказательством того же аккаунта или тех же прав.
-
-**Потом просто работаешь.** Скилл сам решает, что куда класть. Ты его не читаешь и справочник не открываешь — это делает чат, и только когда упёрся в конкретную проблему.
-
-**Про обслуживание базы ты не вспоминаешь — вспоминает она.** В правилах проекта стоят две команды, которые сессия запускает первым делом, до ответа на твой вопрос:
-
-- **что просрочено** — протух ли снимок текущего состояния, есть ли ожидания с прошедшей датой, когда была последняя датированная запись журнала и прогон контрольных вопросов, есть ли незакоммиченное, не выросла ли база настолько, что структуру пора пересматривать, не отстала ли редакция контракта от установленной; дата записи не выдаётся за доказательство разбора журнала;
-- **цела ли база** — битые ссылки внутри неё, истёкшие сроки годности, незаполненные доказательства, объём входа против потолка.
-
-Нашлось — сессия говорит первой фразой. Не нашлось — молчит, а не отчитывается о чистоте. Ни одной даты помнить не надо: они уже лежат в файлах, которые база и так ведёт, — новых обязательств проверка не создаёт, она только читает.
-
-И одна деталь, которая стоила отдельного выпуска: **отчёт всегда называет объём проверенного.** «Чисто» без списка — это утверждение шире выполненного. Один проект держал вход в подпапке, инструмент его не нашёл, проверку молча пропустил и написал «чисто» — при превышении потолка в 1.8 раза. Проверка, которая не выполнилась, дороже отсутствующей: отсутствующую компенсируют вниманием, а на выполненную полагаются.
-
-**Раз в неделю:**
-
-```
-пора разбирать журнал
+```text
+Without a recap from me, use the project canon to state what is current, what is
+uncertain, what is stale, and what requires a professional role. Name the exact
+sources you relied on and stop on contradictions.
 ```
 
-Покажет, что мешало и что правило поймало. По этому и решаешь, добавить что-то или наоборот выкинуть.
+### What it owns — and what it does not
 
-Ещё, когда понадобится:
-
-| Сказать | Что произойдёт |
+| Layer | Responsibility |
 |---|---|
-| «проверь, не врёт ли база» | прогон контрольных вопросов с чистого контекста |
-| «что просрочено» | две секунды: что требует внимания сегодня и почему |
-| «перестрой базу» | бэкап в ветку и тег, план на утверждение, откат одной командой |
-| «подключи Codex к проекту» | агент другой платформы: один свод правил без копии, владение по путям |
-| «сделай хендовер в главный проект» | что узнали здесь — в формате, который принимающая сторона обязана сверить, а не применить целиком |
-| «объясни, что это за скилл» | расскажет про себя сам |
+| `kb-architect` | Knowledge lifecycle: one canon per class of state, freshness, provenance, contradictions, handoffs and maintenance checks. |
+| Project knowledge base | Facts, evidence, current state, decisions and open questions for this specific project. |
+| Professional/domain skills | The method for doing tax, legal, medical, financial, engineering or other domain work: role, source hierarchy, evidence threshold, stop conditions and prohibited actions. |
+| Deterministic tools | Repeatable transformations and mechanical validation. |
 
-## Почему это не «память для агента»
+Professional roles are **strongly recommended for any project that makes material
+domain judgements**. One project may need one role or several narrowly scoped roles.
+They are not decorative personas: each role is a project-owned, reviewable method.
 
-Разговор про память ИИ идёт в основном про **извлечение**: хранить много, искать быстро, поднимать нужное в контекст. Векторные базы, графы сущностей, ярусная память — все они решают «найти».
+`kb-architect` can register those skills, verify that Claude and Codex can discover
+the same Git-tracked source, and test their recovery and authority boundaries. It
+does **not** decide which professions your project needs, invent professional
+expertise, or replace primary sources and qualified review. Without a domain skill,
+the knowledge base can remain coherent while the professional quality of its
+conclusions remains undefined. That is acceptable for a simple non-domain project;
+it is usually a weak setup for serious subject-matter work.
 
-Здесь другая ось: **осталось ли найденное правдой.** Обзоры этой области отмечают, что устаревание и корректность хранимого знания архитектурно почти не адресованы, а человеческая проверка не является родной функцией ни в одной из систем — все исходят из того, что агент правит память сам ([сравнение восьми систем](https://fountaincity.tech/resources/blog/agent-memory-knowledge-systems-compared/)).
+### First beta run
 
-| | |
-|---|---|
-| **Не требует** | векторного поиска, графа, сервера или внешней БД: минимум работает на markdown-файлах в git |
-| **Нет** | масштаба. На сотнях тысяч записей работать не будет |
-| **Есть** | срок годности у утверждения, отдельный от даты правки |
-| **Есть** | один канон на класс состояния и запрет вести второй параллельно |
-| **Есть** | тест на способность не соврать уверенно |
+1. Install the stable release for the platform you will test.
+2. Start a fresh chat and say: `Explain what kb-architect would change in this project and what it would leave untouched.`
+3. In an existing repository, say: `Adopt this knowledge base. Inspect first and show the proposed canon, conflicts and migration plan before changing files.`
+4. If the project makes professional judgements, provide its project-owned domain skill or skills and ask: `Check that these professional roles are recoverable and available to both Claude and Codex.`
+5. Use the project across several real sessions, then ask a fresh session to check for stale state and contradictions.
 
-Встроенный `kb_lookup.py` — лексический поиск: он просит явно перечислить переводы и
-обиходные синонимы. Пустая выдача **не доказывает**, что знания нет. Если проект
-несколько раз не нашёл существующий факт, к контракту разумно добавить semantic/vector
-retrieval как производный индекс. Он ищет кандидатов, но ответ проверяется в исходном
-файле, а индекс не становится вторым каноном. Условия — в опциональном модуле
-`semantic_retrieval`.
+The useful beta result is not “installation succeeded”. It is an observed behaviour:
+the agent found the right canon, stopped on a contradiction, missed a known fact,
+invented authority, or could not recover a role in a fresh clone. Please report the
+exact prompt, version, expected behaviour and observed behaviour in a
+[GitHub issue](https://github.com/sugestr/kb-architect/issues). Remove secrets and
+personal data first.
 
-Одно другому не мешает: если система памяти или векторный поиск уже стоят, контракт
-ложится поверх. Он про то, чему в найденном можно верить, а не только про то, как его
-найти.
+### Honest limits
 
-Так же он ложится и **под** доменный скилл — профессионального советника или
-предметного аудитора. Доменный skill задаёт роль, иерархию источников, порог
-доказательности, условия остановки и запреты; KB хранит факты конкретного проекта,
-а scripts выполняют детерминированную работу. Для Claude и Codex сохраняется один
-Git-канон skill с отдельными тонкими точками обнаружения и fresh-clone проверкой.
-Доменный скилл на контракт **ссылается, а не пересказывает его**: пересказ переживает
-оригинал и продолжает выглядеть верным.
+- This is a research prototype with an acceptance suite, not a claim of universal maturity.
+- The built-in lookup is lexical. An empty result is **not** proof that knowledge is absent.
+- Measured retrieval misses can justify a semantic/vector index as a derived search layer; it finds candidates, but source files remain the canon.
+- It does not supply professional advice, credentials, runtime access or permission for external actions.
+- Cloud-ready project files do not prove that a local MCP, account or secret exists in a cloud runtime.
+- The mandatory core is one frozen page; optional modules are adopted only for a demonstrated project need.
 
-## Откуда это взялось
+### Installation
 
-Стандарт вырос из четырёх разнородных проектов: семейный медицинский архив на двадцать тысяч строк генераторов, юридическое дело со сроками, технический проект вокруг живой ERP, учёт новой компании. Каждое правило здесь оплачено конкретной поломкой — файл, мёртвый три месяца при идеальных метаданных; зеркало, отставшее на 38 коммитов и уверенно отвечавшее «данных нет» о человеке со 153 записями; отправленный контрагенту документ со ссылками на приложения, которых в папке не было.
+**Claude Code plugin marketplace**
 
-Потом восемь заходов внешней критики — разные модели, свежие сессии, инвертированные задания «найди сильнейшие причины НЕ внедрять это». Самый полезный удар: *«артефакт, который любую критику превращает в новую версию, невозможно опровергнуть — а значит, и проверить»*. После него стандарт собрали **вычитанием**: с двух тысяч строк до одной страницы, — и заморозили. Правки в контракт теперь вносятся по фактам эксплуатации, а не по силе аргумента.
-
-## Пять решений, которые стоит украсть
-
-Даже если контракт целиком не подойдёт, эти вещи переносятся в любую систему.
-
-**Срок годности отдельно от даты правки.** Дата правки — факт об авторе. Читателю нужен срок, за который автор отвечает.
-
-**Профиль по тому, кто пишет файл, а не по теме.** Один вопрос: что будет с файлом, если не трогать его месяц? Останется верным — пишет человек. Будет перезаписан — пишет генератор. Останется неизменным, но перестанет соответствовать действительности — источник снаружи. Третий случай коварен тем, что внешне неотличим от первого.
-
-**Один вход для плохих новостей.** Пока «сообщить об ошибке в базе» дороже, чем «доделать текущую задачу», побеждает второе — не по злому умыслу, а по цене. Один append-only файл, писать без спроса, не бросая задачу. Единственная конструкция во всём стандарте, которая делает правильное действие **дешевле** неправильного.
-
-**Журнал с двумя колонками и правило чтения пустой.** «Что мешало» и «что правило поймало». Вторая обязательна, потому что работающее правило не оставляет следов: пойманная ошибка не наступает, записывать нечего. Без неё разбор соберёт одни жалобы на цену и проголосует за резку — и система сойдётся к пустой странице. Поэтому: **пустая колонка «сработало» читается как «не наблюдали», а не как «не работает»**.
-
-**Проверка механизма на самоуничтожение.** Что с ним происходит при успешном применении и что означает отсутствие сигнала? Злой контрольный вопрос расходуется: нашёл противоречие — починил — вопрос перестал быть злым. Событийное правило умирает от того, что его условие не наступало. Защитное правило нельзя опровергнуть, не нарушив. Проверка, которая не нашла, где смотреть, печатает «чисто». Способность, потребляющая поле, которое никто не велел заполнять, не выполняется никогда и молчит об этом. Один и тот же класс, встретился **шесть раз независимо** — в том числе трижды в собственных инструментах этого стандарта. Общее у всех шести: **отсутствие сигнала выглядит как норма.**
-
-## Статус: исследовательский прототип с приёмочным контуром
-
-Честно, до того как ты потратишь на это время. Формулировка изменена в 4.0 после внешнего аудита, который вынес вердикт «не внедрять как стандарт» — и был прав по решающему пункту: пакет уверенно сообщал состояния, которых не доказал.
-
-**Что из этого можно брать сейчас:** контракт — одна страница. Четыре правила, инвариант входа, один канал для плохих новостей, контрольные вопросы. Они не зависят от скриптов и окупались на всех базах.
-
-**Что брать рано:** автоматизацию целиком как доверенный узел. Скрипты соврали шесть раз за неделю; каждый раз — уверенно. С 4.0 у них есть тесты (`scripts/test_kb.py`, одиннадцать воспроизведений реальных контрпримеров), но ни одна версия ещё не пережила объявленное окно эксплуатации на неизменных тестах. **Стабильность не объявляют, её переживают.**
-
-**Чего всё ещё нет:** первичные отчёты не приложены к выпускам, поэтому «правки по фактам эксплуатации» пока верятся на слово; ключ контрольных вопросов лежит внутри проверяемой базы; восстановление из бэкапа не прогонялось. Всё перечислено внутри — `references/maintainer.md`, разделы «Обвинения девятого захода критики» и «Известные пробелы».
-
-Все правила выведены из инцидентов, случившихся **до** появления этих правил. Это доказывает, что проблемы настоящие, но не что решения работают. Восемь заходов внешней критики стандарт прошёл — а эксплуатации у него пока недели, а не годы.
-
-Что уже есть, без округления в свою пользу:
-
-- по контракту живут **шесть баз** — от 190 файлов до 1721, от медицинского архива с генераторами до проекта вокруг живой ERP и налогового дела;
-- проекты прислали **три отчёта о дефектах**, и это главная работающая часть системы: скилл сам просит сессии писать на себя рекламации, в отдельном жанре, где **наблюдение ценится выше предложения**;
-- все дефекты из эксплуатации оказались **в инструментах, ни один — в контракте**. Одна страница держится, потому что её заморозили; ломается то, что не заморожено, и это нормальное распределение;
-- линтер на две тысячи строк, ни разу не проверенный на живом репозитории, **удалён**. Заменён четырьмя проверками — и у них наконец есть тесты: `python3 scripts/test_kb.py`, одиннадцать воспроизведений, шесть из которых при первом прогоне были красными.
-
-Чего нет: длинных журналов эксплуатации, восстановления из бэкапа, проверенного полным циклом, и машинного способа заметить, что один класс состояния завели дважды. Всё это перечислено внутри, в разделе «Известные пробелы» — чтобы отсутствие механизма не выдавалось за отсутствие проблемы.
-
-Проверяется двумя вещами, обе внутри: журнал с двумя колонками и прогон контрольных вопросов. Мера — **интенсивность, а не календарь**: база, к которой месяц не обращались, не проверила ни одного правила, а неделя плотной работы даёт больше, чем спокойный квартал. Считаются сессии, которые действительно работали с базой, и записи журнала — пороги и оговорка о том, что они взяты с потолка, в `references/maintainer.md`.
-
-Применишь и что-то сломается — issue с описанием того, что именно не сработало, ценнее любого предложения по улучшению. Стандарту сейчас не хватает не идей, а наблюдений.
-
-## Установка
-
-**Одной командой** — репозиторий является маркетплейсом плагинов (Claude Code):
-
-```
+```text
 /plugin marketplace add sugestr/kb-architect
 /plugin install kb-architect@sugestr
 ```
 
-Обновление потом: `/plugin marketplace update sugestr`.
+Update later with `/plugin marketplace update sugestr`.
 
-**Для Codex** — установи каталог `plugins/kb-architect/skills/kb-architect` из
-стабильного публичного выпуска как обычную управляемую копию в каталоге
-пользовательских скиллов. Не связывай рабочую установку симлинком с development-
-checkout. Дальше обновляет одна безопасная команда:
-`python3 <установленный-скилл>/scripts/kb_update.py --public --fast --сделать`.
+**Codex**
 
-Fast mode обычно не клонирует репозиторий: свежая локальная квитанция обходится без
-сети, а после её срока проверяется только public HEAD. Полный clone, tests, staging и
-backup запускаются при изменении или недоказанной parity.
-Метаданные интерфейса лежат в `agents/openai.yaml` рядом со скиллом.
+Download a stable public release and copy
+`plugins/kb-architect/skills/kb-architect` as a managed directory to
+`~/.codex/skills/kb-architect`. Do not symlink a working installation to a
+development checkout. Future updates are handled by:
 
-**Файлом** — для Cowork и обычного чата: скачай `kb-architect.skill` из [релизов](../../releases), приложи в чат и нажми установку на карточке файла. Собрать самому — `./build.sh`.
+```bash
+python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
+```
 
-Проверка: скажи в новом чате «объясни, что это за скилл».
+Restart with a fresh task after an update; a running session does not hot-reload
+skill instructions.
+
+**Cowork or a regular chat**
+
+Download `kb-architect.skill` from the
+[latest release](https://github.com/sugestr/kb-architect/releases/latest), attach it
+to the chat and install it from the file card.
+
+---
+
+## Русский
+
+## Для чего это
+
+Понедельник: ты объясняешь новому чату, что за проект, что уже решено и чего ждём.
+К вечеру агент разобрался. Во вторник открывается новый чат — и всё начинается
+сначала.
+
+Через месяц появляется папка с заметками. В двух файлах уже разные сроки, два списка
+«что дальше» живут независимо, а самый свежий по дате файл пересказывает состояние
+чужой системы трёхмесячной давности. Агент открывает один из вариантов и уверенно
+отвечает. Проблема уже не в нехватке памяти: **база выглядит надёжной и врёт**.
+
+`kb-architect` добавляет проекту лёгкий эксплуатационный контракт:
+
+- один канонический источник для каждого класса текущего состояния;
+- срок годности утверждения отдельно от даты правки файла;
+- различение источника, наблюдения, факта, интерпретации и решения;
+- явную реакцию на противоречие вместо случайного выбора одной версии;
+- контрольные вопросы, проверку просрочки и проверку целостности;
+- передачу работы между сессиями, Claude и Codex без двух копий проекта;
+- проверяемое восстановление project-owned профессиональных skills и внешних runtime-возможностей.
+
+## Что переслать другу-тестеру
+
+Дай ему ссылку на [последний выпуск](https://github.com/sugestr/kb-architect/releases/latest)
+и короткий маршрут:
+
+1. Установить skill и открыть не пустой пример, а свой живой проект с уже существующими файлами.
+2. Вставить стартовый запрос ниже. Первый проход только объясняет и осматривает — ничего не перестраивает вслепую.
+3. Выполнить две-три обычные задачи проекта в разных чатах.
+4. Открыть ещё один свежий чат и выполнить контрольный запрос.
+5. Заполнить один [beta-отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md), даже если результат — «заметной пользы нет».
+
+Стартовый запрос:
+
+```text
+Я тестирую kb-architect на этом проекте. Объясни простыми словами, зачем он может
+быть здесь полезен, что изменит и что оставит как есть. Затем проведи read-only
+осмотр: покажи конкурирующие источники текущего состояния, протухшие утверждения
+и минимальный план подключения. Не меняй файлы, пока я не одобрю план. Если проект
+делает профессиональные выводы, не выдумывай экспертизу: назови уже предоставленные
+project-owned профессиональные роли и решения, которые остаются вне их полномочий.
+```
+
+Контрольный запрос в свежем чате:
+
+```text
+Без пересказа с моей стороны используй канон проекта и скажи: что сейчас является
+фактом, что не доказано, что протухло и где нужна профессиональная роль. Назови
+точные источники и остановись, если они противоречат друг другу.
+```
+
+Минимум — одна замороженная страница `references/contract.md`. Справочник и
+инструменты подключаются только тогда, когда проект встретил соответствующую
+проблему. Векторная база, отдельный сервер и proprietary memory service не нужны.
+
+## Важная граница: база знаний — не профессия
+
+Для практического проекта полезно разделить четыре слоя:
+
+| Слой | За что отвечает |
+|---|---|
+| `kb-architect` | Как знания хранятся, стареют, проверяются, конфликтуют и передаются. |
+| KB проекта | Факты, доказательства, текущее состояние, решения и открытые вопросы конкретного дела. |
+| Профессиональные/domain skills | Как профессионально работать в предметной области: роль, метод, иерархия источников, порог доказательности, условия остановки и запреты. |
+| Скрипты и tools | Воспроизводимые преобразования и механические проверки. |
+
+Если проект делает существенные налоговые, юридические, медицинские, финансовые,
+инженерные или иные предметные выводы, **заранее подключить одну или несколько
+профессиональных ролей настоятельно рекомендуется**. Несколько ролей нужны там, где
+решение пересекает несколько областей; их scope и право на вывод должны быть
+разделены явно.
+
+Это не персонажи в промпте. Профессиональная роль — принадлежащий проекту и
+проверяемый skill с методом, авторитетными источниками, порогом доказательности и
+условиями, при которых агент обязан остановиться. `kb-architect` умеет вести реестр
+таких skills, проверять один Git-канон, discovery для Claude и Codex, validation и
+fresh-clone recovery.
+
+Но он **не выбирает профессии за владельца, не сочиняет экспертизу и не заменяет
+первичные источники или квалифицированную проверку**. Это намеренная граница. Без
+domain skill база всё ещё может хорошо помнить факты и историю, но стандарт
+профессионального вывода остаётся неопределённым. Для простого непредметного проекта
+это нормально; для серьёзной предметной работы такая конфигурация обычно малоэффективна.
+
+## Как попробовать на реальном проекте
+
+После установки открой свежий чат и сначала попроси:
+
+```text
+Объясни, что kb-architect изменит в этом проекте, а что оставит как есть.
+```
+
+Если файлы уже существуют:
+
+```text
+Присоедини kb-architect к этому проекту. Сначала проведи read-only осмотр и покажи:
+текущий канон, конкурирующие источники, риски и план. Ничего не переноси без согласования.
+```
+
+Для нового проекта:
+
+```text
+Заведи базу знаний этого проекта. Сначала уточни читателей, крупные части проекта
+и владельцев записи; структуру предложи под ответы, а не по универсальному шаблону.
+```
+
+Если у проекта есть одна или несколько профессиональных ролей:
+
+```text
+Проверь, что эти project-owned professional skills имеют один Git-канон,
+понятные полномочия и восстанавливаются для Claude и Codex в fresh clone.
+```
+
+Потом работай как обычно. Команды запоминать не нужно: короткий `SKILL.md`
+маршрутизирует агента только к нужной процедуре. Полезные контрольные запросы:
+
+| Сказать | Что должно произойти |
+|---|---|
+| «что просрочено» | агент назовёт только найденные просрочки и точный охват проверки; |
+| «цела ли база» | проверит ссылки, сроки, незаполненные доказательства и объём входа; |
+| «проверь, не врёт ли база» | прогонит реальные контрольные вопросы в чистом контексте; |
+| «перестрой базу» | сначала покажет обратимый план с Git-бэкапом; |
+| «подключи Codex к проекту» | создаст один канон правил и отдельные точки входа, а не копию базы; |
+| «сделай хендовер» | передаст наблюдение на проверку, а не объявит его автоматически принятым фактом. |
+
+## Что именно тестировать в бете
+
+Не ограничивайся зелёной установкой. Она доказывает только доставку файлов.
+Хороший бета-тест даёт наблюдение из реальной работы:
+
+1. Нашёл ли новый чат правильный канон без пересказа всей истории?
+2. Заметил ли он заранее подготовленное противоречие или уверенно выбрал удобный файл?
+3. Отличил ли «отправлено» от «принято», «счёт создан» от «оплачено», а дату правки от свежести знания?
+4. Сохранил ли профессиональную роль, её source ladder и stop conditions в fresh clone и на обеих платформах?
+5. Назвала ли проверка точный охват или выдала широкое «чисто» после неполного запуска?
+6. Стала ли работа заметно дороже без измеримой пользы?
+
+Если что-то сломалось, заполни
+[beta-отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md) и приложи версию, обезличенный
+контекст, точный запрос, ожидаемое и фактическое поведение. Наблюдение ценнее готового
+предложения по исправлению: стандарту сейчас нужны не новые идеи, а воспроизводимые
+факты эксплуатации.
+
+## Честные ограничения
+
+- Это исследовательский прототип с приёмочным контуром, а не объявленный универсальный стандарт.
+- Встроенный `kb_lookup.py` — лексический поиск. Пустая выдача **не доказывает**, что знания нет.
+- Semantic/vector retrieval можно добавить как производный индекс после измеренных промахов; ответ всё равно проверяется в исходном файле, а индекс не становится вторым каноном.
+- Skill не даёт профессиональный совет, credential, доступ к аккаунту или разрешение на внешнее действие.
+- Git не переносит local MCP, Keychain и ignored-секреты в облако. Каждая runtime-возможность принимается отдельно по аккаунту, scope и безопасной пробе.
+- На маленькой одноразовой папке накладные расходы будут выше пользы.
+
+## Установка
+
+**Claude Code — через marketplace плагина:**
+
+```text
+/plugin marketplace add sugestr/kb-architect
+/plugin install kb-architect@sugestr
+```
+
+Обновление: `/plugin marketplace update sugestr`.
+
+**Codex:** скачай стабильный публичный выпуск и скопируй каталог
+`plugins/kb-architect/skills/kb-architect` как управляемую копию в
+`~/.codex/skills/kb-architect`. Не связывай рабочую установку симлинком с
+development-checkout. Следующие обновления выполняет одна команда:
+
+```bash
+python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
+```
+
+После обновления начни новую задачу: уже идущая сессия не перечитывает инструкции
+skill на лету.
+
+**Cowork или обычный чат:** скачай `kb-architect.skill` из
+[последнего выпуска](https://github.com/sugestr/kb-architect/releases/latest), приложи
+в чат и установи с карточки файла.
+
+Проверка установки: скажи в новом чате «объясни, что это за skill».
 
 ## Что внутри
 
-```
+```text
 plugins/kb-architect/skills/kb-architect/
-  SKILL.md              лёгкий маршрутизатор: какой один reference нужен сейчас
-  references/contract.md контракт: одна страница, обязательная. Заморожен
-  references/           справочник, 17 разделов, ничего не обязывает
-  assets/templates/     заготовки: правила проекта, вход, канал правок,
-                        журнал, вопросы, хендовер и сообщение агента
-  agents/openai.yaml    интерфейс скилла в Codex
-  scripts/kb_init.py    развернуть минимум одной командой
-  scripts/kb_due.py     что просрочено — первое действие сессии
-  scripts/kb_check.py   целостность: ссылки, сроки, доказательства, объём входа
-  scripts/kb_lookup.py  что база уже знает по этим темам — до вывода «этого нет»
-  scripts/kb_dates.py   разбор дат: формат за проектом, не за инструментом
-  scripts/kb_paths.py   где у проекта вход, журнал и вопросы
-  scripts/kb_apply.py   обязательные дела и новые возможности между редакциями
-  scripts/kb_update.py  сверить и обновить доступные установки скилла
-.claude-plugin/         манифесты маркетплейса и плагина
-build.py, build.sh      воспроизводимо собрать kb-architect.skill
+  SKILL.md               лёгкий маршрутизатор к одной нужной процедуре
+  references/contract.md замороженный обязательный контракт на одной странице
+  references/            опциональный справочник
+  assets/templates/      вход, текущее состояние, журнал, вопросы и хендовер
+  agents/openai.yaml     интерфейс skill в Codex
+  scripts/kb_init.py     развернуть минимальную базу
+  scripts/kb_due.py      найти просроченное
+  scripts/kb_check.py    проверить целостность
+  scripts/kb_lookup.py   найти известное до вывода «этого нет»
+  scripts/kb_skills.py   проверить project-owned профессиональные skills
+  scripts/kb_apply.py    разобрать изменения между редакциями
+  scripts/kb_update.py   безопасно обновить файловые установки
 ```
 
-Справочник читает агент, а не человек. Человеку достаточно краткого `SKILL.md`; полный
-замороженный контракт лежит одной страницей в `references/contract.md`.
+Справочник читает агент, а не человек. Человеку достаточно этого README, короткого
+`SKILL.md` и собственного решения о том, какие профессиональные роли нужны проекту.
 
-Два последних модуля появились не из архитектуры, а из счетов: даты и пути разбирались в двух скриптах по-разному, то есть **сам стандарт нарушал внутри себя своё первое правило** — один факт, один источник. Оба раза это заметил не автор, а проект, который на этом споткнулся.
+## Версии и лицензия
 
-## Правило версий
+Номер в `metadata.version` файла `SKILL.md` меняется при любой правке содержимого
+пакета. Первая цифра меняется при изменении контракта или архитектуры обязательной
+загрузки/доставки; совместимая документация и инструменты поднимают вторую. История
+лежит в `references/releases.md`.
 
-Номер в `metadata.version` шапки `SKILL.md` меняется при любой правке содержимого
-пакета. Вторая цифра — совместимое развитие справочника и инструментов. Первая меняется
-при контракте **или архитектуре обязательной загрузки/доставки**, требующей отдельного
-применения проектами. Выпуск 5.0 изменил архитектуру входа, но перенёс замороженный
-контракт без изменения смысла. Что менялось — машинная таблица `references/releases.md`.
+MIT. Бери, адаптируй и проверяй на своей работе. Если сломалось — расскажи как.
 
-## Лицензия
-
-MIT. Бери, переделывай под себя, ломай. Единственная просьба — если сломается, расскажи как.
-
-<!-- Осознанное отступление: в plugin.json намеренно нет поля version.
-     Номер версии живёт в одном месте — metadata.version шапки SKILL.md.
-     Второе поле пришлось бы поднимать вручную, и рано или поздно они
-     разошлись бы: ровно то, что запрещает первое правило контракта.
-     Без version каждый коммит считается новой версией — для артефакта
-     в обкатке это то, что нужно. Валидатор об этом предупреждает; ответ —
-     эта строка. -->
+<!-- В plugin.json намеренно нет второго поля version. Канон версии —
+     metadata.version в SKILL.md; две независимо обновляемые версии неизбежно
+     разошлись бы. -->
