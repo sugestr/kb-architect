@@ -79,6 +79,11 @@ the knowledge base can remain coherent while the professional quality of its
 conclusions remains undefined. That is acceptable for a simple non-domain project;
 it is usually a weak setup for serious subject-matter work.
 
+For a material conclusion derived from project knowledge, the core now provides a
+two-phase evidence gate. It records support and challenge searches, stays red until
+every candidate is reviewed, and permits only `supported`, `qualified` or `unknown`.
+The domain skill still decides which topics and evidence criteria matter.
+
 ### First beta run
 
 1. Install the stable release for the platform you will test.
@@ -98,6 +103,7 @@ personal data first.
 
 - This is a research prototype with an acceptance suite, not a claim of universal maturity.
 - The built-in lookup is lexical. An empty result is **not** proof that knowledge is absent.
+- An evidence receipt proves that the declared searches and candidate review ran; it does not make lexical matching a professional judgement.
 - Measured retrieval misses can justify a semantic/vector index as a derived search layer; it finds candidates, but source files remain the canon.
 - It does not supply professional advice, credentials, runtime access or permission for external actions.
 - Cloud-ready project files do not prove that a local MCP, account or secret exists in a cloud runtime.
@@ -154,6 +160,7 @@ to the chat and install it from the file card.
 - один канонический источник для каждого класса текущего состояния;
 - срок годности утверждения отдельно от даты правки файла;
 - различение источника, наблюдения, факта, интерпретации и решения;
+- исполняемый evidence-gate для существенных выводов: подтверждения, ограничения и честный `UNKNOWN`;
 - явную реакцию на противоречие вместо случайного выбора одной версии;
 - контрольные вопросы, проверку просрочки и проверку целостности;
 - передачу работы между сессиями, Claude и Codex без двух копий проекта;
@@ -221,6 +228,11 @@ fresh-clone recovery.
 domain skill база всё ещё может хорошо помнить факты и историю, но стандарт
 профессионального вывода остаётся неопределённым. Для простого непредметного проекта
 это нормально; для серьёзной предметной работы такая конфигурация обычно малоэффективна.
+
+Для существенного вывода из KB ядро даёт двухфазный evidence-gate: оно записывает
+поиск подтверждений и возражений, остаётся красным до разбора каждого кандидата и
+закрывается только как `supported`, `qualified` или `unknown`. Какие темы искать и
+какой порог доказательности достаточен, по-прежнему определяет предметный skill.
 
 ## Как попробовать на реальном проекте
 
@@ -331,7 +343,7 @@ plugins/kb-architect/skills/kb-architect/
   scripts/kb_init.py     развернуть минимальную базу
   scripts/kb_due.py      найти просроченное
   scripts/kb_check.py    проверить целостность
-  scripts/kb_lookup.py   найти известное до вывода «этого нет»
+  scripts/kb_lookup.py   найти известное и закрыть evidence-gate до вывода
   scripts/kb_skills.py   проверить project-owned профессиональные skills
   scripts/kb_apply.py    разобрать изменения между редакциями
   scripts/kb_update.py   безопасно обновить файловые установки

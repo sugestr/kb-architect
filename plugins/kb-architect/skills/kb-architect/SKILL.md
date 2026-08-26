@@ -3,7 +3,7 @@ name: kb-architect
 description: "Knowledge-base contract and tools for durable AI projects. Start, audit, update, restructure or move a KB; coordinate Claude/Codex; audit domain skills, runtime and credential access. Use for KBs, project skills, cloud/MCP/Keychain, пароль/карточка, agent purchases, cleanup, two-agent work and 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "5.14"
+  version: "5.15"
   author: "sugestr"
 ---
 
@@ -29,7 +29,8 @@ metadata:
 | Проверить внутренний профессиональный skill | `references/modules.md` → `capability_skills` + `scripts/kb_skills.py` |
 | Подготовить облачную работу или проверить MCP/почту в разных средах | `references/modules.md` → `runtime_capabilities` + `scripts/kb_environments.py` |
 | Пароли, карты, Remote или покупка | `references/modules.md` → `agent_vault_and_external_actions` |
-| Разобрать входящее, сверить реальность, найти факт | `references/operations.md`; перед выводом об отсутствии — `scripts/kb_lookup.py` |
+| Разобрать входящее, сверить реальность, найти факт | `references/operations.md` + `scripts/kb_lookup.py` |
+| Сделать существенный вывод из KB | current state + project domain skill + `scripts/kb_lookup.py --help` |
 | Проверить целостность или просрочку | `scripts/kb_check.py` и/или `scripts/kb_due.py` |
 | Отделить факт, интерпретацию и решение | `references/knowledge-roles.md` |
 | Собрать мусор | `references/garbage-collection.md` |
@@ -42,28 +43,27 @@ metadata:
 
 ## Инварианты исполнения
 
-- Контракт заморожен. Его канон — `references/contract.md`; не пересказывай его
-  как новые проектные правила и не добавляй обязательств из справочника молча.
+- Контракт заморожен в `references/contract.md`; справочник не добавляет проекту
+  обязательств молча.
 - В зрелом проекте локальные правила и domain skill имеют приоритет для роли,
   authority, source ladder, stop/escalation и запрещённых действий.
-- Git не переносит в облако local MCP, Keychain и ignored-файлы. Внешнюю
-  возможность принимай для runtime, account, scope и safe probe.
+- Git не переносит local MCP, Keychain и ignored-файлы. Принимай внешнюю
+  возможность по runtime, account, scope и safe probe.
 - Высокорисковое, внешнее или необратимое действие требует проектных источников и
   владельческого гейта независимо от того, насколько простой вопрос его вызвал.
-- В последовательной работе используется один checkout. Параллельные писатели
-  работают в отдельных worktree/ветках и коммитят только точные пути.
+- Последовательно используй один checkout; параллельным писателям — отдельные
+  worktree/ветки и exact-path commits.
 - В режиме отчёта или read-only старое разрешение на запись не переносится:
   текущая задача должна явно назвать разрешённые изменения до первой записи.
-- Не перечитывай в одной логической задаче тот же reference, если путь и содержимое
-  не изменились. Новый выпуск, новый authority-контекст или изменившийся файл
-  аннулируют это допущение.
+- Существенный project-derived вывод проходит `kb_lookup.py --claim`; без receipt
+  `supported|qualified` это draft/`UNKNOWN`. Domain skill задаёт темы, core — гейт.
+- Не перечитывай неизменный reference в одной логической задаче. Новый выпуск,
+  authority-контекст или изменившийся файл сбрасывает эту квитанцию.
 
 ## Дешёвый рабочий цикл
 
-Новый пользовательский turn — не новый вход в проект. В одной живой задаче не
-повторяй boot/service cycle, если root, current pointer, редакция скилла и
-authority-context не изменились. Квитанция живёт в контексте задачи; отдельный файл
-ради неё не нужен.
+Новый пользовательский turn — не новый вход. Переиспользуй boot receipt, пока root,
+current pointer, редакция и authority-context прежние; файл создаёт только evidence gate.
 
 До вызова инструментов выбери критический путь:
 

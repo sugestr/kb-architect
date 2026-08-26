@@ -89,6 +89,11 @@ def t_thin_router_preserves_frozen_contract_by_reference():
 
 def t_layer_cost_is_measured_from_the_single_router():
     """23.08: raw file count drifted 12 to 18; savings lacked a reproducible measure."""
+    router = skill_text("SKILL.md")
+    help_run = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_lookup.py"), "--help"],
+        capture_output=True, text=True, timeout=120)
+    evidence_help = help_run.stdout + help_run.stderr
     p = subprocess.run(
         [sys.executable, os.path.join(HERE, "kb_cost.py"), "--json", "--check"],
         capture_output=True, text=True, timeout=120)
@@ -100,6 +105,8 @@ def t_layer_cost_is_measured_from_the_single_router():
     routes = data.get("routes", [])
     ordinary = next(
         (x for x in routes if x.get("task", "").startswith("Обычная работа")), {})
+    evidence = next(
+        (x for x in routes if x.get("task", "").startswith("Сделать существенный")), {})
     measured = next(
         (x for x in routes if "стоимость слоёв" in x.get("task", "")), {})
     check("стоимость entry и routed-слоёв воспроизводима без второго route registry",
@@ -108,8 +115,17 @@ def t_layer_cost_is_measured_from_the_single_router():
           and data.get("modules") <= 10
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
+          and evidence.get("extra_bytes") == 0
+          and "project domain skill" in router
+          and "current state" in router
+          and "Не перечитывай неизменный reference" in router
+          and "сбрасывает эту квитанцию" in router
+          and help_run.returncode == 0
+          and len(evidence_help.encode("utf-8")) <= 2_500
+          and all(x in evidence_help for x in
+                  ("--support", "--challenge", "read every cN", "A limit forbids supported"))
           and "references/measurement.md" in measured.get("resources", []),
-          out, "parse SKILL table; entry <=8KiB; ordinary route adds no common reference")
+          out, "entry <=8KiB; warm/evidence routes avoid extra references but keep required gates")
 
 
 def t_analytical_delta_keeps_canon_and_primary_scope_visible():
@@ -1127,6 +1143,75 @@ def t_58_lookup_searches_unmerged_refs():
           "НЕ НАЙДЕНО" not in out and "ЕСТЬ ВНЕ КАНОНА" in out
           and "polis.md" in out, out,
           "вывод об отсутствии обязан покрывать доставленное, но не слитое")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_515_material_interpretation_stays_red_until_all_candidates_reviewed():
+    """26.08: causal summary won over a limiting fact because lookup was skipped
+    and the omission looked exactly like a completed check."""
+    timeline = "# limit\n\nLIMIT_JUNE_CONTEXT predates the therapy\n"
+    d = base({
+        "canon/cause.md": "# hypothesis\n\nTHERAPY_ONLY explains the change\n",
+        "canon/timeline.md": timeline,
+    })
+    receipt = os.path.join(d, "_work", "evidence.json")
+    begin = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_lookup.py"), d,
+         "--claim", "therapy caused the whole change", "--receipt", receipt,
+         "--support", "THERAPY_ONLY", "--challenge", "LIMIT_JUNE_CONTEXT"],
+        capture_output=True, text=True, timeout=120)
+    data = __import__("json").load(open(receipt, encoding="utf-8"))
+    by_path = {item["path"]: item["id"] for item in data["candidates"]}
+    support_id = by_path["canon/cause.md"]
+    limit_id = by_path["canon/timeline.md"]
+    timeline_path = os.path.join(d, "canon", "timeline.md")
+    with open(timeline_path, "a", encoding="utf-8") as f:
+        f.write("NEW_CONTEXT arrived after lookup\n")
+    stale_close = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_lookup.py"), d,
+         "--finalize", receipt, "--outcome", "qualified",
+         "--supports", support_id, "--limits", limit_id,
+         "--reason", "review belongs to a stale corpus"],
+        capture_output=True, text=True, timeout=120)
+    with open(timeline_path, "w", encoding="utf-8") as f:
+        f.write(timeline)
+    partial_close = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_lookup.py"), d,
+         "--finalize", receipt, "--outcome", "supported",
+         "--supports", support_id, "--reason", "only the convenient file reviewed"],
+        capture_output=True, text=True, timeout=120)
+    false_close = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_lookup.py"), d,
+         "--finalize", receipt, "--outcome", "supported",
+         "--supports", support_id, "--limits", limit_id,
+         "--reason", "both files reviewed"],
+        capture_output=True, text=True, timeout=120)
+    close = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_lookup.py"), d,
+         "--finalize", receipt, "--outcome", "qualified",
+         "--supports", support_id, "--limits", limit_id,
+         "--reason", "the earlier context limits the causal attribution"],
+        capture_output=True, text=True, timeout=120)
+    final = __import__("json").load(open(receipt, encoding="utf-8"))
+    out = Vyvod(begin.stdout + begin.stderr + stale_close.stdout + stale_close.stderr
+                + partial_close.stdout
+                + partial_close.stderr + false_close.stdout
+                + false_close.stderr + close.stdout + close.stderr,
+                close.returncode)
+    check("существенный вывод не проходит без evidence/contradiction receipt",
+          begin.returncode == 1
+          and "EVIDENCE_GATE=REVIEW_REQUIRED" in begin.stdout
+          and data["status"] == "review_required"
+          and stale_close.returncode == 2
+          and "база изменилась после поиска" in stale_close.stderr
+          and partial_close.returncode == 2
+          and "не прочитаны/не классифицированы" in partial_close.stderr
+          and false_close.returncode == 2
+          and close.returncode == 0
+          and "EVIDENCE_GATE=QUALIFIED" in close.stdout
+          and final["status"] == "qualified"
+          and final["review"]["limit_ids"] == [limit_id],
+          out, "snapshot-bound gate; every candidate classified; limit forbids supported")
     shutil.rmtree(d, ignore_errors=True)
 
 

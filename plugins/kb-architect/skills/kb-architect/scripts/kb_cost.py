@@ -33,8 +33,11 @@ def routes(text: str) -> list[dict]:
         if not match or set(match.group(1).strip()) == {"-"}:
             continue
         task, instruction = match.groups()
-        resources = list(dict.fromkeys(MARKDOWN_PATH.findall(instruction)))
-        result.append({"task": task.strip(), "resources": resources})
+        listed = MARKDOWN_PATH.findall(instruction)
+        resources = list(dict.fromkeys(listed))
+        duplicates = sorted({item for item in listed if listed.count(item) > 1})
+        result.append({"task": task.strip(), "resources": resources,
+                       "_duplicate_resources": duplicates})
     return result
 
 
@@ -44,6 +47,10 @@ def measure() -> dict:
     errors = []
     measured = []
     for route in routes(text):
+        duplicates = route.pop("_duplicate_resources")
+        if duplicates:
+            errors.append(
+                f"route repeats resource ({route['task']}): {', '.join(duplicates)}")
         extra = 0
         for relative in route["resources"]:
             path = ROOT / relative
