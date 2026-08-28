@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.0"
+          and data.get("baseline_version") == "6.0.1"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -398,12 +398,20 @@ def visible_role_registry(name, canonical, codex, claude,
             "name": name,
             "canonical": canonical,
             "owner": "fixture project",
+            "quality_owner": "fixture domain maintainer",
+            "quality_review": f"{canonical}/ROLE_QUALITY_REVIEW.json",
             "version": "1.0.0",
             "validation": {
-                "command": "python3 tests.py",
-                "environment": "python 3",
-                "covers": ["role-selection", "knowledge-recall", "authority-stop",
-                           "source-conflict", "context-cost"],
+                "platform": {
+                    "command": "python3 quick_validate.py",
+                    "environment": "python 3",
+                },
+                "project": {
+                    "command": "python3 tests.py",
+                    "environment": "python 3",
+                    "covers": ["role-selection", "knowledge-recall", "authority-stop",
+                               "source-conflict", "context-cost"],
+                },
             },
             "failure_policy": "fail-closed",
             "recovery_cost": "fresh clone plus declared dependencies",
@@ -415,7 +423,9 @@ def visible_role_registry(name, canonical, codex, claude,
             "scenarios": [{
                 "id": "subject-work",
                 "roles": [role["id"] for role in roles],
-                "accepted_entry_bytes": entry_bytes,
+                "route_files": ["knowledge/case.md"],
+                "accepted_role_entry_bytes": entry_bytes,
+                "accepted_static_route_bytes": entry_bytes + 100_000,
                 "accepted_reason": "fixture baseline",
             }],
         },
@@ -435,10 +445,34 @@ def write_role_acceptance(root, registry):
         with open(index_path, "w", encoding="utf-8") as f:
             json.dump(knowledge_index(), f)
     skills = {}
+    evidence_by_skill = {}
     for entry in registry["skills"]:
         path = entry["canonical"]
         skill_root = path if os.path.isabs(path) else os.path.join(root, path)
         skill_md = os.path.join(skill_root, "SKILL.md")
+        evidence_path = os.path.join(skill_root, "tests", "acceptance.txt")
+        os.makedirs(os.path.dirname(evidence_path), exist_ok=True)
+        with open(evidence_path, "w", encoding="utf-8") as f:
+            f.write("synthetic structural discovery behavior and owner evidence\n")
+        evidence_relative = os.path.relpath(evidence_path, root).replace(os.sep, "/")
+        evidence_sha = hashlib.sha256(open(evidence_path, "rb").read()).hexdigest()
+        review_path = entry["quality_review"]
+        review_path = (review_path if os.path.isabs(review_path)
+                       else os.path.join(root, review_path))
+        with open(review_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "schema": 1,
+                "skill": entry["name"],
+                "quality_owner": entry["quality_owner"],
+                "reviewed_at": "2026-08-28",
+                "result": "PASS",
+                "professional_method": "fixture",
+                "domain_regressions": ["fixture"],
+                "external_practice_review": {
+                    "status": "not-applicable", "rationale": "fixture",
+                },
+                "evidence": [{"path": evidence_relative, "sha256": evidence_sha}],
+            }, f)
         tree = hashlib.sha256()
         files = []
         for folder, _, names in os.walk(skill_root):
@@ -451,25 +485,112 @@ def write_role_acceptance(root, registry):
         skills[entry["name"]] = {
             "skill_sha256": hashlib.sha256(open(skill_md, "rb").read()).hexdigest(),
             "skill_tree_sha256": tree.hexdigest(),
-            "covers": entry["validation"]["covers"],
+            "quality_review_sha256": hashlib.sha256(
+                open(review_path, "rb").read()).hexdigest(),
         }
+        evidence_by_skill[entry["name"]] = {
+            "path": evidence_relative, "sha256": evidence_sha,
+        }
+    common_evidence = next(iter(evidence_by_skill.values()))
+    agents = {}
+    for agent in registry["supported_agents"]:
+        inventory = []
+        for entry in registry["skills"]:
+            point = os.path.join(root, entry["discovery"][agent], "SKILL.md")
+            inventory.append({
+                "id": entry["name"],
+                "path": os.path.relpath(point, root).replace(os.sep, "/"),
+                "sha256": (hashlib.sha256(open(point, "rb").read()).hexdigest()
+                           if os.path.isfile(point) else None),
+                "version": str(entry["version"]),
+            })
+        agents[agent] = {
+            "fresh_context": True,
+            "unforced": True,
+            "new_session_required": True,
+            "session_boundary": "new-session",
+            "inventory": inventory,
+            "selected": list(inventory),
+        }
+    cases = {
+        case: {"result": "PASS", "evidence": [common_evidence]}
+        for case in ("role-selection", "knowledge-recall", "authority-stop",
+                     "source-conflict", "context-cost")
+    }
     receipt = {
-        "schema": 1,
-        "result": "passed",
-        "accepted_by": "fixture owner",
-        "accepted_at": "2026-08-28",
+        "schema": 2,
+        "outcomes": {
+            "STRUCTURAL_PASS": {
+                "status": "PASS", "evidence": [common_evidence],
+                "validators": {
+                    entry["name"]: {
+                        gate: {"result": "PASS",
+                               "command": entry["validation"][gate]["command"],
+                               "evidence": [evidence_by_skill[entry["name"]]]}
+                        for gate in ("platform", "project")
+                    }
+                    for entry in registry["skills"]
+                },
+            },
+            "DISCOVERY_PASS": {"status": "PASS", "evidence": [common_evidence],
+                               "agents": agents},
+            "BEHAVIOR_PASS": {
+                "status": "PASS", "proof_mode": "synthetic-first",
+                "evidence": [common_evidence], "cases": cases,
+                "private_real_data": {
+                    "authority": "not-granted", "result": "UNKNOWN",
+                    "reason": "fixture uses synthetic proof",
+                },
+            },
+            "OWNER_ACCEPTED": {
+                "status": "PASS", "accepted_by": "fixture owner",
+                "accepted_at": "2026-08-28", "evidence": [common_evidence],
+            },
+        },
         "project_roles_sha256": hashlib.sha256(
             open(os.path.join(root, "PROJECT_ROLES.json"), "rb").read()).hexdigest(),
         "knowledge_index_sha256": hashlib.sha256(
             open(index_path, "rb").read()).hexdigest(),
         "skills": skills,
         "scenario_baselines": {
-            item["id"]: item["accepted_entry_bytes"]
+            item["id"]: {
+                "accepted_role_entry_bytes": item["accepted_role_entry_bytes"],
+                "accepted_static_route_bytes": item["accepted_static_route_bytes"],
+                "route_files": item["route_files"],
+            }
             for item in registry["cost_policy"]["scenarios"]
+        },
+        "actual_usage": {
+            "status": "UNKNOWN", "reason": "fixture has no model token receipt",
         },
     }
     with open(os.path.join(root, "ROLE_ACCEPTANCE.json"), "w", encoding="utf-8") as f:
         json.dump(receipt, f)
+
+
+def accepted_role_fixture(skill_body=None):
+    import json
+    body = (skill_body or
+            "---\nname: domain-auditor\ndescription: Fixture role\n"
+            "metadata:\n  version: 1.0.0\n---\nfixture\n")
+    d = base({"skills/domain-auditor/SKILL.md": body,
+              "knowledge/case.md": "fixture\n"})
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for base_dir in (".agents", ".claude"):
+        os.symlink("../../skills/domain-auditor",
+                   os.path.join(d, base_dir, "skills", "domain-auditor"))
+    registry = visible_role_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor")
+    write_role_acceptance(d, registry)
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                    "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
+                    "skills", ".agents", ".claude"], check=True)
+    return d, registry
 
 
 def knowledge_index():
@@ -502,7 +623,7 @@ def t_required_global_only_skill_blocks_recovery():
     canonical = os.path.join(home, ".codex", "skills", "domain-auditor")
     os.makedirs(canonical)
     with open(os.path.join(canonical, "SKILL.md"), "w", encoding="utf-8") as f:
-        f.write("---\nname: domain-auditor\nversion: 1.0.0\n---\n")
+        f.write("---\nname: domain-auditor\ndescription: Fixture role\nmetadata:\n  version: 1.0.0\n---\n")
     registry = skill_registry("domain-auditor", canonical,
                               ".agents/skills/domain-auditor",
                               ".claude/skills/domain-auditor")
@@ -520,7 +641,7 @@ def t_external_role_checkout_must_match_declared_pin():
     """A mutable sibling checkout must not masquerade as a pinned dependency."""
     import json
     external = base({"skills/shared-role/SKILL.md":
-                     "---\nname: shared-role\nversion: 1.0.0\n---\nfirst\n"})
+                     "---\nname: shared-role\ndescription: Fixture role\nmetadata:\n  version: 1.0.0\n---\nfirst\n"})
     subprocess.run(["git", "-C", external, "init", "-q"], check=True)
     subprocess.run(["git", "-C", external, "config", "user.email",
                     "fixture@example.invalid"], check=True)
@@ -600,7 +721,7 @@ def t_broken_project_skill_discovery_is_visible():
 def t_role_registry_version_must_match_loaded_skill():
     """27.08 field audit: tg-archive registry said 3.2 while its skill was 3.3."""
     d = base({"skills/domain-auditor/SKILL.md":
-              "---\nname: domain-auditor\nversion: 2.0.0\n---\n"})
+              "---\nname: domain-auditor\ndescription: Fixture role\nmetadata:\n  version: 2.0.0\n---\n"})
     os.makedirs(os.path.join(d, ".agents", "skills"))
     os.makedirs(os.path.join(d, ".claude", "skills"))
     os.symlink("../../skills/domain-auditor",
@@ -625,7 +746,7 @@ def t_role_registry_version_must_match_loaded_skill():
                     ".agents", ".claude"], check=True)
     out = run_skills(d)
     check("устаревшая версия role registry не получает PASS",
-          out.code == 1 and "registry version 1.0.0 != SKILL.md version 2.0.0" in out,
+          out.code == 1 and "registry version 1.0.0 != SKILL.md metadata.version 2.0.0" in out,
           out, "declared role version must describe the bytes an agent loads")
     shutil.rmtree(d, ignore_errors=True)
 
@@ -633,7 +754,7 @@ def t_role_registry_version_must_match_loaded_skill():
 def t_large_composite_role_emits_cost_signal():
     """27.08 field audit: a broad company skill loaded unrelated professional lanes."""
     d = base({"skills/company-adviser/SKILL.md":
-              "---\nname: company-adviser\nversion: 1.0.0\n---\n" + "x" * 9000})
+              "---\nname: company-adviser\ndescription: Fixture role\nmetadata:\n  version: 1.0.0\n---\n" + "x" * 9000})
     os.makedirs(os.path.join(d, ".agents", "skills"))
     os.makedirs(os.path.join(d, ".claude", "skills"))
     for base_dir in (".agents", ".claude"):
@@ -714,7 +835,9 @@ def t_capability_registry_expresses_role_not_only_location():
     entry = data["skills"][0]
     role = data["roles"][0]
     policy = data["role_posture"]
-    out = Vyvod(str(entry), 0)
+    acceptance = __import__("json").loads(skill_text("assets/templates/role-acceptance.json"))
+    scenario = data["cost_policy"]["scenarios"][0]
+    out = Vyvod(str(entry) + str(acceptance), 0)
     check("видимый реестр проводит роль, знания, recovery и cost без копии метода",
           data.get("schema") == 1
           and policy.get("unmatched_material_work") == "stop"
@@ -723,11 +846,17 @@ def t_capability_registry_expresses_role_not_only_location():
           and all(role.get(field) for field in
                   ("id", "purpose", "load_when", "skill", "knowledge_routes"))
           and entry.get("canonical")
-          and set(entry["validation"]["covers"]) == {
+          and entry.get("quality_owner") and entry.get("quality_review")
+          and set(entry["validation"]) == {"platform", "project"}
+          and set(entry["validation"]["project"]["covers"]) == {
               "role-selection", "knowledge-recall", "authority-stop",
               "source-conflict", "context-cost"}
-          and data.get("cost_policy", {}).get("scenarios"),
-          out, "method stays in one SKILL; registry carries routing and acceptance")
+          and all(key in scenario for key in
+                  ("accepted_role_entry_bytes", "accepted_static_route_bytes", "route_files"))
+          and set(acceptance["outcomes"]) == {
+              "STRUCTURAL_PASS", "DISCOVERY_PASS", "BEHAVIOR_PASS", "OWNER_ACCEPTED"}
+          and acceptance["actual_usage"]["status"] == "UNKNOWN",
+          out, "method stays in one SKILL; registry carries split gates and costs")
 
 
 def t_600_legacy_schema_one_remains_usable_during_migration():
@@ -768,7 +897,7 @@ def t_600_role_must_resolve_project_knowledge_route():
     """A role must not hide a missing KB route by carrying facts in its prompt."""
     import json
     d = base({"skills/domain-auditor/SKILL.md":
-              "---\nname: domain-auditor\nversion: 1.0.0\n---\n"})
+              "---\nname: domain-auditor\ndescription: Fixture role\nmetadata:\n  version: 1.0.0\n---\n"})
     os.makedirs(os.path.join(d, ".agents", "skills"))
     os.makedirs(os.path.join(d, ".claude", "skills"))
     for base_dir in (".agents", ".claude"):
@@ -797,7 +926,7 @@ def t_600_unaccepted_role_route_growth_fails_closed():
     import json
     d = base({
         "skills/domain-auditor/SKILL.md":
-            "---\nname: domain-auditor\nversion: 1.0.0\n---\n" + "x" * 300,
+            "---\nname: domain-auditor\ndescription: Fixture role\nmetadata:\n  version: 1.0.0\n---\n" + "x" * 300,
         "knowledge/case.md": "fixture\n",
     })
     os.makedirs(os.path.join(d, ".agents", "skills"))
@@ -831,7 +960,7 @@ def t_600_role_acceptance_is_bound_to_loaded_bytes():
     import json
     d = base({
         "skills/domain-auditor/SKILL.md":
-            "---\nname: domain-auditor\nversion: 1.0.0\n---\ninitial\n",
+            "---\nname: domain-auditor\ndescription: Fixture role\nmetadata:\n  version: 1.0.0\n---\ninitial\n",
         "skills/domain-auditor/references/method.md": "accepted method\n",
         "knowledge/case.md": "fixture\n",
     })
@@ -867,7 +996,7 @@ def t_600_cost_has_an_all_roles_upper_bound():
     import json
     d = base({
         "skills/company-adviser/SKILL.md":
-            "---\nname: company-adviser\nversion: 1.0.0\n---\nfixture\n",
+            "---\nname: company-adviser\ndescription: Fixture role\nmetadata:\n  version: 1.0.0\n---\nfixture\n",
         "knowledge/case.md": "fixture\n",
     })
     os.makedirs(os.path.join(d, ".agents", "skills"))
@@ -906,7 +1035,7 @@ def t_600_acceptance_binds_selection_and_knowledge_wiring():
     import json
     d = base({
         "skills/domain-auditor/SKILL.md":
-            "---\nname: domain-auditor\nversion: 1.0.0\n---\nfixture\n",
+            "---\nname: domain-auditor\ndescription: Fixture role\nmetadata:\n  version: 1.0.0\n---\nfixture\n",
         "knowledge/case.md": "fixture\n",
         "knowledge/other.md": "other\n",
     })
@@ -1333,7 +1462,7 @@ def t_update_names_optional_capabilities():
           "НОВЫЕ ВОЗМОЖНОСТИ НА РЕШЕНИЕ" in out
           and "[4.19]" in out
           and "Claude и Codex" in out
-          and "принято / отклонено /" in out,
+          and "deferred / declined" in out,
           out, "4.19 видна как решение проекта, даже когда обязательных дел нет")
     shutil.rmtree(d, ignore_errors=True)
 
@@ -2358,6 +2487,266 @@ def t_516_broad_evidence_query_refuses_context_overrun():
           and finalize.returncode == 2
           and "уточнить широкий поиск" in finalize.stderr,
           out, "all candidates remain in receipt, but no conclusion/finalize is allowed")
+    shutil.rmtree(project, ignore_errors=True)
+
+
+def t_601_marker_without_release_ledger_is_unproven():
+    """A marker must not erase the migration steps that justified itself."""
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.0\n"})
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
+    out = run("kb_apply.py", d)
+    check("marker v6 без полного receipt не скрывает незавершённую миграцию",
+          out.code == 1 and "APPLICATION_UNPROVEN" in out
+          and "missing KB_RELEASE_APPLICATION.json" in out,
+          out, "the marker is an outcome, not proof of its own preconditions")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_601_release_application_binds_source_and_exact_ledger():
+    """The migration receipt binds the immutable source before project writes."""
+    import json
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.0\n",
+              "tests/migration.txt": "migration checks passed\n",
+              "tests/owner.txt": "owner accepted shown results\n"})
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.email",
+                    "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "Fixture"], check=True)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "source"], check=True)
+    source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
+                                  capture_output=True, check=True).stdout
+    with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write("# rules\n\nkb_standard_version: 6.0.1\n")
+    receipt = {
+        "schema": 1,
+        "applications": [{
+            "kind": "migration", "from_version": "6.0", "to_version": "6.0.1",
+            "status": "finalized",
+            "source_snapshot": {
+                "ref": source, "commit": source, "version_source": "CLAUDE.md",
+                "version_source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+            },
+            "release_ledger": [{"version": "6.0.1", "decision": "applied",
+                                "evidence": ["tests/migration.txt"]}],
+            "owner_acceptance": {"accepted_by": "fixture owner",
+                                 "accepted_at": "2026-08-28",
+                                 "evidence": ["tests/owner.txt"]},
+            "finalized_at": "2026-08-28",
+        }],
+    }
+    with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w",
+              encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md",
+                    "KB_RELEASE_APPLICATION.json", "tests"], check=True)
+    out = run("kb_apply.py", d)
+    check("release application binds source snapshot and exact release ledger",
+          out.code == 0 and "APPLICATION_RECEIPT_OK" in out
+          and "применять нечего" in out,
+          out, "source commit, old marker, release row and post-results owner receipt are bound")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_601_initial_adoption_records_source_without_replaying_history():
+    """A new project proves initial adoption without pretending to migrate old releases."""
+    import json
+    d = base({"CLAUDE.md": "# new project rules\n", "tests/proof.txt": "accepted\n"})
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.email", "fixture@example.invalid"],
+                   check=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "Fixture"], check=True)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "pre-adoption"], check=True)
+    source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
+                                  capture_output=True, check=True).stdout
+    with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
+        f.write("\nkb_standard_version: 6.0.1\n")
+    receipt = {"schema": 1, "applications": [{
+        "kind": "initial-adoption", "from_version": None, "to_version": "6.0.1",
+        "status": "finalized",
+        "source_snapshot": {"ref": source, "commit": source,
+                            "version_source": "CLAUDE.md",
+                            "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
+        "release_ledger": [{"version": "6.0.1", "decision": "applied",
+                            "evidence": ["tests/proof.txt"]}],
+        "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
+                             "evidence": ["tests/proof.txt"]},
+        "finalized_at": "2026-08-28",
+    }]}
+    with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md", "tests",
+                    "KB_RELEASE_APPLICATION.json"], check=True)
+    out = run("kb_apply.py", d)
+    check("initial adoption proves pre-marker source without replaying all releases",
+          out.code == 0 and "APPLICATION_RECEIPT_OK" in out,
+          out, "new projects use one current release row, not a fabricated migration history")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_601_late_marker_cannot_hide_intermediate_release():
+    """A receipt ending at current must still cover every release after source."""
+    import json
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 5.16\n",
+              "tests/proof.txt": "proof\n"})
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.email", "fixture@example.invalid"],
+                   check=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "Fixture"], check=True)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "source"], check=True)
+    source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
+                                  capture_output=True, check=True).stdout
+    with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write("# rules\n\nkb_standard_version: 6.0.1\n")
+    receipt = {"schema": 1, "applications": [{
+        "kind": "migration", "from_version": "5.16", "to_version": "6.0.1",
+        "status": "finalized",
+        "source_snapshot": {"ref": source, "commit": source,
+                            "version_source": "CLAUDE.md",
+                            "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
+        "release_ledger": [{"version": "6.0.1", "decision": "applied",
+                            "evidence": ["tests/proof.txt"]}],
+        "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
+                             "evidence": ["tests/proof.txt"]},
+        "finalized_at": "2026-08-28",
+    }]}
+    with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md", "tests",
+                    "KB_RELEASE_APPLICATION.json"], check=True)
+    out = run("kb_apply.py", d)
+    check("поздний marker не скрывает пропущенную промежуточную редакцию",
+          out.code == 1 and "release ledger must be exact ['6.0', '6.0.1']" in out,
+          out, "every release after the immutable source receives an explicit outcome")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_601_acceptance_gates_cannot_collapse_into_owner_claim():
+    """An owner label cannot stand in for discovery and behavior evidence."""
+    import json
+    d, _registry = accepted_role_fixture()
+    path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(path, encoding="utf-8"))
+    receipt["outcomes"] = {"OWNER_ACCEPTED": receipt["outcomes"]["OWNER_ACCEPTED"]}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    out = run_skills(d)
+    check("structural discovery behavior and owner outcomes remain independent",
+          out.code == 1
+          and "must separate STRUCTURAL_PASS, DISCOVERY_PASS, BEHAVIOR_PASS and OWNER_ACCEPTED" in out
+          and "DISCOVERY_PASS: status must be PASS" in out
+          and "BEHAVIOR_PASS: status must be PASS" in out,
+          out, "an owner declaration cannot self-prove runtime or behavior")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_601_common_validator_rejects_top_level_role_version():
+    """The project validator cannot waive the portable Agent Skills schema."""
+    d, _registry = accepted_role_fixture(
+        "---\nname: domain-auditor\ndescription: Fixture role\nversion: 1.0.0\n---\n")
+    out = run_skills(d)
+    check("project role проходит общий и проектный validator раздельно",
+          out.code == 1 and "platform validator rejects top-level version" in out
+          and "platform validator requires metadata.version" in out,
+          out, "a green project test does not overrule the portable skill schema")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_601_active_global_role_collision_is_fail_closed():
+    """A same-name user-global role must not silently preempt project bytes."""
+    d, _registry = accepted_role_fixture()
+    home = tempfile.mkdtemp(prefix="kbtest-role-home-")
+    global_role = os.path.join(home, ".codex", "skills", "domain-auditor")
+    os.makedirs(global_role)
+    with open(os.path.join(global_role, "SKILL.md"), "w", encoding="utf-8") as f:
+        f.write("---\nname: domain-auditor\ndescription: Other copy\n"
+                "metadata:\n  version: 9.9.9\n---\ndifferent\n")
+    out = run_skills(d, home)
+    check("same-name active global role cannot hide project candidate",
+          out.code == 1 and "ACTIVE_RUNTIME_COLLISION" in out
+          and global_role in out and "version=9.9.9" in out,
+          out, "bounded active roots expose id/path/hash/version collisions")
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(home, ignore_errors=True)
+
+
+def t_601_discovery_requires_unforced_fresh_new_session_inventory():
+    """Static links prove structure, not runtime selection in a fresh context."""
+    import json
+    d, _registry = accepted_role_fixture()
+    path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(path, encoding="utf-8"))
+    receipt["outcomes"]["DISCOVERY_PASS"]["agents"]["codex"]["unforced"] = False
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    out = run_skills(d)
+    check("runtime discovery needs inventory and an unforced fresh new session",
+          out.code == 1
+          and "DISCOVERY_PASS.codex: fresh_context and unforced are required" in out,
+          out, "a symlink or forced prompt is STRUCTURAL_PASS, not DISCOVERY_PASS")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_601_local_report_route_never_falls_back_public():
+    """Lack of local write authority is not authority to publish privately routed data."""
+    project = base({
+        "CLAUDE.md": "# rules\n\nreport route: local-inbox\nreport inbox: missing-inbox\n",
+        "report.md": "# private report\n\nрежим подробности: детальный\n",
+    })
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_report.py"), "--project", project,
+         "--report", os.path.join(project, "report.md"), "--public-safe", "--do"],
+        capture_output=True, text=True, timeout=30)
+    # Code 2 is the expected fail-closed outcome being asserted, not a broken
+    # test process; keep the harness infrastructure oracle separate here.
+    out = Vyvod(p.stdout + p.stderr, 0)
+    check("недоступный local inbox даёт BLOCKED_LOCAL без public fallback",
+          p.returncode == 2 and "BLOCKED_LOCAL" in p.stdout
+          and os.path.join(project, "missing-inbox") in p.stdout
+          and "github" not in p.stdout.lower(),
+          out, "recipient identity and current write authority remain separate")
+    shutil.rmtree(project, ignore_errors=True)
+
+
+def t_601_report_addendum_preserves_payload_and_bidirectional_link():
+    """Corrections append relationships without rewriting the original report bytes."""
+    import json
+    project = base({
+        "CLAUDE.md": "# rules\n\nreport route: local-inbox\nreport inbox: reports\n",
+        "reports/.keep": "",
+        "parent.md": "# parent\n\noriginal observation\n",
+        "child.md": "# child\n\nadditional evidence\n",
+    })
+    parent_source = os.path.join(project, "parent.md")
+    child_source = os.path.join(project, "child.md")
+    original = open(parent_source, "rb").read()
+    parent = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_report.py"), "--project", project,
+         "--report", parent_source, "--do"], capture_output=True, text=True, timeout=30)
+    child = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_report.py"), "--project", project,
+         "--report", child_source, "--amends", "parent.md", "--do"],
+        capture_output=True, text=True, timeout=30)
+    index = json.load(open(os.path.join(project, "reports", "REPORT_INDEX.json"),
+                           encoding="utf-8"))
+    parent_id = "sha256:" + hashlib.sha256(original).hexdigest()
+    child_id = "sha256:" + hashlib.sha256(open(child_source, "rb").read()).hexdigest()
+    out = Vyvod(parent.stdout + parent.stderr + child.stdout + child.stderr, child.returncode)
+    check("report addendum keeps immutable payload and bidirectional linkage",
+          parent.returncode == 0 and child.returncode == 0
+          and open(os.path.join(project, "reports", "parent.md"), "rb").read() == original
+          and index["reports"][child_id]["relations"]["amends"] == parent_id
+          and child_id in index["reports"][parent_id]["relations"]["amended_by"],
+          out, "content-derived ids and a mutable index preserve both history and navigation")
     shutil.rmtree(project, ignore_errors=True)
 
 

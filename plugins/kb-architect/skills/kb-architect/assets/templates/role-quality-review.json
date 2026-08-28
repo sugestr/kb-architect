@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "skill": "research-adviser",
+  "quality_owner": "named domain-role maintainer",
+  "reviewed_at": "YYYY-MM-DD",
+  "result": "PASS",
+  "professional_method": "Describe what was checked in the role's method and source ladder",
+  "domain_regressions": ["name the domain-specific regressions that passed"],
+  "external_practice_review": {
+    "status": "performed",
+    "rationale": "Proportional review of relevant professional/community practice",
+    "sources": ["record provenance and licence where material was adopted"]
+  },
+  "evidence": [
+    {"path": "skills/research-adviser/tests/quality-review.txt", "sha256": "replace"}
+  ]
+}

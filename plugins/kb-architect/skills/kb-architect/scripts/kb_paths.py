@@ -319,7 +319,7 @@ def project_version(root):
     raw, _ = declared_value(root, ("kb_standard_version",))
     if not raw:
         return None, None
-    m = re.search(r"\d+\.\d+", raw)
+    m = re.search(r"\d+(?:\.\d+)+", raw)
     return (m.group(0) if m else None), raw
 
 

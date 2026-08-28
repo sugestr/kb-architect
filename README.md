@@ -38,9 +38,10 @@ and this five-step route:
 4. Run the fresh-chat check below.
 5. Submit one [beta report](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md), including “no useful difference” if that is what happened.
 
-Report routing is deterministic: an owner-local project with a writable private
-laboratory inbox delivers there; every external/remote beta project submits an
-anonymised GitHub issue. `scripts/kb_report.py` previews and executes that route.
+Report routing is deterministic: an owner-local project keeps its declared private
+inbox even when the current runtime cannot write there (`BLOCKED_LOCAL`, never a
+public fallback); an external/remote beta project submits an anonymised GitHub issue.
+`scripts/kb_report.py` previews and executes that route.
 
 Starter prompt:
 
@@ -90,11 +91,12 @@ several named roles only when they genuinely share triggers, source hierarchy,
 evidence threshold and stop conditions. Portal recipes, laws and project facts stay
 in the indexed knowledge base, not in the role.
 
-An accepted role also has a Git-tracked acceptance receipt bound to the exact role
-tree, manifest and knowledge-index hashes, behavioural cases and cost baselines. A shadow candidate does not
-replace the old role until owner acceptance. Shared roles run from the declared exact
-pin, and every project records an all-roles upper-bound scenario so combined loading
-cannot disappear from the cost report.
+Role readiness has four separate receipts: structural validity, unforced fresh-session
+runtime discovery, synthetic-first behavioural cases, and post-results owner
+acceptance. It is also bound to a named quality review, exact role tree, manifest,
+knowledge-index hashes and split static cost baselines. A shadow candidate does not
+replace the old role early. Same-name active runtime copies are inventoried; shared
+roles run from an exact pin; an all-roles scenario keeps combined cost visible.
 
 The concise [project-role guide](plugins/kb-architect/skills/kb-architect/references/project-roles.md)
 covers creation, growth, splitting, cost checks, migration and rare pinned reuse.
@@ -156,6 +158,9 @@ When automatic updates are accepted, a fresh task runs this fast check before
 project-derived work. A fresh 24-hour receipt avoids the network. After
 `INSTALLED`, it reads the installed entry and current route. A long task updates
 only at a safe boundary and does not pretend old prompt instructions disappeared.
+Installing files does not raise a project's marker. For v6+, migration is complete
+only when `KB_RELEASE_APPLICATION.json` preserves the pre-change source snapshot,
+every release outcome and post-results owner acceptance.
 
 **Cowork or a regular chat**
 
@@ -200,9 +205,10 @@ to the chat and install it from the file card.
 4. Открыть ещё один свежий чат и выполнить контрольный запрос.
 5. Заполнить один [beta-отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md), даже если результат — «заметной пользы нет».
 
-Куда отправлять отчёт, запоминать не нужно: локальный проект владельца с доступным
-private laboratory inbox кладёт его туда; чужой/удалённый бета-проект отправляет
-обезличенный GitHub issue. Маршрут показывает и выполняет `scripts/kb_report.py`.
+Куда отправлять отчёт, запоминать не нужно: локальный проект сохраняет объявленный
+private inbox даже при отсутствии текущего права записи (`BLOCKED_LOCAL`, не public
+fallback); чужой/удалённый бета-проект отправляет обезличенный GitHub issue. Маршрут
+показывает и выполняет `scripts/kb_report.py`.
 
 Стартовый запрос:
 
@@ -258,10 +264,11 @@ project-specific `KNOWLEDGE_INDEX.json`, один Git-канон и discovery д
 именованных ролей только при общей иерархии источников, evidence threshold и
 stop-gates; иначе роли разделяются.
 
-Принятая роль получает Git-tracked квитанцию, связанную с hashes всего дерева роли,
-manifest и knowledge index, поведенческими тестами и cost baselines. Shadow-кандидат не заменяет старую роль до
-приёмки владельца. Заимствованная роль загружается ровно из объявленного pin, а
-all-roles upper-bound не даёт скрыть цену совместной загрузки нескольких ролей.
+Готовность роли разделяет structural validity, unforced fresh-session discovery,
+synthetic-first behavior и post-results owner acceptance. Квитанция связана с named
+quality review, hashes дерева/manifest/index и раздельными static cost baselines.
+Shadow не становится каноном раньше времени; одноимённые active runtime copies видны;
+заимствованная роль грузится из exact pin, а all-roles scenario показывает общую цену.
 
 Короткое руководство [«Проектные роли»](plugins/kb-architect/skills/kb-architect/references/project-roles.md)
 объясняет создание, рост, разделение, стоимость, миграцию и редкое pinned-заимствование.
@@ -366,6 +373,9 @@ python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
 project-derived работы. Свежая 24-часовая квитанция не обращается к сети. После
 `INSTALLED` агент читает новый entry и нужный маршрут. Длинная сессия обновляется
 только на безопасной границе и не выдаёт старый prompt за забытый.
+Установка файлов не повышает marker проекта. Для v6+ миграцию закрывает только
+`KB_RELEASE_APPLICATION.json`: source snapshot до записи, исход каждой редакции и
+post-results приёмка владельца.
 
 **Cowork или обычный чат:** скачай `kb-architect.skill` из
 [последнего выпуска](https://github.com/sugestr/kb-architect/releases/latest), приложи

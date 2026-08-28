@@ -37,6 +37,7 @@ project root: . (repo root; локальный абсолютный путь н�
 ## Соответствие kb-architect
 
 kb_standard_version: <номер из metadata.version SKILL.md>
+release application: `KB_RELEASE_APPLICATION.json`
 сервисный контур kb-architect: <принят | не принят>
 обновление скилла: <по сигналу | автоматически>
 канал обновления скилла: GitHub public https://github.com/sugestr/kb-architect
@@ -52,10 +53,11 @@ kb_standard_version: <номер из metadata.version SKILL.md>
 
 <Если сервисный контур принят, доставка идёт до project-derived работы один раз на
 новую task/session. Доставка и применение — разные операции. Расхождение
-версий тем же циклом разбирает `kb_apply.py`; его `NEEDS_APPLICATION` остаётся
-видимым, пока проект не закроет дельту. Новая возможность получает `принято / отклонено /
-отложено`, а не становится правилом молча. Рабочий проект не связывается симлинком
-с private development checkout.>
+версий тем же циклом разбирает `kb_apply.py`; `NEEDS_APPLICATION` или
+`APPLICATION_UNPROVEN` остаётся видимым до полного release ledger и post-results
+приёмки. Marker меняется последним. Новая возможность получает явный исход, а не
+становится правилом молча. Рабочий проект не связывается симлинком с private
+development checkout.>
 
 ## Профессиональные роли
 
@@ -98,7 +100,7 @@ acceptance, не на каждый обычный вопрос.>
 |---|---|
 | структура, владение, recovery | <PROJECT_GUIDE.md#...> |
 | предметный вывод | <skills/<name>/SKILL.md> |
-| обновление стандарта | `kb_apply.py` output + `references/service-layer.md` |
+| обновление стандарта | `kb_apply.py` output + `references/service-layer.md`; при дельте `references/migration.md` |
 | облачная работа или внешний connector | `.kb-environments.json` + `kb_environments.py` |
 | перенос проекта | `references/move-project.md` |
 | handoff/report | `references/collaboration.md` |

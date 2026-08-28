@@ -22,17 +22,25 @@
       "name": "research-adviser",
       "canonical": "skills/research-adviser",
       "owner": "this project",
+      "quality_owner": "named domain-role maintainer",
+      "quality_review": "skills/research-adviser/ROLE_QUALITY_REVIEW.json",
       "version": "1.0.0",
       "validation": {
-        "command": "python3 skills/research-adviser/tests/run.py",
-        "environment": "Document the reproducible runtime and dependencies here",
-        "covers": [
-          "role-selection",
-          "knowledge-recall",
-          "authority-stop",
-          "source-conflict",
-          "context-cost"
-        ]
+        "platform": {
+          "command": "python3 <skill-creator>/scripts/quick_validate.py skills/research-adviser",
+          "environment": "Python 3 and the common Agent Skills validator"
+        },
+        "project": {
+          "command": "python3 skills/research-adviser/tests/run.py",
+          "environment": "Document the reproducible runtime and dependencies here",
+          "covers": [
+            "role-selection",
+            "knowledge-recall",
+            "authority-stop",
+            "source-conflict",
+            "context-cost"
+          ]
+        }
       },
       "failure_policy": "fail-closed",
       "recovery_cost": "Fresh clone restores the canonical skill and both discovery links",
@@ -49,7 +57,12 @@
       {
         "id": "ordinary-subject-answer",
         "roles": ["subject-research-adviser"],
-        "accepted_entry_bytes": 2048,
+        "route_files": [
+          "knowledge/subject-authority.md",
+          "knowledge/project-case-state.md"
+        ],
+        "accepted_role_entry_bytes": 2048,
+        "accepted_static_route_bytes": 8192,
         "accepted_reason": "Initial measured baseline; replace with the actual value"
       }
     ]

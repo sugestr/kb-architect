@@ -35,8 +35,13 @@
 инфраструктура лишь не позволяет забытое отсутствие роли принять за готовность.
 Роли связываются с project-specific адресами в `KNOWLEDGE_INDEX.json`; индекс не
 навязывает проекту типы знания. Required-роли получают `ROLE_ACCEPTANCE.json`,
-привязанный к проверенным bytes, behavioural cases и cost baselines; manifest,
-квитанция, индекс и его pointers должны восстанавливаться из Git.
+с отдельными structural/discovery/behavior/owner outcomes; manifest, квитанция,
+индекс и его pointers должны восстанавливаться из Git.
+
+Текущий `kb_standard_version` ставится не один: новый проект создаёт
+`KB_RELEASE_APPLICATION.json` с первым `kind: initial-adoption`, source snapshot до
+marker, текущей release row и post-results acceptance. Так новая база не разбирает всю
+историю, но marker не удостоверяет себя сам (`references/migration.md`).
 
 Codex Cloud получает выбранный GitHub repository/branch в изолированную среду и
 читает `AGENTS.md`; локальная папка машины сама туда не подключается. Поэтому до

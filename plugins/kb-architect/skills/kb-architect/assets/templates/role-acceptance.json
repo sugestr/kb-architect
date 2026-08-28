@@ -1,24 +1,76 @@
 {
-  "schema": 1,
-  "result": "passed",
-  "accepted_by": "project owner",
-  "accepted_at": "YYYY-MM-DD",
+  "schema": 2,
+  "outcomes": {
+    "STRUCTURAL_PASS": {
+      "status": "PASS",
+      "evidence": [{"path": "role-acceptance/structural.txt", "sha256": "replace"}],
+      "validators": {
+        "research-adviser": {
+          "platform": {"result": "PASS", "command": "python3 <skill-creator>/scripts/quick_validate.py skills/research-adviser", "evidence": [{"path": "role-acceptance/platform-validator.txt", "sha256": "replace"}]},
+          "project": {"result": "PASS", "command": "python3 skills/research-adviser/tests/run.py", "evidence": [{"path": "role-acceptance/project-validator.txt", "sha256": "replace"}]}
+        }
+      }
+    },
+    "DISCOVERY_PASS": {
+      "status": "PASS",
+      "evidence": [{"path": "role-acceptance/discovery.txt", "sha256": "replace"}],
+      "agents": {
+        "codex": {
+          "fresh_context": true,
+          "unforced": true,
+          "new_session_required": true,
+          "session_boundary": "new-session",
+          "inventory": [{"id": "research-adviser", "path": ".agents/skills/research-adviser/SKILL.md", "sha256": "replace", "version": "1.0.0"}],
+          "selected": [{"id": "research-adviser", "path": ".agents/skills/research-adviser/SKILL.md", "sha256": "replace", "version": "1.0.0"}]
+        },
+        "claude": {
+          "fresh_context": true,
+          "unforced": true,
+          "new_session_required": true,
+          "session_boundary": "new-session",
+          "inventory": [{"id": "research-adviser", "path": ".claude/skills/research-adviser/SKILL.md", "sha256": "replace", "version": "1.0.0"}],
+          "selected": [{"id": "research-adviser", "path": ".claude/skills/research-adviser/SKILL.md", "sha256": "replace", "version": "1.0.0"}]
+        }
+      }
+    },
+    "BEHAVIOR_PASS": {
+      "status": "PASS",
+      "proof_mode": "synthetic-first",
+      "evidence": [{"path": "role-acceptance/behavior.txt", "sha256": "replace"}],
+      "cases": {
+        "role-selection": {"result": "PASS", "evidence": [{"path": "role-acceptance/role-selection.txt", "sha256": "replace"}]},
+        "knowledge-recall": {"result": "PASS", "evidence": [{"path": "role-acceptance/knowledge-recall.txt", "sha256": "replace"}]},
+        "authority-stop": {"result": "PASS", "evidence": [{"path": "role-acceptance/authority-stop.txt", "sha256": "replace"}]},
+        "source-conflict": {"result": "PASS", "evidence": [{"path": "role-acceptance/source-conflict.txt", "sha256": "replace"}]},
+        "context-cost": {"result": "PASS", "evidence": [{"path": "role-acceptance/context-cost.txt", "sha256": "replace"}]}
+      },
+      "private_real_data": {"authority": "not-granted", "result": "UNKNOWN", "reason": "synthetic proof is sufficient; no private destination was authorised"}
+    },
+    "OWNER_ACCEPTED": {
+      "status": "PASS",
+      "accepted_by": "project owner",
+      "accepted_at": "YYYY-MM-DD after seeing the preceding results",
+      "evidence": [{"path": "role-acceptance/owner-acceptance.txt", "sha256": "replace"}]
+    }
+  },
   "project_roles_sha256": "replace-with-sha256-of-PROJECT_ROLES.json",
   "knowledge_index_sha256": "replace-with-sha256-of-KNOWLEDGE_INDEX.json",
   "skills": {
     "research-adviser": {
       "skill_sha256": "replace-with-sha256-of-the-accepted-SKILL.md",
       "skill_tree_sha256": "replace-with-sha256-of-all-tracked-role-files",
-      "covers": [
-        "role-selection",
-        "knowledge-recall",
-        "authority-stop",
-        "source-conflict",
-        "context-cost"
-      ]
+      "quality_review_sha256": "replace-with-sha256-of-ROLE_QUALITY_REVIEW.json"
     }
   },
   "scenario_baselines": {
-    "ordinary-subject-answer": 2048
+    "ordinary-subject-answer": {
+      "accepted_role_entry_bytes": 2048,
+      "accepted_static_route_bytes": 8192,
+      "route_files": ["knowledge/subject-authority.md", "knowledge/project-case-state.md"]
+    }
+  },
+  "actual_usage": {
+    "status": "UNKNOWN",
+    "reason": "No runtime token receipt has been captured yet; static acceptance remains separate"
   }
 }

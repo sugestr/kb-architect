@@ -1,16 +1,15 @@
 ---
 name: kb-architect
-description: "Knowledge-base contract and tools for durable AI projects: start, audit, update, restructure or move a KB; coordinate Claude/Codex; manage project roles, runtime and credentials. Use for KBs, roles, cloud/MCP, пароль/карточка, multi-agent work and 'перенеси себя в общее поле'."
+description: "Durable AI knowledge-base router: start, audit, update, restructure or move a KB; coordinate Claude/Codex; manage project roles, runtimes, credentials, cloud/MCP and multi-agent work; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.0"
+  version: "6.0.1"
   author: "sugestr"
 ---
 
 # kb-architect — лёгкий вход
 
-Скилл сохраняет один канон между агентами и отделяет факт от интерпретации. Типовой
-проект ставит поверх него одну или несколько профессиональных ролей; ядро их не выбирает.
+Скилл сохраняет один канон между агентами. Проект добавляет свои роли; ядро их не выбирает.
 
 ## Сначала выбери маршрут
 
@@ -23,8 +22,9 @@ metadata:
 | Новый локальный запуск | если update не отключён: до работы `scripts/kb_update.py --public --fast --сделать --project <root>`; затем новый entry/дельта |
 | Создать базу | `references/contract.md` + `references/start-new.md` |
 | Присоединить, диагностировать или перестроить существующую | `references/contract.md` + нужная часть `references/adopt-existing.md` |
-| Перенести checkout для Claude/Codex | `references/contract.md` + `references/move-project.md`; после приёмок UI-имена обеих систем получают `* `, путь/slug — нет |
-| Обновить скилл и применить выпуск | `references/service-layer.md` + `scripts/kb_update.py --public --fast --сделать` |
+| Перенести checkout для Claude/Codex | `references/contract.md` + `references/move-project.md`; UI-имена получают `* ` |
+| Обновить установленный скилл | `references/service-layer.md` + `scripts/kb_update.py --public --fast --сделать` |
+| Применить release delta к проекту | `references/migration.md` + `scripts/kb_apply.py <root>` |
 | Работать нескольким агентам, принять или передать сообщение | `references/collaboration.md` + `assets/templates/agent-message.md` |
 | Создать, проверить, разделить или подключить проектную роль | `references/project-roles.md` + `scripts/kb_skills.py` |
 | Проверить cloud/MCP/почту по средам | `references/modules.md` → `runtime_capabilities` + `scripts/kb_environments.py` |
@@ -60,6 +60,8 @@ metadata:
   `supported|qualified` это draft/`UNKNOWN`. Domain skill задаёт темы, core — гейт.
 - Локальный запуск проверяет stable update до project-derived работы, кроме явной
   политики `по сигналу`; новая task читает новый entry, длинная — на safe boundary.
+- V6 marker требует tracked `KB_RELEASE_APPLICATION.json`: source snapshot, полный
+  ledger и post-results acceptance.
 - Рост released route блокирует `kb_cost.py --check` как `OPTIMIZATION_REQUIRED`;
   число модулей не заменяет бюджет реально загружаемого маршрута.
 - Не перечитывай неизменный reference в одной логической задаче. Новый выпуск,
