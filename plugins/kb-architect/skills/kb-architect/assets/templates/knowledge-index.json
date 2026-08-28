@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "routes": [
+    {
+      "id": "subject-authority",
+      "description": "Applicable authoritative sources and recorded source hierarchy for this project",
+      "load_when": ["the role must establish the governing source or its applicability"],
+      "aliases": ["primary sources", "official rules", "governing authority"],
+      "paths": ["knowledge/authority/INDEX.md"]
+    },
+    {
+      "id": "project-case-state",
+      "description": "Current facts, evidence, decisions, hypotheses and open questions for the active case",
+      "load_when": ["a conclusion depends on the current project or case"],
+      "aliases": ["current case", "project facts", "case evidence"],
+      "paths": ["NOW.md", "knowledge/INDEX.md"]
+    }
+  ]
+}

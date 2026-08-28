@@ -38,6 +38,10 @@ and this five-step route:
 4. Run the fresh-chat check below.
 5. Submit one [beta report](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md), including “no useful difference” if that is what happened.
 
+Report routing is deterministic: an owner-local project with a writable private
+laboratory inbox delivers there; every external/remote beta project submits an
+anonymised GitHub issue. `scripts/kb_report.py` previews and executes that route.
+
 Starter prompt:
 
 ```text
@@ -63,33 +67,49 @@ sources you relied on and stop on contradictions.
 | Layer | Responsibility |
 |---|---|
 | `kb-architect` | Knowledge lifecycle: one canon per class of state, freshness, provenance, contradictions, handoffs and maintenance checks. |
-| Project knowledge base | Facts, evidence, current state, decisions and open questions for this specific project. |
-| Professional/domain skills | The method for doing tax, legal, medical, financial, engineering or other domain work: role, source hierarchy, evidence threshold, stop conditions and prohibited actions. |
+| Project knowledge base | Any project-specific knowledge: facts, evidence, law, diagnoses, events, hypotheses, plans, current state and external-system instructions. The project chooses its own structure. |
+| Project roles | Local Agent Skills that define how an agent uses knowledge: professional method, source hierarchy, evidence threshold, stop conditions and prohibited actions. |
 | Deterministic tools | Repeatable transformations and mechanical validation. |
 
-Professional roles are **strongly recommended for any project that makes material
-domain judgements**. One project may need one role or several narrowly scoped roles.
-They are not decorative personas: each role is a project-owned, reviewable method.
+The default durable-project composition is `kb-architect` as knowledge and
+communication infrastructure plus one or more project-owned professional roles.
+A project that makes material domain judgements must declare role coverage; work
+without a matching required role stops. A pure storage/transport project may instead
+declare `not-applicable` with a reason, and a restructuring project may declare
+`transitioning` with covered work and open gaps.
 
-`kb-architect` can register those skills, verify that Claude and Codex can discover
-the same Git-tracked source, and test their recovery and authority boundaries. It
+Roles are knowledge artifacts and use the same canon, version, cost, change and
+recovery rules as the rest of the project; there is no second role-management
+framework. `kb-architect` adds only a visible role manifest and knowledge-route
+index, verifies that Claude and Codex discover the same Git-tracked source, and tests
+recovery and authority boundaries. It
 does **not** decide which professions your project needs, invent professional
-expertise, or replace primary sources and qualified review. Without a domain skill,
-the knowledge base can remain coherent while the professional quality of its
-conclusions remains undefined. That is acceptable for a simple non-domain project;
-it is usually a weak setup for serious subject-matter work.
+expertise, or replace primary sources and qualified review. Multiple matching roles
+load together; their conflict is preserved and escalated. One skill may implement
+several named roles only when they genuinely share triggers, source hierarchy,
+evidence threshold and stop conditions. Portal recipes, laws and project facts stay
+in the indexed knowledge base, not in the role.
+
+An accepted role also has a Git-tracked acceptance receipt bound to the exact role
+tree, manifest and knowledge-index hashes, behavioural cases and cost baselines. A shadow candidate does not
+replace the old role until owner acceptance. Shared roles run from the declared exact
+pin, and every project records an all-roles upper-bound scenario so combined loading
+cannot disappear from the cost report.
+
+The concise [project-role guide](plugins/kb-architect/skills/kb-architect/references/project-roles.md)
+covers creation, growth, splitting, cost checks, migration and rare pinned reuse.
 
 For a material conclusion derived from project knowledge, the core now provides a
 two-phase evidence gate. It records support and challenge searches, stays red until
 every candidate is reviewed, and permits only `supported`, `qualified` or `unknown`.
-The domain skill still decides which topics and evidence criteria matter.
+The matching project role still decides which topics and evidence criteria matter.
 
 ### First beta run
 
 1. Install the stable release for the platform you will test.
 2. Start a fresh chat and say: `Explain what kb-architect would change in this project and what it would leave untouched.`
 3. In an existing repository, say: `Adopt this knowledge base. Inspect first and show the proposed canon, conflicts and migration plan before changing files.`
-4. If the project makes professional judgements, provide its project-owned domain skill or skills and ask: `Check that these professional roles are recoverable and available to both Claude and Codex.`
+4. If the project makes professional judgements, ask: `Inventory the project roles, separate role behaviour from knowledge and tools, and check recovery for Claude and Codex. Do not migrate until I approve the report.`
 5. Use the project across several real sessions, then ask a fresh session to check for stale state and contradictions.
 
 The useful beta result is not “installation succeeded”. It is an observed behaviour:
@@ -103,6 +123,7 @@ personal data first.
 
 - This is a research prototype with an acceptance suite, not a claim of universal maturity.
 - The built-in lookup is lexical. An empty result is **not** proof that knowledge is absent.
+- `KNOWLEDGE_INDEX.json` improves discovery but does not impose a universal knowledge taxonomy or become a second fact canon.
 - An evidence receipt proves that the declared searches and candidate review ran; it does not make lexical matching a professional judgement.
 - Measured retrieval misses can justify a semantic/vector index as a derived search layer; it finds candidates, but source files remain the canon.
 - It does not supply professional advice, credentials, runtime access or permission for external actions.
@@ -131,8 +152,10 @@ development checkout. Future updates are handled by:
 python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
 ```
 
-Restart with a fresh task after an update; a running session does not hot-reload
-skill instructions.
+When automatic updates are accepted, a fresh task runs this fast check before
+project-derived work. A fresh 24-hour receipt avoids the network. After
+`INSTALLED`, it reads the installed entry and current route. A long task updates
+only at a safe boundary and does not pretend old prompt instructions disappeared.
 
 **Cowork or a regular chat**
 
@@ -177,6 +200,10 @@ to the chat and install it from the file card.
 4. Открыть ещё один свежий чат и выполнить контрольный запрос.
 5. Заполнить один [beta-отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md), даже если результат — «заметной пользы нет».
 
+Куда отправлять отчёт, запоминать не нужно: локальный проект владельца с доступным
+private laboratory inbox кладёт его туда; чужой/удалённый бета-проект отправляет
+обезличенный GitHub issue. Маршрут показывает и выполняет `scripts/kb_report.py`.
+
 Стартовый запрос:
 
 ```text
@@ -207,32 +234,42 @@ project-owned профессиональные роли и решения, ко�
 | Слой | За что отвечает |
 |---|---|
 | `kb-architect` | Как знания хранятся, стареют, проверяются, конфликтуют и передаются. |
-| KB проекта | Факты, доказательства, текущее состояние, решения и открытые вопросы конкретного дела. |
-| Профессиональные/domain skills | Как профессионально работать в предметной области: роль, метод, иерархия источников, порог доказательности, условия остановки и запреты. |
+| KB проекта | Любые знания проекта: факты, доказательства, законы, диагнозы, события, гипотезы, планы, текущее состояние и инструкции внешних систем. Структуру выбирает сам проект. |
+| Проектные роли | Локальные Agent Skills о том, как агент использует знания: метод, иерархия источников, порог доказательности, остановки и запреты. |
 | Скрипты и tools | Воспроизводимые преобразования и механические проверки. |
 
-Если проект делает существенные налоговые, юридические, медицинские, финансовые,
-инженерные или иные предметные выводы, **заранее подключить одну или несколько
-профессиональных ролей настоятельно рекомендуется**. Несколько ролей нужны там, где
-решение пересекает несколько областей; их scope и право на вывод должны быть
-разделены явно.
+Типовая композиция длительного проекта: `kb-architect` как инфраструктура знания и
+коммуникации плюс одна или несколько project-owned профессиональных ролей. Если
+проект делает существенные предметные выводы, покрытие ролями обязательно; вывод без
+совпавшей required-роли блокируется. Чистое хранилище/транспорт может явно объявить
+`not-applicable` с причиной, перестраиваемый проект — `transitioning` с покрытой
+работой и открытыми пробелами.
 
-Это не персонажи в промпте. Профессиональная роль — принадлежащий проекту и
-проверяемый skill с методом, авторитетными источниками, порогом доказательности и
-условиями, при которых агент обязан остановиться. `kb-architect` умеет вести реестр
-таких skills, проверять один Git-канон, discovery для Claude и Codex, validation и
-fresh-clone recovery.
+Это не персонажи в промпте. Роль — принадлежащий проекту и проверяемый локальный skill
+о поведении агента. Она сама является элементом знания проекта и обслуживается теми
+же правилами канона, version, стоимости, изменения и recovery; отдельная система
+управления ролями не создаётся. Специальная дельта — видимый `PROJECT_ROLES.json`,
+project-specific `KNOWLEDGE_INDEX.json`, один Git-канон и discovery для Claude/Codex.
 
 Но он **не выбирает профессии за владельца, не сочиняет экспертизу и не заменяет
-первичные источники или квалифицированную проверку**. Это намеренная граница. Без
-domain skill база всё ещё может хорошо помнить факты и историю, но стандарт
-профессионального вывода остаётся неопределённым. Для простого непредметного проекта
-это нормально; для серьёзной предметной работы такая конфигурация обычно малоэффективна.
+первичные источники или квалифицированную проверку**. Законы, факты дела, диагнозы и
+рецепты госпорталов остаются индексируемым знанием, а не текстом роли. Все совпавшие роли загружаются
+вместе; конфликт сохраняется и эскалируется. Один skill может реализовать несколько
+именованных ролей только при общей иерархии источников, evidence threshold и
+stop-gates; иначе роли разделяются.
+
+Принятая роль получает Git-tracked квитанцию, связанную с hashes всего дерева роли,
+manifest и knowledge index, поведенческими тестами и cost baselines. Shadow-кандидат не заменяет старую роль до
+приёмки владельца. Заимствованная роль загружается ровно из объявленного pin, а
+all-roles upper-bound не даёт скрыть цену совместной загрузки нескольких ролей.
+
+Короткое руководство [«Проектные роли»](plugins/kb-architect/skills/kb-architect/references/project-roles.md)
+объясняет создание, рост, разделение, стоимость, миграцию и редкое pinned-заимствование.
 
 Для существенного вывода из KB ядро даёт двухфазный evidence-gate: оно записывает
 поиск подтверждений и возражений, остаётся красным до разбора каждого кандидата и
 закрывается только как `supported`, `qualified` или `unknown`. Какие темы искать и
-какой порог доказательности достаточен, по-прежнему определяет предметный skill.
+какой порог доказательности достаточен, по-прежнему определяет project role.
 
 ## Как попробовать на реальном проекте
 
@@ -259,8 +296,9 @@ domain skill база всё ещё может хорошо помнить фа�
 Если у проекта есть одна или несколько профессиональных ролей:
 
 ```text
-Проверь, что эти project-owned professional skills имеют один Git-канон,
-понятные полномочия и восстанавливаются для Claude и Codex в fresh clone.
+Проведи read-only опись ролей проекта. Отдели правила поведения роли от знаний и
+tools, покажи knowledge routes, стоимость типовых загрузок и вопросы ко мне. Ничего
+не мигрируй до моего ответа.
 ```
 
 Потом работай как обычно. Команды запоминать не нужно: короткий `SKILL.md`
@@ -284,8 +322,9 @@ domain skill база всё ещё может хорошо помнить фа�
 2. Заметил ли он заранее подготовленное противоречие или уверенно выбрал удобный файл?
 3. Отличил ли «отправлено» от «принято», «счёт создан» от «оплачено», а дату правки от свежести знания?
 4. Сохранил ли профессиональную роль, её source ladder и stop conditions в fresh clone и на обеих платформах?
-5. Назвала ли проверка точный охват или выдала широкое «чисто» после неполного запуска?
-6. Стала ли работа заметно дороже без измеримой пользы?
+5. Нашёл ли агент существующее знание через индекс без подсказки владельца?
+6. Назвала ли проверка точный охват или выдала широкое «чисто» после неполного запуска?
+7. Стала ли работа заметно дороже без измеримой пользы?
 
 Если что-то сломалось, заполни
 [beta-отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md) и приложи версию, обезличенный
@@ -297,6 +336,7 @@ domain skill база всё ещё может хорошо помнить фа�
 
 - Это исследовательский прототип с приёмочным контуром, а не объявленный универсальный стандарт.
 - Встроенный `kb_lookup.py` — лексический поиск. Пустая выдача **не доказывает**, что знания нет.
+- `KNOWLEDGE_INDEX.json` улучшает обнаружение, но не навязывает проектам единую классификацию и не становится вторым каноном фактов.
 - Semantic/vector retrieval можно добавить как производный индекс после измеренных промахов; ответ всё равно проверяется в исходном файле, а индекс не становится вторым каноном.
 - Skill не даёт профессиональный совет, credential, доступ к аккаунту или разрешение на внешнее действие.
 - Git не переносит local MCP, Keychain и ignored-секреты в облако. Каждая runtime-возможность принимается отдельно по аккаунту, scope и безопасной пробе.
@@ -322,8 +362,10 @@ development-checkout. Следующие обновления выполняет
 python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
 ```
 
-После обновления начни новую задачу: уже идущая сессия не перечитывает инструкции
-skill на лету.
+Если принято автоматическое обновление, новая задача выполняет быстрый check до
+project-derived работы. Свежая 24-часовая квитанция не обращается к сети. После
+`INSTALLED` агент читает новый entry и нужный маршрут. Длинная сессия обновляется
+только на безопасной границе и не выдаёт старый prompt за забытый.
 
 **Cowork или обычный чат:** скачай `kb-architect.skill` из
 [последнего выпуска](https://github.com/sugestr/kb-architect/releases/latest), приложи

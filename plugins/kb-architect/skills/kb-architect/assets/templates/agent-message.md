@@ -10,6 +10,9 @@ response_required: <true | false>
 delivery_target: <точный inbox, project/thread id или имя владельца>
 delivery_state: <prepared | delivered | acknowledged>
 collector: <кто отвечает за внесение в канон адресата>
+required_roles: <none | role ids, которые должен применить адресат>
+role_coverage: <pending | covered | partial | unavailable>
+evidence_receipt: <путь/id receipt либо none>
 ---
 
 # Зачем это адресату
@@ -31,6 +34,10 @@ collector: <кто отвечает за внесение в канон адре
 ## Граница полномочий
 
 <Что разрешено сделать и что остаётся владельцу/другому проекту.>
+
+## Покрытие ролями
+
+<Какие роли применены; какой кусок остался вне scope; конфликт ролей не усреднять.>
 
 <!-- prepared: payload существует у отправителя. delivered: точный адресат
 получил payload. acknowledged: адресат вернул исход; для лабораторного inbox

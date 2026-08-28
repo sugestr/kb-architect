@@ -127,12 +127,14 @@ def fast_public_check(ttl_hours):
             print("Быстрая проверка: локальная квитанция свежая; GitHub не опрашивался")
             print(f"  редакция: {receipt.get('version')}")
             print(f"  public HEAD: {receipt.get('remote_head') or 'UNKNOWN'}")
+            print("UPDATE_STATUS=CURRENT")
             return 0
 
         head, error = public_head()
         if error:
             print("Быстрая проверка: UNKNOWN — GitHub public не опрошен: " + error)
             print("  прежняя установленная копия не объявляется свежей")
+            print("UPDATE_STATUS=UNKNOWN")
             return 2
         if head == receipt.get("remote_head"):
             receipt["checked_at_epoch"] = now
@@ -141,10 +143,12 @@ def fast_public_check(ttl_hours):
             if cache_error:
                 print("Быстрая проверка: public HEAD не изменился, но квитанция не записана")
                 print("  UNKNOWN: " + cache_error)
+                print("UPDATE_STATUS=UNKNOWN")
                 return 2
             print("Быстрая проверка: public HEAD не изменился; clone и тесты не нужны")
             print(f"  редакция: {receipt.get('version')}")
             print(f"  public HEAD: {head}")
+            print("UPDATE_STATUS=CURRENT")
             return 0
 
     print("Быстрая проверка: квитанции или parity недостаточно; запускается полный gate")
@@ -381,6 +385,7 @@ def update_from_source(src, args, source_label):
     print()
 
     source_version = versiya(src)
+    installed = False
     for name, raw_path in MESTA:
         path = os.path.expanduser(raw_path)
         if not os.path.lexists(path):
@@ -412,6 +417,7 @@ def update_from_source(src, args, source_label):
         action = "симлинк заменён управляемой копией" if was_link else "копия обновлена"
         print(f"{name:12} {action}: {current} → {new_version}")
         print(f"{'':12} backup: {backup}")
+        installed = True
 
     print()
     print("─" * 66)
@@ -427,8 +433,13 @@ def update_from_source(src, args, source_label):
         print(f"  пакет для загрузки: {package}")
     else:
         print("  собранный пакет рядом с source не найден")
-    print("  загруженная текущей сессией редакция не перечитывается на лету;")
-    print("  применение обновления к проекту выполняет kb_apply.py отдельно.")
+    if installed:
+        print("UPDATE_STATUS=INSTALLED")
+        print("SESSION_ACTION=REREAD_INSTALLED_ENTRY_AND_CURRENT_ROUTE")
+    else:
+        print("UPDATE_STATUS=CURRENT")
+    print("  старый prompt не исчезает: новая task читает установленный entry до работы;")
+    print("  длинная task перечитывает entry/изменившийся route на безопасной границе.")
     return 0
 
 

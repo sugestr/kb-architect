@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "status": "superseded",
+  "superseded_by": "PROJECT_ROLES.json",
+  "note": "This legacy file is obsolete. All current role declarations and rules are in PROJECT_ROLES.json; read and edit that file. Keep this pointer until old callers are retired."
+}

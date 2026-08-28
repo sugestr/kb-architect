@@ -20,6 +20,7 @@ test_kb.py — приёмочный контур скриптов. Запуск�
 """
 
 import os
+import hashlib
 import re
 import shutil
 import subprocess
@@ -44,7 +45,8 @@ def t_agent_message_transport_and_no_chatter():
     tpl = skill_text("assets/templates/agent-message.md")
     out = Vyvod(ref + "\n" + tpl, 0)
     fields = ("message_id:", "from_project:", "to_project:", "response_required:",
-              "delivery_target:", "delivery_state:", "collector:")
+              "delivery_target:", "delivery_state:", "collector:",
+              "required_roles:", "role_coverage:", "evidence_receipt:")
     check("сообщение агента одинаково для файла, канала и владельца",
           all(x in tpl for x in fields)
           and "не зависит от транспорта" in ref
@@ -112,11 +114,12 @@ def t_layer_cost_is_measured_from_the_single_router():
     check("стоимость entry и routed-слоёв воспроизводима без второго route registry",
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
-          and data.get("modules") <= 10
+          and data.get("module_limit") is None
+          and data.get("baseline_version") == "6.0"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
-          and evidence.get("extra_bytes") == 0
-          and "project domain skill" in router
+          and 0 < evidence.get("extra_bytes", 0) <= 2_500
+          and "matching project role" in router
           and "current state" in router
           and "Не перечитывай неизменный reference" in router
           and "сбрасывает эту квитанцию" in router
@@ -125,7 +128,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           and all(x in evidence_help for x in
                   ("--support", "--challenge", "read every cN", "A limit forbids supported"))
           and "references/measurement.md" in measured.get("resources", []),
-          out, "entry <=8KiB; warm/evidence routes avoid extra references but keep required gates")
+          out, "entry <=8KiB; section/help costs and accepted release baseline are measured")
 
 
 def t_analytical_delta_keeps_canon_and_primary_scope_visible():
@@ -150,7 +153,7 @@ def t_project_entry_is_two_layer_and_keeps_stop_gates():
           and "короткий boot canon" in tpl
           and "подробные правила" in tpl
           and "Authority и stop-gates" in tpl
-          and "обязательный domain skill" in tpl
+          and "обязательная project role" in tpl
           and "`UNKNOWN`, не PASS" in tpl,
           out, "static details move out; current, authority, checks and role trigger remain")
 
@@ -188,9 +191,10 @@ def t_warm_turn_does_not_restart_project_boot():
           and "только ответ" in router
           and "не при каждом сообщении" in service
           and "не запускай этот цикл снова" in service
-          and "задерживать первый низкорисковый полезный ответ" in service
+          and "до current state" in service
+          and "на первой безопасной границе" in service
           and "один раз на новую task/session" in template,
-          out, "one boot per task; answer-only, mixed and risky paths stay distinct")
+          out, "cold task updates before work; warm turns reuse receipt; long task waits for a safe boundary")
 
 
 def t_moved_project_retires_stale_runtime_bindings():
@@ -333,13 +337,24 @@ def t_domain_skill_location_follows_scope_not_agent():
 
 def skill_registry(name, canonical, codex, claude):
     return {
-        "schema": 1,
+        "schema": 2,
         "supported_agents": ["codex", "claude"],
+        "role_policy": {
+            "status": "required",
+            "rationale": "fixture makes material subject-matter judgements",
+            "unmatched_material_work": "stop",
+            "multiple_matches": "load-all",
+            "conflict": "preserve-and-escalate",
+        },
         "skills": [{
             "name": name,
-            "purpose": "fixture procedure",
             "required": True,
-            "required_when": "subject work",
+            "roles": [{
+                "id": "subject-auditor",
+                "purpose": "fixture procedure",
+                "required_when": "subject work",
+                "scope": "procedure only; project facts stay in KB",
+            }],
             "modality": "evidence-led professional adviser",
             "authority_ladder": ["applicable primary authority", "case evidence", "secondary analysis", "community lead"],
             "conflict_resolution": "higher applicable authority wins; preserve the conflict",
@@ -348,13 +363,124 @@ def skill_registry(name, canonical, codex, claude):
             "prohibited_actions": ["invent missing facts", "act beyond owner authority"],
             "canonical": canonical,
             "owner": "project owner",
-            "scope": "procedure only; project facts stay in KB",
             "project_precedence": "PROJECT_RULES.md",
-            "version": "fixture-1",
+            "version": "1.0.0",
             "validation": {"command": "python3 tests.py", "environment": "python 3"},
             "failure_policy": "fail-closed",
             "recovery_cost": "fresh clone plus declared dependencies",
             "discovery": {"codex": codex, "claude": claude},
+        }],
+    }
+
+
+def visible_role_registry(name, canonical, codex, claude,
+                          entry_bytes=100_000, extra_roles=None):
+    roles = [{
+        "id": "subject-auditor",
+        "purpose": "fixture professional method",
+        "load_when": ["subject work"],
+        "skill": name,
+        "knowledge_routes": ["case-state"],
+    }]
+    roles.extend(extra_roles or [])
+    return {
+        "schema": 1,
+        "supported_agents": ["codex", "claude"],
+        "role_posture": {
+            "status": "required",
+            "rationale": "fixture makes material subject-matter judgements",
+            "unmatched_material_work": "stop",
+            "multiple_matches": "load-all",
+            "conflict": "preserve-and-escalate",
+        },
+        "roles": roles,
+        "skills": [{
+            "name": name,
+            "canonical": canonical,
+            "owner": "fixture project",
+            "version": "1.0.0",
+            "validation": {
+                "command": "python3 tests.py",
+                "environment": "python 3",
+                "covers": ["role-selection", "knowledge-recall", "authority-stop",
+                           "source-conflict", "context-cost"],
+            },
+            "failure_policy": "fail-closed",
+            "recovery_cost": "fresh clone plus declared dependencies",
+            "discovery": {"codex": codex, "claude": claude},
+        }],
+        "cost_policy": {
+            "review_above_bytes": 8192,
+            "all_roles_scenario": "subject-work",
+            "scenarios": [{
+                "id": "subject-work",
+                "roles": [role["id"] for role in roles],
+                "accepted_entry_bytes": entry_bytes,
+                "accepted_reason": "fixture baseline",
+            }],
+        },
+    }
+
+
+def write_role_acceptance(root, registry):
+    import json
+    registry["acceptance"] = {
+        "status": "accepted",
+        "receipt": "ROLE_ACCEPTANCE.json",
+    }
+    with open(os.path.join(root, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    index_path = os.path.join(root, "KNOWLEDGE_INDEX.json")
+    if not os.path.exists(index_path):
+        with open(index_path, "w", encoding="utf-8") as f:
+            json.dump(knowledge_index(), f)
+    skills = {}
+    for entry in registry["skills"]:
+        path = entry["canonical"]
+        skill_root = path if os.path.isabs(path) else os.path.join(root, path)
+        skill_md = os.path.join(skill_root, "SKILL.md")
+        tree = hashlib.sha256()
+        files = []
+        for folder, _, names in os.walk(skill_root):
+            files.extend(os.path.join(folder, filename) for filename in names)
+        for file_path in sorted(files):
+            relative = os.path.relpath(file_path, skill_root).replace(os.sep, "/")
+            with open(file_path, "rb") as source:
+                tree.update(relative.encode("utf-8") + b"\0" +
+                            source.read() + b"\0")
+        skills[entry["name"]] = {
+            "skill_sha256": hashlib.sha256(open(skill_md, "rb").read()).hexdigest(),
+            "skill_tree_sha256": tree.hexdigest(),
+            "covers": entry["validation"]["covers"],
+        }
+    receipt = {
+        "schema": 1,
+        "result": "passed",
+        "accepted_by": "fixture owner",
+        "accepted_at": "2026-08-28",
+        "project_roles_sha256": hashlib.sha256(
+            open(os.path.join(root, "PROJECT_ROLES.json"), "rb").read()).hexdigest(),
+        "knowledge_index_sha256": hashlib.sha256(
+            open(index_path, "rb").read()).hexdigest(),
+        "skills": skills,
+        "scenario_baselines": {
+            item["id"]: item["accepted_entry_bytes"]
+            for item in registry["cost_policy"]["scenarios"]
+        },
+    }
+    with open(os.path.join(root, "ROLE_ACCEPTANCE.json"), "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+
+
+def knowledge_index():
+    return {
+        "schema": 1,
+        "routes": [{
+            "id": "case-state",
+            "description": "fixture case knowledge",
+            "load_when": ["subject work"],
+            "aliases": ["case", "state"],
+            "paths": ["knowledge/case.md"],
         }],
     }
 
@@ -376,7 +502,7 @@ def t_required_global_only_skill_blocks_recovery():
     canonical = os.path.join(home, ".codex", "skills", "domain-auditor")
     os.makedirs(canonical)
     with open(os.path.join(canonical, "SKILL.md"), "w", encoding="utf-8") as f:
-        f.write("---\nname: domain-auditor\n---\n")
+        f.write("---\nname: domain-auditor\nversion: 1.0.0\n---\n")
     registry = skill_registry("domain-auditor", canonical,
                               ".agents/skills/domain-auditor",
                               ".claude/skills/domain-auditor")
@@ -390,21 +516,79 @@ def t_required_global_only_skill_blocks_recovery():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_external_role_checkout_must_match_declared_pin():
+    """A mutable sibling checkout must not masquerade as a pinned dependency."""
+    import json
+    external = base({"skills/shared-role/SKILL.md":
+                     "---\nname: shared-role\nversion: 1.0.0\n---\nfirst\n"})
+    subprocess.run(["git", "-C", external, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", external, "config", "user.email",
+                    "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", external, "config", "user.name", "Fixture"], check=True)
+    subprocess.run(["git", "-C", external, "remote", "add", "origin",
+                    "https://example.invalid/roles.git"], check=True)
+    subprocess.run(["git", "-C", external, "add", "skills/shared-role/SKILL.md"],
+                   check=True)
+    subprocess.run(["git", "-C", external, "commit", "-qm", "first"], check=True)
+    first = subprocess.run(["git", "-C", external, "rev-parse", "HEAD"],
+                           capture_output=True, text=True, check=True).stdout.strip()
+    with open(os.path.join(external, "skills/shared-role/SKILL.md"), "a",
+              encoding="utf-8") as f:
+        f.write("second\n")
+    subprocess.run(["git", "-C", external, "add", "skills/shared-role/SKILL.md"],
+                   check=True)
+    subprocess.run(["git", "-C", external, "commit", "-qm", "second"], check=True)
+
+    d = base({"README.md": "fixture\n"})
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    canonical = os.path.join(external, "skills", "shared-role")
+    os.symlink(canonical, os.path.join(d, ".agents", "skills", "shared-role"))
+    os.symlink(canonical, os.path.join(d, ".claude", "skills", "shared-role"))
+    registry = skill_registry(
+        "shared-role", canonical, ".agents/skills/shared-role",
+        ".claude/skills/shared-role")
+    registry["skills"][0]["dependency"] = {
+        "repository": "https://example.invalid/roles.git",
+        "pin": first,
+        "recovery": "clone and checkout the exact commit",
+    }
+    with open(os.path.join(d, ".kb-skills.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", ".kb-skills.json", ".agents", ".claude"],
+                   check=True)
+    out = run_skills(d)
+    check("external role bytes совпадают с объявленным pin",
+          out.code == 1 and "HEAD does not match dependency pin" in out,
+          out, "a sibling checkout at a newer commit is not the pinned role")
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(external, ignore_errors=True)
+
+
 def t_broken_project_skill_discovery_is_visible():
     """11.08: a declared discovery link must not fail open after a move."""
-    d = base({"skills/domain-auditor/SKILL.md": "---\nname: domain-auditor\n---\n"})
+    d = base({"skills/domain-auditor/SKILL.md":
+              "---\nname: domain-auditor\n---\n"})
     os.makedirs(os.path.join(d, ".agents", "skills"))
     os.makedirs(os.path.join(d, ".claude", "skills"))
     os.symlink("../../skills/missing", os.path.join(d, ".agents", "skills", "domain-auditor"))
     os.symlink("../../skills/domain-auditor", os.path.join(d, ".claude", "skills", "domain-auditor"))
-    registry = skill_registry("domain-auditor", "skills/domain-auditor",
-                              ".agents/skills/domain-auditor",
-                              ".claude/skills/domain-auditor")
+    registry = visible_role_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor")
+    write_role_acceptance(d, registry)
     import json
-    with open(os.path.join(d, ".kb-skills.json"), "w", encoding="utf-8") as f:
+    os.makedirs(os.path.join(d, "knowledge"))
+    with open(os.path.join(d, "knowledge", "case.md"), "w", encoding="utf-8") as f:
+        f.write("fixture\n")
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
         json.dump(registry, f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
-    subprocess.run(["git", "-C", d, "add", ".kb-skills.json", "skills",
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+                    "KNOWLEDGE_INDEX.json", "knowledge", "skills",
                     ".agents", ".claude"], check=True)
     out = run_skills(d)
     check("битая discovery-ссылка называется ошибкой",
@@ -413,29 +597,481 @@ def t_broken_project_skill_discovery_is_visible():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_project_without_specialized_skill_is_valid():
-    """11.08: no domain skill is not itself a defect."""
+def t_role_registry_version_must_match_loaded_skill():
+    """27.08 field audit: tg-archive registry said 3.2 while its skill was 3.3."""
+    d = base({"skills/domain-auditor/SKILL.md":
+              "---\nname: domain-auditor\nversion: 2.0.0\n---\n"})
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    os.symlink("../../skills/domain-auditor",
+               os.path.join(d, ".agents", "skills", "domain-auditor"))
+    os.symlink("../../skills/domain-auditor",
+               os.path.join(d, ".claude", "skills", "domain-auditor"))
+    registry = visible_role_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor")
+    write_role_acceptance(d, registry)
+    import json
+    os.makedirs(os.path.join(d, "knowledge"))
+    with open(os.path.join(d, "knowledge", "case.md"), "w", encoding="utf-8") as f:
+        f.write("fixture\n")
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+                    "KNOWLEDGE_INDEX.json", "knowledge", "skills",
+                    ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("устаревшая версия role registry не получает PASS",
+          out.code == 1 and "registry version 1.0.0 != SKILL.md version 2.0.0" in out,
+          out, "declared role version must describe the bytes an agent loads")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_large_composite_role_emits_cost_signal():
+    """27.08 field audit: a broad company skill loaded unrelated professional lanes."""
+    d = base({"skills/company-adviser/SKILL.md":
+              "---\nname: company-adviser\nversion: 1.0.0\n---\n" + "x" * 9000})
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for base_dir in (".agents", ".claude"):
+        os.symlink("../../skills/company-adviser",
+                   os.path.join(d, base_dir, "skills", "company-adviser"))
+    second_role = {
+        "id": "labour-adviser",
+        "purpose": "employment procedure",
+        "load_when": ["employment work"],
+        "skill": "company-adviser",
+        "knowledge_routes": ["case-state"],
+    }
+    registry = visible_role_registry(
+        "company-adviser", "skills/company-adviser",
+        ".agents/skills/company-adviser", ".claude/skills/company-adviser",
+        entry_bytes=20_000, extra_roles=[second_role])
+    write_role_acceptance(d, registry)
+    import json
+    os.makedirs(os.path.join(d, "knowledge"))
+    with open(os.path.join(d, "knowledge", "case.md"), "w", encoding="utf-8") as f:
+        f.write("fixture\n")
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+                    "KNOWLEDGE_INDEX.json", "knowledge", "skills",
+                    ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("большая составная роль получает измеримый cost signal",
+          out.code == 0 and "COST_SIGNAL subject-work" in out
+          and "route-cost subject-work" in out,
+          out, "review threshold is a signal; accepted route baseline is authoritative")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_project_without_role_posture_is_visible():
+    """27.08 field audit: UAD did substantive work while role absence passed."""
     d = base({"README.md": "ordinary project\n"})
     out = run_skills(d)
-    check("проект без specialized skill не получает пустой реестр и ошибку",
-          out.code == 0 and "not declared (valid)" in out and "errors=0" in out,
-          out, "registry exists only when the project really has project skills")
+    check("отсутствие role posture больше не выдаётся за осознанное решение",
+          out.code == 1 and "professional role posture is undeclared" in out,
+          out, "project must declare required roles or explicit not-applicable")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_explicit_non_domain_project_is_valid():
+    """A pure storage/communication project can consciously decline domain roles."""
+    import json
+    d = base({"README.md": "ordinary project\n"})
+    registry = {
+        "schema": 1,
+        "supported_agents": ["codex", "claude"],
+        "role_posture": {
+            "status": "not-applicable",
+            "rationale": "stores and transports knowledge; makes no domain judgement",
+        },
+        "roles": [],
+        "skills": [],
+    }
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json"], check=True)
+    out = run_skills(d)
+    check("осознанный non-domain проект проходит без декоративной роли",
+          out.code == 0 and "role posture: not-applicable" in out
+          and "declared=0 errors=0" in out,
+          out, "explicit rationale distinguishes not-applicable from forgotten")
     shutil.rmtree(d, ignore_errors=True)
 
 
 def t_capability_registry_expresses_role_not_only_location():
     """Дополнение владельца 11.08: discovery alone does not define a profession."""
     import json
-    data = json.loads(skill_text("assets/templates/kb-skills.json"))
+    data = json.loads(skill_text("assets/templates/project-roles.json"))
     entry = data["skills"][0]
-    fields = ("modality", "authority_ladder", "conflict_resolution",
-              "evidence_threshold", "stop_conditions", "prohibited_actions")
+    role = data["roles"][0]
+    policy = data["role_posture"]
     out = Vyvod(str(entry), 0)
-    check("реестр задаёт профессиональную модальность и границы",
-          all(entry.get(field) for field in fields)
-          and "project facts" in entry["scope"].lower()
-          and "community" in " ".join(entry["authority_ladder"]).lower(),
-          out, "role, source ladder, evidence, conflict, stop and prohibited actions")
+    check("видимый реестр проводит роль, знания, recovery и cost без копии метода",
+          data.get("schema") == 1
+          and policy.get("unmatched_material_work") == "stop"
+          and policy.get("multiple_matches") == "load-all"
+          and policy.get("conflict") == "preserve-and-escalate"
+          and all(role.get(field) for field in
+                  ("id", "purpose", "load_when", "skill", "knowledge_routes"))
+          and entry.get("canonical")
+          and set(entry["validation"]["covers"]) == {
+              "role-selection", "knowledge-recall", "authority-stop",
+              "source-conflict", "context-cost"}
+          and data.get("cost_policy", {}).get("scenarios"),
+          out, "method stays in one SKILL; registry carries routing and acceptance")
+
+
+def t_600_legacy_schema_one_remains_usable_during_migration():
+    """Major migration must not make all existing role projects red at once."""
+    import json
+    d = base({"skills/domain-auditor/SKILL.md":
+              "---\nname: domain-auditor\n---\n"})
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for base_dir in (".agents", ".claude"):
+        os.symlink("../../skills/domain-auditor",
+                   os.path.join(d, base_dir, "skills", "domain-auditor"))
+    legacy = skill_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor")
+    legacy["schema"] = 1
+    legacy.pop("role_policy")
+    role = legacy["skills"][0].pop("roles")[0]
+    legacy["skills"][0].update({
+        "purpose": role["purpose"],
+        "required_when": role["required_when"],
+        "scope": role["scope"],
+    })
+    with open(os.path.join(d, ".kb-skills.json"), "w", encoding="utf-8") as f:
+        json.dump(legacy, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", ".kb-skills.json", "skills",
+                    ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("legacy schema 1 получает migration note, а не искусственный hard failure",
+          out.code == 0 and "LEGACY_ROLE_REGISTRY" in out
+          and "migrate interactively" in out,
+          out, "v6 is backward-readable and migration remains owner-paced")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_role_must_resolve_project_knowledge_route():
+    """A role must not hide a missing KB route by carrying facts in its prompt."""
+    import json
+    d = base({"skills/domain-auditor/SKILL.md":
+              "---\nname: domain-auditor\nversion: 1.0.0\n---\n"})
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for base_dir in (".agents", ".claude"):
+        os.symlink("../../skills/domain-auditor",
+                   os.path.join(d, base_dir, "skills", "domain-auditor"))
+    registry = visible_role_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor")
+    write_role_acceptance(d, registry)
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump({"schema": 1, "routes": []}, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+                    "KNOWLEDGE_INDEX.json", "skills", ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("неизвестный knowledge route блокирует предметную готовность",
+          out.code == 1 and "unknown knowledge route case-state" in out,
+          out, "role behaviour cannot substitute for discoverable project knowledge")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_unaccepted_role_route_growth_fails_closed():
+    """Cost is measured on the actual combination of roles loaded for a task."""
+    import json
+    d = base({
+        "skills/domain-auditor/SKILL.md":
+            "---\nname: domain-auditor\nversion: 1.0.0\n---\n" + "x" * 300,
+        "knowledge/case.md": "fixture\n",
+    })
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for base_dir in (".agents", ".claude"):
+        os.symlink("../../skills/domain-auditor",
+                   os.path.join(d, base_dir, "skills", "domain-auditor"))
+    registry = visible_role_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor",
+        entry_bytes=100)
+    write_role_acceptance(d, registry)
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+                    "KNOWLEDGE_INDEX.json", "knowledge", "skills",
+                    ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("непринятый рост role route создаёт optimization request",
+          out.code == 1 and "OPTIMIZATION_REQUIRED subject-work" in out
+          and "100 ->" in out,
+          out, "baseline follows a declared task route, not package size or role count")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_role_acceptance_is_bound_to_loaded_bytes():
+    """A declared test list is not proof after the accepted skill bytes change."""
+    import json
+    d = base({
+        "skills/domain-auditor/SKILL.md":
+            "---\nname: domain-auditor\nversion: 1.0.0\n---\ninitial\n",
+        "skills/domain-auditor/references/method.md": "accepted method\n",
+        "knowledge/case.md": "fixture\n",
+    })
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for base_dir in (".agents", ".claude"):
+        os.symlink("../../skills/domain-auditor",
+                   os.path.join(d, base_dir, "skills", "domain-auditor"))
+    registry = visible_role_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor")
+    write_role_acceptance(d, registry)
+    with open(os.path.join(d, "skills/domain-auditor/references/method.md"), "a",
+              encoding="utf-8") as f:
+        f.write("changed after acceptance\n")
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                    "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
+                    "skills", ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("role acceptance привязана ко всему дереву роли",
+          out.code == 1 and "accepted skill tree hash does not match loaded files" in out,
+          out, "edited routed role file invalidates the prior behavioral receipt")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_cost_has_an_all_roles_upper_bound():
+    """Separate ordinary scenarios must not hide the maximum combined role load."""
+    import json
+    d = base({
+        "skills/company-adviser/SKILL.md":
+            "---\nname: company-adviser\nversion: 1.0.0\n---\nfixture\n",
+        "knowledge/case.md": "fixture\n",
+    })
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for base_dir in (".agents", ".claude"):
+        os.symlink("../../skills/company-adviser",
+                   os.path.join(d, base_dir, "skills", "company-adviser"))
+    second_role = {
+        "id": "labour-adviser", "purpose": "employment procedure",
+        "load_when": ["employment work"], "skill": "company-adviser",
+        "knowledge_routes": ["case-state"],
+    }
+    registry = visible_role_registry(
+        "company-adviser", "skills/company-adviser",
+        ".agents/skills/company-adviser", ".claude/skills/company-adviser",
+        extra_roles=[second_role])
+    registry["cost_policy"]["scenarios"][0]["roles"] = ["subject-auditor"]
+    write_role_acceptance(d, registry)
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                    "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
+                    "skills", ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("cost scenarios содержат верхнюю границу совместной загрузки ролей",
+          out.code == 1 and "all_roles_scenario" in out,
+          out, "ordinary one-role scenarios cannot conceal the all-roles upper bound")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_acceptance_binds_selection_and_knowledge_wiring():
+    """Accepted behavior must become stale when triggers or knowledge routes change."""
+    import json
+    d = base({
+        "skills/domain-auditor/SKILL.md":
+            "---\nname: domain-auditor\nversion: 1.0.0\n---\nfixture\n",
+        "knowledge/case.md": "fixture\n",
+        "knowledge/other.md": "other\n",
+    })
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for base_dir in (".agents", ".claude"):
+        os.symlink("../../skills/domain-auditor",
+                   os.path.join(d, base_dir, "skills", "domain-auditor"))
+    registry = visible_role_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor")
+    write_role_acceptance(d, registry)
+    registry["roles"][0]["load_when"] = ["a different material task"]
+    changed_index = knowledge_index()
+    changed_index["routes"][0]["paths"] = ["knowledge/other.md"]
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(changed_index, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                    "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
+                    "skills", ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("role acceptance привязана к selection и knowledge wiring",
+          out.code == 1
+          and "does not match PROJECT_ROLES.json" in out
+          and "does not match KNOWLEDGE_INDEX.json" in out,
+          out, "post-acceptance rewiring invalidates role-selection and recall evidence")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_knowledge_index_resolves_without_imposing_types():
+    """Index exposes project-chosen routes and rejects paths outside the project."""
+    import json
+    d = base({"knowledge/case.md": "fixture\n"})
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "KNOWLEDGE_INDEX.json", "knowledge"],
+                   check=True)
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_index.py"), d,
+         "--require", "case-state"], capture_output=True, text=True, timeout=30)
+    bad = knowledge_index()
+    bad["routes"][0]["paths"] = ["../outside.md"]
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(bad, f)
+    p_bad = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_index.py"), d],
+        capture_output=True, text=True, timeout=30)
+    out = Vyvod(p.stdout + p.stderr + p_bad.stdout + p_bad.stderr, 0)
+    check("knowledge index resolves an arbitrary project route and stays inside root",
+          p.returncode == 0 and "ROUTE case-state: knowledge/case.md" in p.stdout
+          and p_bad.returncode == 1 and "path leaves project root" in p_bad.stdout,
+          out, "discoverability is enforced without a universal fact taxonomy")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_knowledge_index_rejects_local_only_knowledge():
+    """A present ignored/untracked file is not evidence of fresh-clone recovery."""
+    import json
+    d = base({"knowledge/local-only.md": "fixture\n"})
+    index = knowledge_index()
+    index["routes"][0]["paths"] = ["knowledge/local-only.md"]
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(index, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "KNOWLEDGE_INDEX.json"], check=True)
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_index.py"), d],
+        capture_output=True, text=True, timeout=30)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("knowledge index не обещает recovery локального untracked-файла",
+          p.returncode == 1 and "path is not Git-tracked and recoverable" in p.stdout,
+          out, "cloud/AWS recall needs tracked knowledge or a tracked recovery pointer")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_knowledge_index_rejects_partial_directory_and_local_symlink():
+    """A tracked child or symlink is not proof that the addressed corpus recovers."""
+    import json
+    d = base({"knowledge/tracked.md": "tracked\n",
+              "knowledge/local-only.md": "local\n"})
+    index = knowledge_index()
+    index["routes"][0]["paths"] = ["knowledge"]
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(index, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "KNOWLEDGE_INDEX.json",
+                    "knowledge/tracked.md"], check=True)
+    directory = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_index.py"), d],
+        capture_output=True, text=True, timeout=30)
+    os.symlink("local-only.md", os.path.join(d, "knowledge", "pointer.md"))
+    index["routes"][0]["paths"] = ["knowledge/pointer.md"]
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(index, f)
+    subprocess.run(["git", "-C", d, "add", "KNOWLEDGE_INDEX.json",
+                    "knowledge/pointer.md"], check=True)
+    symlink = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_index.py"), d],
+        capture_output=True, text=True, timeout=30)
+    out = Vyvod(directory.stdout + directory.stderr + symlink.stdout + symlink.stderr, 0)
+    check("knowledge index не принимает частичный каталог и local-only symlink",
+          directory.returncode == 1 and "path must resolve to a file" in directory.stdout
+          and symlink.returncode == 1
+          and "symlink target is not Git-tracked and recoverable" in symlink.stdout,
+          out, "every routed file or pointer target must recover in a fresh clone")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_shadow_manifest_does_not_preempt_owner_acceptance():
+    """A shadow candidate must not silently become authoritative by existing."""
+    import json
+    d = base({"README.md": "fixture\n"})
+    legacy = {"schema": 1, "supported_agents": ["codex", "claude"], "skills": []}
+    shadow = {"schema": 1, "supported_agents": ["codex", "claude"],
+              "roles": [], "skills": []}  # deliberately missing role_posture
+    with open(os.path.join(d, ".kb-skills.json"), "w", encoding="utf-8") as f:
+        json.dump(legacy, f)
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(shadow, f)
+    default = run_skills(d)
+    explicit = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_skills.py"), d,
+         "--registry", os.path.join(d, "PROJECT_ROLES.json")],
+        capture_output=True, text=True, timeout=30)
+    out = Vyvod(str(default) + explicit.stdout + explicit.stderr, default.code)
+    check("shadow role manifest не переключает проект до приёмки владельца",
+          default.code == 0 and "SHADOW_ROLE_REGISTRY" in default
+          and explicit.returncode == 1 and "requires role_posture" in explicit.stdout,
+          out, "legacy stays authoritative until it becomes a superseded pointer")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_600_legacy_role_address_forwards_without_second_canon():
+    """The v6 checker follows the old address without keeping a stale copy."""
+    import json
+    d = base({"README.md": "fixture\n"})
+    visible = {
+        "schema": 1,
+        "supported_agents": ["codex", "claude"],
+        "role_posture": {"status": "not-applicable", "rationale": "fixture"},
+        "roles": [],
+        "skills": [],
+    }
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(visible, f)
+    with open(os.path.join(d, ".kb-skills.json"), "w", encoding="utf-8") as f:
+        f.write(skill_text("assets/templates/legacy-role-registry.json"))
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                    ".kb-skills.json"], check=True)
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_skills.py"), d,
+         "--registry", os.path.join(d, ".kb-skills.json")],
+        capture_output=True, text=True, timeout=30)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("v6 checker разыменовывает старый role registry адрес в новый канон",
+          p.returncode == 0
+          and "ROLE_REGISTRY_MOVED: .kb-skills.json -> PROJECT_ROLES.json" in p.stdout
+          and "role posture: not-applicable" in p.stdout,
+          out, "a tombstone preserves navigation without maintaining duplicate rules")
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def environment_registry(provider_status="unavailable", provider_kind="managed-connector"):
@@ -744,8 +1380,11 @@ def t_service_distribution_is_public_not_development_symlink():
           and "GitHub public https://github.com/sugestr/kb-architect" in tpl
           and "не каналом установки" in ref
           and "git ls-remote" in ref
+          and "до current state" in ref
+          and "UPDATE_STATUS=INSTALLED" in updater
+          and "REREAD_INSTALLED_ENTRY" in updater
           and "PUBLIC_REPOSITORY" in updater,
-          out, "public stable distribution, private development authority")
+          out, "public stable update precedes project work and emits a session action")
 
 
 def t_fast_update_uses_fresh_receipt_without_network():
@@ -801,7 +1440,7 @@ def t_templates_do_not_silently_add_obligations():
           and "## STATUS" not in handover
           and "NEXT 3" not in handover
           and "# verify:" in note
-          and "только по явному поручению" in defect, out,
+          and "разрешённого проектом" in defect, out,
           "нет скрытой обязательной диагностики и устаревших имён разделов")
 
 
@@ -1585,6 +2224,141 @@ def t_512_update_project_option_really_runs_apply():
     shutil.rmtree(source, ignore_errors=True)
     shutil.rmtree(project, ignore_errors=True)
     shutil.rmtree(local_home, ignore_errors=True)
+
+
+def t_516_route_growth_creates_optimization_request():
+    """27.08 audit: route costs were printed but an increase could never fail."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "kb_cost_fixture", os.path.join(HERE, "kb_cost.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    errors = module.compare_baseline(
+        [{"task": "ordinary", "total_bytes": 101}],
+        {"schema": 1, "routes": {"ordinary": 100}})
+    out = Vyvod("\n".join(errors), 0)
+    check("непринятый рост route становится fail-closed optimization request",
+          len(errors) == 1
+          and "OPTIMIZATION_REQUIRED" in errors[0]
+          and "100 -> 101" in errors[0],
+          out, "any route growth needs reduction or an explicit release baseline")
+
+
+def t_516_hot_context_has_evidence_driven_lifecycle():
+    """Official Productivity comparison: a hot cache helps only without a second canon."""
+    ref = skill_text("references/measurement.md")
+    flat = " ".join(ref.split())
+    out = Vyvod(ref, 0)
+    check("рабочий кэш не создаёт второй канон и deep scan остаётся явным",
+          "Не копируй параллельный «memory»-слой" in flat
+          and "после наблюдаемого повторного обращения" in flat
+          and "источник и проверка" in flat
+          and "Глубокий обзор всех источников запускается отдельным явным trigger" in flat
+          and "не право автоматически создавать" in flat,
+          out, "promote/demote by evidence; retain one owner and explicit deep scan")
+
+
+def t_600_role_and_runtime_routes_pay_only_for_their_own_reference():
+    """Role guidance and runtime guidance must not load the whole module library."""
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_cost.py"), "--json", "--check"],
+        capture_output=True, text=True, timeout=120)
+    try:
+        data = __import__("json").loads(p.stdout)
+    except (ValueError, TypeError):
+        data = {}
+    routes = data.get("routes", [])
+    role = next((x for x in routes if x.get("task", "").startswith(
+        "Создать, проверить")), {})
+    runtime = next((x for x in routes if x.get("task", "").startswith(
+        "Проверить cloud")), {})
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("role and runtime routes pay only for their routed reference",
+          p.returncode == 0
+          and role.get("resources") == ["references/project-roles.md"]
+          and role.get("extra_bytes", 99_999) < 10_000
+          and runtime.get("sections", {}).get("references/modules.md") == "runtime_capabilities"
+          and runtime.get("extra_bytes", 99_999) < 10_000,
+          out, "role lifecycle does not re-read unrelated KB guidance")
+
+
+def t_516_report_router_separates_local_and_remote_delivery():
+    """Beta projects confused their own inbox, the lab inbox and GitHub."""
+    local = base({
+        "NOW.md": NOW_OK,
+        "reports/.keep": "",
+        "CLAUDE.md": "# rules\n\nentry: NOW.md\n"
+                     "report route: local-inbox\nreport inbox: reports\n",
+        "report.md": "# repeat lookup\n\nрежим подробности: детальный\n",
+    })
+    p_local = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_report.py"),
+         "--project", local, "--report", os.path.join(local, "report.md"), "--do"],
+        capture_output=True, text=True, timeout=30)
+    delivered = os.path.join(local, "reports", "report.md")
+
+    remote = base({
+        "NOW.md": NOW_OK,
+        "CLAUDE.md": "# rules\n\nentry: NOW.md\n"
+                     "kb-architect service layer: accepted\n"
+                     "report route: github-issue\n",
+        "report.md": "# beta miss\n\ndetail mode: anonymised\n",
+    })
+    p_remote = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_report.py"),
+         "--project", remote, "--report", os.path.join(remote, "report.md")],
+        capture_output=True, text=True, timeout=30)
+    p_unsafe = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_report.py"),
+         "--project", remote, "--report", os.path.join(remote, "report.md"),
+         "--do"], capture_output=True, text=True, timeout=30)
+    check_remote = run("kb_check.py", remote)
+    out = Vyvod("\n".join((p_local.stdout, p_local.stderr, p_remote.stdout,
+                            p_remote.stderr, p_unsafe.stdout, p_unsafe.stderr,
+                            str(check_remote))), 0)
+    check("report router delivers local and prepares remote GitHub without guessing",
+          p_local.returncode == 0
+          and "DELIVERED local" in p_local.stdout
+          and os.path.isfile(delivered)
+          and p_remote.returncode == 1
+          and "PREPARED github" in p_remote.stdout
+          and p_unsafe.returncode == 2
+          and "--public-safe" in p_unsafe.stdout
+          and check_remote.code == 0
+          and "GitHub issue (remote)" in check_remote,
+          out, "local inbox is direct; remote issue is anonymised and externally gated")
+    shutil.rmtree(local, ignore_errors=True)
+    shutil.rmtree(remote, ignore_errors=True)
+
+
+def t_516_broad_evidence_query_refuses_context_overrun():
+    """27.08 audit: evidence mode printed and required an unbounded candidate set."""
+    files = {f"sources/f{i:03}.md": "shared support and shared challenge " + "x" * 180
+             for i in range(100)}
+    project = base(files)
+    receipt = os.path.join(project, "receipt.json")
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_lookup.py"), project,
+         "--claim", "broad claim", "--receipt", receipt,
+         "--support", "shared support", "--challenge", "shared challenge"],
+        capture_output=True, text=True, timeout=120)
+    data = __import__("json").load(open(receipt, encoding="utf-8"))
+    finalize = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_lookup.py"), project,
+         "--finalize", receipt, "--outcome", "unknown", "--reason", "broad"],
+        capture_output=True, text=True, timeout=120)
+    out = Vyvod(p.stdout + p.stderr + finalize.stdout + finalize.stderr, 0)
+    check("широкий evidence search требует уточнения без тихого обрезания",
+          p.returncode == 1
+          and data.get("status") == "refine_required"
+          and len(data.get("candidates", [])) == 100
+          and "OPTIMIZATION_REQUIRED" in p.stdout
+          and "c1  " not in p.stdout
+          and finalize.returncode == 2
+          and "уточнить широкий поиск" in finalize.stderr,
+          out, "all candidates remain in receipt, but no conclusion/finalize is allowed")
+    shutil.rmtree(project, ignore_errors=True)
 
 
 def main():

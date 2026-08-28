@@ -151,15 +151,28 @@ def report_inbox_state(root):
     """
     keys = ("инбокс отчётов", "report inbox", "defect report inbox")
     raw, source = kb_paths.declared_value(root, keys)
+    route, route_source = kb_paths.declared_value(
+        root, ("маршрут отчётов", "report route", "defect report route"))
     service, _ = kb_paths.declared_value(
         root, ("сервисный контур kb-architect", "kb-architect service layer"))
     accepted = bool(service and service.strip().lower() in
                     {"принят", "accepted", "enabled", "включён", "включен"})
 
+    normalized_route = route.strip().lower() if route else None
+    if normalized_route in {"github", "github-issue", "remote",
+                            "удалённый", "удаленный"}:
+        return None, None, "GitHub issue (remote)"
+    if normalized_route and normalized_route not in {
+            "local", "local-inbox", "локальный", "локальный инбокс"}:
+        where = os.path.relpath(route_source, root) if route_source else "правила проекта"
+        return None, (f"{where}: неизвестный маршрут отчётов «{route}»; "
+                      "нужен local-inbox или github-issue"), None
+
     if not raw:
         if accepted:
-            return None, ("сервисный контур принят, но прямой адрес каталога "
-                          "строкой «инбокс отчётов: …» не объявлен"), None
+            return None, ("сервисный контур принят, но маршрут отчётов не закрыт: "
+                          "объяви `маршрут отчётов: github-issue` либо local-inbox "
+                          "и прямой адрес `инбокс отчётов: …`"), None
         return None, None, "неприменимо (не объявлен)"
 
     value = os.path.expanduser(raw.strip().strip("`*_\"' "))

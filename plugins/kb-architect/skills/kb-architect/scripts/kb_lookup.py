@@ -54,6 +54,7 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".obsidian"
 MAX_FILES_SHOWN = 8
 SNIPPET = 110
 RECEIPT_SCHEMA = 1
+MAX_EVIDENCE_OUTPUT_BYTES = 12 * 1024
 
 
 def collect(root, excluded=()):
@@ -148,7 +149,7 @@ def parser():
      with each cN exactly once in --supports, --limits or --irrelevant, plus --reason.
   A limit forbids supported; unknown remains exit 1 and is not a current-state fact.
   Any corpus or unmerged-branch change invalidates the receipt before finalize.
-  Domain skill defines topics/evidence criteria; this lexical tool records execution.""")
+  Project role defines topics/evidence criteria; this lexical tool records execution.""")
     p.add_argument("root", help="корень проектной базы")
     p.add_argument("topics", nargs="*", help="темы обычного lookup, варианты через |")
     p.add_argument("--claim", help="существенный project-derived вывод")
@@ -264,6 +265,17 @@ def evidence_candidates(files, root, refs, groups):
     return [found[key] for key in order], searches
 
 
+def candidate_output(candidates):
+    lines = []
+    for item in candidates:
+        location = f"{item['ref']}: {item['path']}" if item["ref"] else item["path"]
+        lines.append(f"{item['id']}  {location}")
+        lines.append(f"   найдено: {', '.join(item['found_by'])}")
+        if item["snippet"]:
+            lines.append(f"   … {item['snippet']}")
+    return "\n".join(lines)
+
+
 def begin_evidence(args, root):
     if args.topics or not args.claim or not args.receipt or not args.support or not args.challenge:
         print("evidence mode требует --claim, --receipt, хотя бы один --support и "
@@ -292,8 +304,14 @@ def begin_evidence(args, root):
         },
         "searches": searches,
         "candidates": candidates,
+        "output_budget": {
+            "candidate_bytes": len(candidate_output(candidates).encode("utf-8")),
+            "limit_bytes": MAX_EVIDENCE_OUTPUT_BYTES,
+        },
         "review": None,
     }
+    if receipt["output_budget"]["candidate_bytes"] > MAX_EVIDENCE_OUTPUT_BYTES:
+        receipt["status"] = "refine_required"
     try:
         write_json(args.receipt, receipt)
     except OSError as exc:
@@ -302,12 +320,21 @@ def begin_evidence(args, root):
 
     print(f"База: {root} — {gde}")
     print(f"Вывод: {args.claim}\n")
-    for item in candidates:
-        location = f"{item['ref']}: {item['path']}" if item["ref"] else item["path"]
-        print(f"{item['id']}  {location}")
-        print(f"   найдено: {', '.join(item['found_by'])}")
-        if item["snippet"]:
-            print(f"   … {item['snippet']}")
+    if receipt["status"] == "refine_required":
+        print("OPTIMIZATION_REQUIRED: evidence output exceeds its context budget")
+        print(f"  candidates: {len(candidates)}")
+        print(f"  candidate bytes: {receipt['output_budget']['candidate_bytes']} "
+              f"> {MAX_EVIDENCE_OUTPUT_BYTES}")
+        for search_item in searches:
+            print(f"  {search_item['role']}:{search_item['query']} -> "
+                  f"{len(search_item['candidate_ids'])} candidates")
+        print("Уточни support/challenge aliases и создай новый receipt. Кандидаты не "
+              "обрезаны и вывод не разрешён.")
+        print(f"Receipt: {os.path.abspath(args.receipt)}")
+        return 1
+    rendered = candidate_output(candidates)
+    if rendered:
+        print(rendered)
     if not candidates:
         print("Кандидатов не найдено; это не доказывает отсутствие или истинность вывода.")
     print("\nEVIDENCE_GATE=REVIEW_REQUIRED")
@@ -334,6 +361,10 @@ def finalize_evidence(args, root):
         return 2
     if receipt.get("root") != os.path.realpath(root):
         print("receipt относится к другому корню базы", file=sys.stderr)
+        return 2
+    if receipt.get("status") == "refine_required":
+        print("receipt требует уточнить широкий поиск; finalize запрещён",
+              file=sys.stderr)
         return 2
     if receipt.get("status") != "review_required" or receipt.get("review") is not None:
         print("receipt уже закрыт; для пересмотра создай новый поиск", file=sys.stderr)

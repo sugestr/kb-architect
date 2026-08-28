@@ -118,7 +118,8 @@ remote, status, ignored-данные, вложенные repos, активные
    делает точечный commit, либо перенос останавливается.
 7. Инвентаризировать specialized skills: repo-local, user-global и cross-repo;
    required/optional; физический канон; discovery для Claude/Codex; dependency pin и
-   recovery. Если есть `.kb-skills.json`, запустить `kb_skills.py`. Required skill,
+   recovery. Если есть `PROJECT_ROLES.json` либо legacy `.kb-skills.json`, запустить
+   `kb_skills.py`. Required role,
    который global-only, не отслеживается, конфликтует по имени или не переживает
    fresh clone, блокирует предметную готовность и соответствующую UI-метку до
    исправления. Отсутствие specialized skill и реестра само по себе нормально.
@@ -235,7 +236,7 @@ target **свежей сессией** и отдельно подтвержда�
 5. как работать последовательно и как — параллельно;
 6. что штатные проверки запускаются из нового места;
 7. что project-local skills доступны, а app-project указывает на канонический
-   root без неожиданного вспомогательного репозитория; required domain skill
+   root без неожиданного вспомогательного репозитория; required project role
    действительно обнаружен этой системой, прочитан по trigger и проходит объявленную
    validation command в объявленной среде (либо приёмка честно заблокирована);
 8. что basename канонического каталога и slug основного repo соответствуют

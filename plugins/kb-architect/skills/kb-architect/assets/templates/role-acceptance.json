@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "result": "passed",
+  "accepted_by": "project owner",
+  "accepted_at": "YYYY-MM-DD",
+  "project_roles_sha256": "replace-with-sha256-of-PROJECT_ROLES.json",
+  "knowledge_index_sha256": "replace-with-sha256-of-KNOWLEDGE_INDEX.json",
+  "skills": {
+    "research-adviser": {
+      "skill_sha256": "replace-with-sha256-of-the-accepted-SKILL.md",
+      "skill_tree_sha256": "replace-with-sha256-of-all-tracked-role-files",
+      "covers": [
+        "role-selection",
+        "knowledge-recall",
+        "authority-stop",
+        "source-conflict",
+        "context-cost"
+      ]
+    }
+  },
+  "scenario_baselines": {
+    "ordinary-subject-answer": 2048
+  }
+}

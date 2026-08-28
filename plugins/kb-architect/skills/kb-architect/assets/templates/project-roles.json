@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "supported_agents": ["codex", "claude"],
+  "role_posture": {
+    "status": "required",
+    "rationale": "This project makes recurring material subject-matter judgements",
+    "unmatched_material_work": "stop",
+    "multiple_matches": "load-all",
+    "conflict": "preserve-and-escalate"
+  },
+  "roles": [
+    {
+      "id": "subject-research-adviser",
+      "purpose": "Apply the project's professional research method",
+      "load_when": ["before a material subject-matter conclusion or recommendation"],
+      "skill": "research-adviser",
+      "knowledge_routes": ["subject-authority", "project-case-state"]
+    }
+  ],
+  "skills": [
+    {
+      "name": "research-adviser",
+      "canonical": "skills/research-adviser",
+      "owner": "this project",
+      "version": "1.0.0",
+      "validation": {
+        "command": "python3 skills/research-adviser/tests/run.py",
+        "environment": "Document the reproducible runtime and dependencies here",
+        "covers": [
+          "role-selection",
+          "knowledge-recall",
+          "authority-stop",
+          "source-conflict",
+          "context-cost"
+        ]
+      },
+      "failure_policy": "fail-closed",
+      "recovery_cost": "Fresh clone restores the canonical skill and both discovery links",
+      "discovery": {
+        "codex": ".agents/skills/research-adviser",
+        "claude": ".claude/skills/research-adviser"
+      }
+    }
+  ],
+  "cost_policy": {
+    "review_above_bytes": 8192,
+    "all_roles_scenario": "ordinary-subject-answer",
+    "scenarios": [
+      {
+        "id": "ordinary-subject-answer",
+        "roles": ["subject-research-adviser"],
+        "accepted_entry_bytes": 2048,
+        "accepted_reason": "Initial measured baseline; replace with the actual value"
+      }
+    ]
+  },
+  "acceptance": {
+    "status": "candidate",
+    "receipt": "ROLE_ACCEPTANCE.json"
+  }
+}
