@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.0.1"
+          and data.get("baseline_version") == "6.0.2"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -1500,25 +1500,33 @@ def t_garbage_collection_is_evidence_safe_and_recoverable():
 
 def t_service_distribution_is_public_not_development_symlink():
     """Владелец: свежая стабильная редакция приходит из public GitHub."""
+    entry = skill_text("SKILL.md")
     ref = skill_text("references/service-layer.md")
     tpl = skill_text("assets/templates/CLAUDE.md")
     updater = skill_text("scripts/kb_update.py")
-    out = Vyvod(ref + "\n" + tpl + "\n" + updater, 0)
+    out = Vyvod(entry + "\n" + ref + "\n" + tpl + "\n" + updater, 0)
     check("сервисный контур использует public и исключает lab-symlink",
           "--public --fast --сделать" in ref
           and "GitHub public https://github.com/sugestr/kb-architect" in tpl
           and "не каналом установки" in ref
           and "git ls-remote" in ref
+          and "установленного локального `SKILL.md`" in ref
+          and "не открывает public README/SKILL вручную" in ref
           and "до current state" in ref
+          and "«Обнови скилл базы знаний»" in entry
+          and "«Обнови скилл базы знаний»" in tpl
+          and "не report-only" in entry
           and "UPDATE_STATUS=INSTALLED" in updater
           and "REREAD_INSTALLED_ENTRY" in updater
           and "PUBLIC_REPOSITORY" in updater,
           out, "public stable update precedes project work and emits a session action")
 
 
-def t_fast_update_uses_fresh_receipt_without_network():
-    """Ночной замер: полный public clone/test стоил 12.94 с при каждом входе."""
+def t_fast_update_checks_remote_even_with_fresh_receipt():
+    """A recent receipt may save a clone, but cannot prove a newer release absent."""
+    import contextlib
     import importlib.util
+    import io
     import json
 
     home = tempfile.mkdtemp(prefix="kbtest-fast-home-")
@@ -1539,21 +1547,211 @@ def t_fast_update_uses_fresh_receipt_without_network():
             "fingerprint": module.fingerprint(destination),
             "checked_at_epoch": time.time(),
         }, stream)
-    env = dict(os.environ)
-    env["HOME"] = home
-    env["KB_ARCHITECT_UPDATE_CACHE"] = cache
-    p = subprocess.run(
-        [sys.executable, os.path.join(HERE, "kb_update.py"),
-         "--public", "--fast", "--do"],
-        capture_output=True, text=True, timeout=30, env=env)
-    out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("fresh receipt skips GitHub clone and full test gate",
-          out.code == 0
-          and "GitHub не опрашивался" in out
-          and "полный gate" not in out
-          and "Источник:" not in out,
-          out, "fresh local receipt + installed fingerprint is enough inside TTL")
+    old_cache = os.environ.get("KB_ARCHITECT_UPDATE_CACHE")
+    module.MESTA = [("Codex", destination)]
+    calls = []
+    module.public_head = lambda: (calls.append("ls-remote") or
+                                  ("fixture-head", None))
+    try:
+        os.environ["KB_ARCHITECT_UPDATE_CACHE"] = cache
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = module.fast_public_check(24)
+    finally:
+        if old_cache is None:
+            os.environ.pop("KB_ARCHITECT_UPDATE_CACHE", None)
+        else:
+            os.environ["KB_ARCHITECT_UPDATE_CACHE"] = old_cache
+    out = Vyvod(stream.getvalue(), code)
+    check("fresh receipt still probes public HEAD but skips clone when unchanged",
+          out.code == 0 and calls == ["ls-remote"]
+          and "public HEAD не изменился" in out
+          and "UPDATE_STATUS=CURRENT" in out
+          and "полный gate" not in out,
+          out, "one cheap remote proof replaces the stale TTL assumption")
     shutil.rmtree(home, ignore_errors=True)
+
+
+def t_fast_update_detects_new_release_despite_fresh_receipt():
+    """The 6.0 receipt must not mask a patch published one minute later."""
+    import contextlib
+    import importlib.util
+    import io
+    import json
+
+    home = tempfile.mkdtemp(prefix="kbtest-fast-new-head-")
+    destination = os.path.join(home, ".codex", "skills", "kb-architect")
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    shutil.copytree(SKILL_ROOT, destination)
+    spec = importlib.util.spec_from_file_location(
+        "kb_update_new_head_fixture", os.path.join(HERE, "kb_update.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    cache = os.path.join(home, "update-state.json")
+    with open(cache, "w", encoding="utf-8") as stream:
+        json.dump({
+            "schema": 1,
+            "repository": module.PUBLIC_REPOSITORY,
+            "remote_head": "old-head",
+            "version": module.versiya(destination),
+            "fingerprint": module.fingerprint(destination),
+            "checked_at_epoch": time.time(),
+        }, stream)
+    old_cache = os.environ.get("KB_ARCHITECT_UPDATE_CACHE")
+    module.MESTA = [("Codex", destination)]
+    module.public_head = lambda: ("new-head", None)
+    try:
+        os.environ["KB_ARCHITECT_UPDATE_CACHE"] = cache
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = module.fast_public_check(24)
+    finally:
+        if old_cache is None:
+            os.environ.pop("KB_ARCHITECT_UPDATE_CACHE", None)
+        else:
+            os.environ["KB_ARCHITECT_UPDATE_CACHE"] = old_cache
+    out = Vyvod(stream.getvalue(), 0 if code is None else code)
+    check("fresh receipt cannot hide a newly published stable",
+          code is None and "запускается полный gate" in out
+          and "UPDATE_STATUS=CURRENT" not in out,
+          out, "changed remote HEAD must enter the validated clone/install gate")
+    shutil.rmtree(home, ignore_errors=True)
+
+
+def t_natural_update_enters_project_action_mode():
+    """A project update request continues into reversible work, not another report."""
+    import contextlib
+    import importlib.util
+    import io
+
+    fixture = tempfile.mkdtemp(prefix="kbtest-update-action-")
+    skill = os.path.join(fixture, "skill")
+    project = os.path.join(fixture, "project")
+    os.makedirs(os.path.join(skill, "scripts"))
+    os.makedirs(project)
+    with open(os.path.join(skill, "scripts", "kb_apply.py"), "w",
+              encoding="utf-8") as stream:
+        stream.write("import sys\nsys.exit(1)\n")
+    spec = importlib.util.spec_from_file_location(
+        "kb_update_action_fixture", os.path.join(HERE, "kb_update.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    action_stream = io.StringIO()
+    with contextlib.redirect_stdout(action_stream):
+        action_code = module.apply_project(skill, project, action_mode=True)
+    inspect_stream = io.StringIO()
+    with contextlib.redirect_stdout(inspect_stream):
+        inspect_code = module.apply_project(skill, project, action_mode=False)
+    out = Vyvod(action_stream.getvalue() + inspect_stream.getvalue(), 0)
+    check("project update distinguishes action-first from standalone inspection",
+          action_code == 1 and inspect_code == 1
+          and "SESSION_ACTION=APPLY_PROJECT_DELTA_NOW" in action_stream.getvalue()
+          and "Команда обновления — не report-only" in action_stream.getvalue()
+          and "SESSION_STATE=PROJECT_DELTA_OPEN" in inspect_stream.getvalue()
+          and "APPLY_PROJECT_DELTA_NOW" not in inspect_stream.getvalue(),
+          out, "--do supplies an executable continuation while audit stays read-only")
+    shutil.rmtree(fixture, ignore_errors=True)
+
+
+def t_full_update_report_only_never_calls_stale_install_current():
+    """A validated source plus a stale install is AVAILABLE, not CURRENT."""
+    import contextlib
+    import importlib.util
+    import io
+    from types import SimpleNamespace
+
+    fixture = tempfile.mkdtemp(prefix="kbtest-update-report-only-")
+    source = os.path.join(fixture, "source")
+    destination = os.path.join(fixture, "installed")
+    os.makedirs(source)
+    os.makedirs(destination)
+    with open(os.path.join(source, "SKILL.md"), "w", encoding="utf-8") as stream:
+        stream.write('---\nmetadata:\n  version: "6.0.2"\n---\nsource\n')
+    with open(os.path.join(destination, "SKILL.md"), "w", encoding="utf-8") as stream:
+        stream.write('---\nmetadata:\n  version: "6.0.1"\n---\ninstalled\n')
+    spec = importlib.util.spec_from_file_location(
+        "kb_update_report_only_fixture", os.path.join(HERE, "kb_update.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.MESTA = [("Codex", destination)]
+    module.prepare_source = lambda _src, _do: (True, "fixture source", None)
+    module.test_skill = lambda _src: (True, "")
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        code = module.update_from_source(
+            source, SimpleNamespace(do_update=False), "fixture")
+    out = Vyvod(stream.getvalue(), code)
+    check("full report-only gate cannot label a stale installation CURRENT",
+          out.code == 1 and "UPDATE_STATUS=UPDATE_AVAILABLE" in out
+          and "SESSION_ACTION=RERUN_WITH_DO" in out
+          and "UPDATE_STATUS=CURRENT" not in out,
+          out, "observation mode exposes the open install action instead of a false pass")
+    shutil.rmtree(fixture, ignore_errors=True)
+
+
+def t_legacy_update_ttl_option_remains_parse_compatible():
+    """6.0/6.0.1 project commands may keep TTL while it no longer skips remote proof."""
+    import contextlib
+    import importlib.util
+    import io
+
+    spec = importlib.util.spec_from_file_location(
+        "kb_update_legacy_ttl_fixture", os.path.join(HERE, "kb_update.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    seen = []
+    def fast_fixture(ttl):
+        seen.append(ttl)
+        print("UPDATE_STATUS=CURRENT")
+        return 0
+    module.fast_public_check = fast_fixture
+    old_argv = sys.argv
+    stream = io.StringIO()
+    try:
+        sys.argv = ["kb_update.py", "--public", "--fast", "--ttl-hours", "24"]
+        with contextlib.redirect_stdout(stream):
+            code = module.main()
+    finally:
+        sys.argv = old_argv
+    out = Vyvod(stream.getvalue(), code)
+    check("legacy --ttl-hours is accepted but still enters remote fast check",
+          out.code == 0 and seen == [24.0], out,
+          "compatibility keeps old commands runnable without restoring TTL freshness")
+
+
+def t_public_receipt_write_failure_suppresses_success_status():
+    """Validated bytes without a durable public receipt remain UNKNOWN."""
+    import contextlib
+    import importlib.util
+    import io
+    from types import SimpleNamespace
+
+    fixture = tempfile.mkdtemp(prefix="kbtest-update-receipt-failure-")
+    source = os.path.join(fixture, "source")
+    destination = os.path.join(fixture, "installed")
+    os.makedirs(source)
+    with open(os.path.join(source, "SKILL.md"), "w", encoding="utf-8") as stream:
+        stream.write('---\nmetadata:\n  version: "6.0.2"\n---\nidentical\n')
+    shutil.copytree(source, destination)
+    spec = importlib.util.spec_from_file_location(
+        "kb_update_receipt_failure_fixture", os.path.join(HERE, "kb_update.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.MESTA = [("Codex", destination)]
+    module.prepare_source = lambda _src, _do: (True, "fixture source", None)
+    module.test_skill = lambda _src: (True, "")
+    module.record_public_receipt = lambda _src: "fixture cache is read-only"
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        code = module.update_from_source(
+            source, SimpleNamespace(do_update=False), "fixture", record_receipt=True)
+    out = Vyvod(stream.getvalue(), 0)
+    check("failed public receipt cannot coexist with CURRENT or INSTALLED",
+          code == 2 and "UPDATE_STATUS=UNKNOWN" in out
+          and "UPDATE_STATUS=CURRENT" not in out
+          and "UPDATE_STATUS=INSTALLED" not in out,
+          out, "a cache-write failure replaces the pass instead of merely annotating it")
+    shutil.rmtree(fixture, ignore_errors=True)
 
 
 def t_templates_do_not_silently_add_obligations():
@@ -2337,17 +2535,21 @@ def t_512_update_project_option_really_runs_apply():
         "CLAUDE.md": "# rules\n\nkb_standard_version: 5.3\n",
     })
     local_home = tempfile.mkdtemp(prefix="kbtest-update-project-home-")
+    installed = os.path.join(local_home, ".codex", "skills", "kb-architect")
+    os.makedirs(os.path.dirname(installed), exist_ok=True)
+    shutil.copytree(source, installed)
     env = dict(os.environ)
     env["HOME"] = local_home
     p = subprocess.run(
         [sys.executable, os.path.join(HERE, "kb_update.py"),
-         "--source", source, "--project", project],
+         "--source", source, "--do", "--project", project],
         capture_output=True, text=True, timeout=180, env=env)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("update --project действительно запускает project application",
           out.code == 1
           and "ПРИМЕНЕНИЕ К ПРОЕКТУ" in out
           and "NEEDS_APPLICATION" in out
+          and "SESSION_ACTION=APPLY_PROJECT_DELTA_NOW" in out
           and "[5.4]" in out,
           out, "the single entry command executes kb_apply and propagates exit 1")
     shutil.rmtree(source, ignore_errors=True)
@@ -2520,18 +2722,22 @@ def t_601_release_application_binds_source_and_exact_ledger():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.0.1\n")
+        f.write("# rules\n\nkb_standard_version: 6.0.2\n")
     receipt = {
         "schema": 1,
         "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.0.1",
+            "kind": "migration", "from_version": "6.0", "to_version": "6.0.2",
             "status": "finalized",
             "source_snapshot": {
                 "ref": source, "commit": source, "version_source": "CLAUDE.md",
                 "version_source_sha256": hashlib.sha256(source_bytes).hexdigest(),
             },
-            "release_ledger": [{"version": "6.0.1", "decision": "applied",
-                                "evidence": ["tests/migration.txt"]}],
+            "release_ledger": [
+                {"version": "6.0.1", "decision": "applied",
+                 "evidence": ["tests/migration.txt"]},
+                {"version": "6.0.2", "decision": "tool-inherited",
+                 "evidence": ["tests/migration.txt"]},
+            ],
             "owner_acceptance": {"accepted_by": "fixture owner",
                                  "accepted_at": "2026-08-28",
                                  "evidence": ["tests/owner.txt"]},
@@ -2551,6 +2757,21 @@ def t_601_release_application_binds_source_and_exact_ledger():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_602_release_application_template_has_full_intermediate_ledger():
+    """The shipped 6.0→6.0.2 example must not teach projects to omit 6.0.1."""
+    import json
+
+    template = json.loads(skill_text("assets/templates/release-application.json"))
+    application = template["applications"][0]
+    versions = [row.get("version") for row in application.get("release_ledger", [])]
+    out = Vyvod(json.dumps(template, ensure_ascii=False), 0)
+    check("release-application template lists every intermediate patch",
+          application.get("from_version") == "6.0"
+          and application.get("to_version") == "6.0.2"
+          and versions == ["6.0.1", "6.0.2"],
+          out, "the copyable template satisfies the same full-range rule as the validator")
+
+
 def t_601_initial_adoption_records_source_without_replaying_history():
     """A new project proves initial adoption without pretending to migrate old releases."""
     import json
@@ -2566,14 +2787,14 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.0.1\n")
+        f.write("\nkb_standard_version: 6.0.2\n")
     receipt = {"schema": 1, "applications": [{
-        "kind": "initial-adoption", "from_version": None, "to_version": "6.0.1",
+        "kind": "initial-adoption", "from_version": None, "to_version": "6.0.2",
         "status": "finalized",
         "source_snapshot": {"ref": source, "commit": source,
                             "version_source": "CLAUDE.md",
                             "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.0.1", "decision": "applied",
+        "release_ledger": [{"version": "6.0.2", "decision": "applied",
                             "evidence": ["tests/proof.txt"]}],
         "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
                              "evidence": ["tests/proof.txt"]},

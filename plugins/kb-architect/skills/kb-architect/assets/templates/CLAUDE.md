@@ -13,6 +13,9 @@ project root: . (repo root; локальный абсолютный путь н�
 Этот цикл выполняется один раз на новую task/session, не на каждое сообщение.
 Неизменные root, current pointer, версия и authority-context повторно не загружай.
 
+«Обнови скилл базы знаний» — action-first до owner gate, не ещё один отчёт.
+Acceptance, secrets/private runtime и push требуют отдельной authority.
+
 1. Если обновление не отключено политикой `по сигналу`, до предметной работы
    один раз запусти `kb_update.py --public --fast --сделать --project <корень-проекта>`. После
    `INSTALLED` прочитай новый entry и текущий route; `UNKNOWN` не называй PASS.
@@ -51,13 +54,10 @@ release application: `KB_RELEASE_APPLICATION.json`
 Отклонено или отложено:
 - <возможность> — <исход и причина/условие возврата>
 
-<Если сервисный контур принят, доставка идёт до project-derived работы один раз на
-новую task/session. Доставка и применение — разные операции. Расхождение
-версий тем же циклом разбирает `kb_apply.py`; `NEEDS_APPLICATION` или
-`APPLICATION_UNPROVEN` остаётся видимым до полного release ledger и post-results
-приёмки. Marker меняется последним. Новая возможность получает явный исход, а не
-становится правилом молча. Рабочий проект не связывается симлинком с private
-development checkout.>
+<Если сервисный контур принят, new task до project-derived работы выполняет delivery
++ `kb_apply.py`. `NEEDS_APPLICATION`/`APPLICATION_UNPROVEN` остаётся до полного
+ledger и post-results приёмки; marker меняется последним. Новая возможность получает
+явный исход. Никаких симлинков рабочего проекта на private development checkout.>
 
 ## Профессиональные роли
 

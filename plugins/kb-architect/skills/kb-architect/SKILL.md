@@ -3,7 +3,7 @@ name: kb-architect
 description: "Durable AI knowledge-base router: start, audit, update, restructure or move a KB; coordinate Claude/Codex; manage project roles, runtimes, credentials, cloud/MCP and multi-agent work; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.0.1"
+  version: "6.0.2"
   author: "sugestr"
 ---
 
@@ -23,7 +23,7 @@ metadata:
 | Создать базу | `references/contract.md` + `references/start-new.md` |
 | Присоединить, диагностировать или перестроить существующую | `references/contract.md` + нужная часть `references/adopt-existing.md` |
 | Перенести checkout для Claude/Codex | `references/contract.md` + `references/move-project.md`; UI-имена получают `* ` |
-| Обновить установленный скилл | `references/service-layer.md` + `scripts/kb_update.py --public --fast --сделать` |
+| Обновить установленный скилл | «Обнови скилл базы знаний»: action-first по `references/service-layer.md` |
 | Применить release delta к проекту | `references/migration.md` + `scripts/kb_apply.py <root>` |
 | Работать нескольким агентам, принять или передать сообщение | `references/collaboration.md` + `assets/templates/agent-message.md` |
 | Создать, проверить, разделить или подключить проектную роль | `references/project-roles.md` + `scripts/kb_skills.py` |
@@ -58,8 +58,8 @@ metadata:
 - В report/read-only старое разрешение на запись не переносится: targets нужны до записи.
 - Существенный project-derived вывод проходит `kb_lookup.py --claim`; без receipt
   `supported|qualified` это draft/`UNKNOWN`. Domain skill задаёт темы, core — гейт.
-- Локальный запуск проверяет stable update до project-derived работы, кроме явной
-  политики `по сигналу`; новая task читает новый entry, длинная — на safe boundary.
+- Update — не report-only: installed entry ведёт обратимые local changes до owner gate;
+  public — только freshness/delivery.
 - V6 marker требует tracked `KB_RELEASE_APPLICATION.json`: source snapshot, полный
   ledger и post-results acceptance.
 - Рост released route блокирует `kb_cost.py --check` как `OPTIMIZATION_REQUIRED`;

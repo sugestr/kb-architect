@@ -10,14 +10,15 @@ kb_update.py — привести файловые установки скилл
     python3 kb_update.py --source <checkout-или-каталог-скилла>
     python3 kb_update.py --source <путь> --сделать
 
-Без `--сделать` только показывает. Рабочие проекты используют `--public`:
-стабильная редакция всегда берётся из PUBLIC GitHub. `--source` оставлен для
-теста и maintainer-workflow; development-checkout не является каналом доставки.
+Без `--сделать` только показывает. Рабочие инструкции читает уже установленная
+локальная копия; `--public` использует PUBLIC GitHub только для проверки и доставки
+stable. `--source` оставлен для теста и maintainer-workflow; development-checkout
+не является каналом доставки.
 
 Обновляется файл на диске, не prompt уже идущей сессии. Среда без файловой
 установки (браузер, Cowork) получает точный ручной шаг и не считается обновлённой.
-`--project` тем же циклом запускает разбор project delta; незакрытая дельта
-возвращает код 1 и не может молча выглядеть полностью применённым обновлением.
+`--project` тем же циклом запускает разбор project delta; с `--сделать` код 1
+печатает action-first continuation и не может молча выглядеть завершённым update.
 """
 
 import argparse
@@ -34,7 +35,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_REPOSITORY = "https://github.com/sugestr/kb-architect.git"
-DEFAULT_TTL_HOURS = 24
+DEFAULT_TTL_HOURS = 24  # legacy CLI compatibility; never suppresses remote proof
 
 # Закрытый список известных файловых установок этой машины. Другие места
 # обновляются только явным отдельным механизмом, а не угадываются обходом диска.
@@ -118,18 +119,14 @@ def public_head():
 
 
 def fast_public_check(ttl_hours):
-    """Return 0 when a receipt proves no clone is needed; None means full gate."""
+    """Probe public HEAD once; a matching receipt may skip clone, never the probe."""
+    # `--ttl-hours` existed in 6.0/6.0.1. Keep accepting it so old project
+    # commands do not break, but do not let elapsed time stand in for remote
+    # freshness. A cold task owes one cheap HEAD probe regardless of receipt age.
+    del ttl_hours
     receipt = load_cache()
     now = time.time()
     if receipt and managed_installs_match(receipt):
-        checked = receipt.get("checked_at_epoch")
-        if isinstance(checked, (int, float)) and now - checked < ttl_hours * 3600:
-            print("Быстрая проверка: локальная квитанция свежая; GitHub не опрашивался")
-            print(f"  редакция: {receipt.get('version')}")
-            print(f"  public HEAD: {receipt.get('remote_head') or 'UNKNOWN'}")
-            print("UPDATE_STATUS=CURRENT")
-            return 0
-
         head, error = public_head()
         if error:
             print("Быстрая проверка: UNKNOWN — GitHub public не опрошен: " + error)
@@ -150,6 +147,10 @@ def fast_public_check(ttl_hours):
             print(f"  public HEAD: {head}")
             print("UPDATE_STATUS=CURRENT")
             return 0
+        print("Быстрая проверка: public HEAD изменился; запускается полный gate")
+        print(f"  прежний HEAD: {receipt.get('remote_head') or 'UNKNOWN'}")
+        print(f"  текущий HEAD: {head}")
+        return None
 
     print("Быстрая проверка: квитанции или parity недостаточно; запускается полный gate")
     return None
@@ -269,8 +270,8 @@ def test_skill(path):
     return True, ""
 
 
-def apply_project(skill, project):
-    """Вторая половина update cycle: показать незакрытую project delta."""
+def apply_project(skill, project, action_mode=False):
+    """Вторая половина update cycle: обнаружить незакрытую project delta."""
     root = os.path.abspath(os.path.expanduser(project))
     script = os.path.join(skill, "scripts", "kb_apply.py")
     if not os.path.isdir(root):
@@ -287,6 +288,15 @@ def apply_project(skill, project):
     except Exception as exc:
         print("Применение не запущено: " + str(exc))
         return 2
+    if result.returncode == 1:
+        if action_mode:
+            print("SESSION_ACTION=APPLY_PROJECT_DELTA_NOW")
+            print("  Команда обновления — не report-only: продолжи обратимые "
+                  "project-local изменения по references/migration.md.")
+            print("  Остановись перед post-results acceptance, secret/private "
+                  "runtime, push или иным отдельным owner gate.")
+        else:
+            print("SESSION_STATE=PROJECT_DELTA_OPEN")
     return result.returncode
 
 
@@ -362,7 +372,7 @@ def prepare_source(src, do_update):
     return True, "source свежий", top
 
 
-def update_from_source(src, args, source_label):
+def update_from_source(src, args, source_label, record_receipt=False):
     before = versiya(src)
     prepared, source_state, _top = prepare_source(src, args.do_update)
     print(f"Источник: {source_label}")
@@ -386,16 +396,20 @@ def update_from_source(src, args, source_label):
 
     source_version = versiya(src)
     installed = False
+    pending = False
+    managed_count = 0
     for name, raw_path in MESTA:
         path = os.path.expanduser(raw_path)
         if not os.path.lexists(path):
             print(f"{name:12} не установлен")
             continue
+        managed_count += 1
         was_link = os.path.islink(path)
         if was_link and not args.do_update:
             target = os.path.realpath(path)
             print(f"{name:12} симлинк → {target}, редакция {versiya(path)} — "
                   "при --сделать станет управляемой копией GitHub public")
+            pending = True
             continue
         current = versiya(path)
         same_content = (not was_link and fingerprint(path) == fingerprint(src))
@@ -409,6 +423,7 @@ def update_from_source(src, args, source_label):
             else:
                 print(f"{name:12} копия отстала: {current} против {source_version} — "
                       "обновится при --сделать")
+            pending = True
             continue
         new_version, backup, replace_error = safe_replace(src, path, current)
         if replace_error:
@@ -434,13 +449,39 @@ def update_from_source(src, args, source_label):
     else:
         print("  собранный пакет рядом с source не найден")
     if installed:
+        status = "INSTALLED"
+        result = 0
+    elif pending:
+        status = "UPDATE_AVAILABLE"
+        result = 1
+    elif managed_count == 0:
+        status = "UPDATE_AVAILABLE"
+        result = 1
+    else:
+        status = "CURRENT"
+        result = 0
+
+    # Public freshness is a two-part claim: source validation plus a durable
+    # receipt that binds the installed bytes to that public HEAD. Never print a
+    # successful machine status before the second part has actually succeeded.
+    if result == 0 and record_receipt:
+        cache_error = record_public_receipt(src)
+        if cache_error:
+            print("Квитанция быстрого режима не записана: UNKNOWN — " + cache_error)
+            print("UPDATE_STATUS=UNKNOWN")
+            return 2
+
+    if status == "INSTALLED":
         print("UPDATE_STATUS=INSTALLED")
         print("SESSION_ACTION=REREAD_INSTALLED_ENTRY_AND_CURRENT_ROUTE")
+    elif status == "UPDATE_AVAILABLE":
+        print("UPDATE_STATUS=UPDATE_AVAILABLE")
+        print("SESSION_ACTION=RERUN_WITH_DO")
     else:
         print("UPDATE_STATUS=CURRENT")
     print("  старый prompt не исчезает: новая task читает установленный entry до работы;")
     print("  длинная task перечитывает entry/изменившийся route на безопасной границе.")
-    return 0
+    return result
 
 
 def main():
@@ -450,9 +491,9 @@ def main():
     group.add_argument("--public", action="store_true",
                        help="всегда брать стабильный снимок из GitHub public")
     parser.add_argument("--fast", action="store_true",
-                        help="TTL + ls-remote; полный clone только при изменении/parity gap")
+                        help="ls-remote всегда; clone только при изменении/parity gap")
     parser.add_argument("--ttl-hours", type=float, default=DEFAULT_TTL_HOURS,
-                        help="срок локальной квитанции быстрого режима (по умолчанию 24)")
+                        help="устаревшая совместимая опция; remote-check не отключает")
     parser.add_argument("--project",
                         help="после доставки сразу проверить дельту этого проекта")
     parser.add_argument("--сделать", "--do", action="store_true", dest="do_update")
@@ -467,7 +508,8 @@ def main():
         fast_result = fast_public_check(args.ttl_hours)
         if fast_result is not None:
             if fast_result == 0 and args.project:
-                return apply_project(os.path.dirname(HERE), args.project)
+                return apply_project(os.path.dirname(HERE), args.project,
+                                     action_mode=args.do_update)
             return fast_result
 
     temp_root = None
@@ -490,13 +532,9 @@ def main():
         if not src:
             print("Источник не получен: " + str(err))
             return 2
-        result = update_from_source(src, args, label)
-        if result == 0 and args.public:
-            cache_error = record_public_receipt(src)
-            if cache_error:
-                print("Квитанция быстрого режима не записана: UNKNOWN — " + cache_error)
+        result = update_from_source(src, args, label, record_receipt=args.public)
         if result == 0 and args.project:
-            result = apply_project(src, args.project)
+            result = apply_project(src, args.project, action_mode=args.do_update)
         return result
     finally:
         if temp_root:

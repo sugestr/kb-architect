@@ -154,13 +154,21 @@ development checkout. Future updates are handled by:
 python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
 ```
 
-When automatic updates are accepted, a fresh task runs this fast check before
-project-derived work. A fresh 24-hour receipt avoids the network. After
+When automatic updates are accepted, a fresh task with a valid receipt and local
+parity performs one cheap remote-HEAD check before project-derived work. Matching
+HEAD avoids a clone, package reread and tests; missing parity enters the full gate,
+and a receipt alone never claims `CURRENT`. After
 `INSTALLED`, it reads the installed entry and current route. A long task updates
 only at a safe boundary and does not pretend old prompt instructions disappeared.
 Installing files does not raise a project's marker. For v6+, migration is complete
 only when `KB_RELEASE_APPLICATION.json` preserves the pre-change source snapshot,
 every release outcome and post-results owner acceptance.
+
+Inside an existing project, the natural command `Update the knowledge-base skill`
+is enough: it means update stable and continue reversible local migration work to
+the next real owner gate, not stop after another audit. Explicit `read-only` still
+means no writes; final acceptance, private credentials/runtimes and push remain
+separate permissions.
 
 **Cowork or a regular chat**
 
@@ -369,13 +377,21 @@ development-checkout. Следующие обновления выполняет
 python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
 ```
 
-Если принято автоматическое обновление, новая задача выполняет быстрый check до
-project-derived работы. Свежая 24-часовая квитанция не обращается к сети. После
-`INSTALLED` агент читает новый entry и нужный маршрут. Длинная сессия обновляется
-только на безопасной границе и не выдаёт старый prompt за забытый.
+Если принято автоматическое обновление, новая задача с валидной квитанцией и local
+parity до project-derived работы один раз дешёво проверяет remote HEAD. Совпавший HEAD
+экономит clone, повторное чтение package и tests; отсутствие parity включает полный
+gate, а одна квитанция не доказывает
+`CURRENT`. После `INSTALLED` агент читает новый entry и нужный маршрут. Длинная
+сессия обновляется только на безопасной границе и не выдаёт старый prompt за забытый.
 Установка файлов не повышает marker проекта. Для v6+ миграцию закрывает только
 `KB_RELEASE_APPLICATION.json`: source snapshot до записи, исход каждой редакции и
 post-results приёмка владельца.
+
+В существующем проекте достаточно сказать: **«Обнови скилл базы знаний»**. Это
+означает обновить stable и продолжить обратимую локальную миграцию до следующего
+настоящего owner gate, а не остановиться после ещё одного аудита. Явный `read-only`
+по-прежнему запрещает запись; финальная приёмка, private credentials/runtime и push
+остаются отдельными полномочиями.
 
 **Cowork или обычный чат:** скачай `kb-architect.skill` из
 [последнего выпуска](https://github.com/sugestr/kb-architect/releases/latest), приложи
