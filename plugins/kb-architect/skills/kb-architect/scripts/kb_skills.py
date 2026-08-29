@@ -1968,6 +1968,146 @@ def legacy_candidate_prefill(root: Path, legacy: dict) -> dict:
     }
 
 
+def tracked_candidate_prefill(root: Path) -> dict:
+    """Inventory tracked project skills without guessing role semantics.
+
+    Some mature projects predate both role registries but already contain real
+    project-owned Agent Skills.  Returning the generic example template in that
+    situation hides the strongest available source evidence and can steer an
+    agent toward a made-up profession.  This bounded scan looks only in the
+    conventional project skill/discovery roots and records Git-tracked facts;
+    selectors, posture, owners and validation remain unresolved.
+    """
+    skills: list[dict] = []
+    actions: list[dict] = []
+    for name in project_skills(root):
+        candidates: dict[Path, Path] = {}
+        for base in ("skills", "skill"):
+            skill_md = root / base / name / "SKILL.md"
+            if skill_md.is_file() and tracked(root, skill_md):
+                candidates[skill_md.resolve(strict=False)] = skill_md
+        if not candidates:
+            for base in DISCOVERY.values():
+                point = root / base / name / "SKILL.md"
+                resolved = point.resolve(strict=False)
+                if point.is_file() and not outside(root, resolved) \
+                        and tracked(root, resolved):
+                    candidates[resolved] = resolved
+        if len(candidates) != 1:
+            if len(candidates) > 1:
+                actions.append({
+                    "skill": name,
+                    "skill_md": [
+                        path.relative_to(root).as_posix()
+                        for path in sorted(candidates.values())
+                    ],
+                    "runner_errors": [
+                        f"{name}: multiple tracked canonical SKILL.md candidates"
+                    ],
+                    "instruction": (
+                        "Choose one project-owned canonical skill before migration; "
+                        "do not infer identity from a shared folder name"
+                    ),
+                })
+            continue
+        skill_md = next(iter(candidates.values()))
+        canonical = skill_md.parent.relative_to(root).as_posix()
+        version = frontmatter_value(skill_md, "version")
+        discovery: dict[str, str] = {}
+        for agent, base in DISCOVERY.items():
+            point = root / base / name
+            point_md = point / "SKILL.md"
+            if point_md.is_file() and tracked(root, point) \
+                    and point_md.resolve(strict=False) == skill_md.resolve(strict=False):
+                discovery[agent] = point.relative_to(root).as_posix()
+        skills.append({
+            key: value for key, value in {
+                "name": name,
+                "canonical": canonical,
+                "version": version,
+                "skill_sha256": file_sha256(skill_md),
+                "discovery": discovery or None,
+                "detected_from": "git-tracked-project-skill",
+            }.items() if value is not None
+        })
+        runner_errors = portable_frontmatter_errors(skill_md, name, version)
+        if runner_errors:
+            actions.append({
+                "skill": name,
+                "skill_md": skill_md.relative_to(root).as_posix(),
+                "required_metadata_version": version,
+                "version_source": "skill-frontmatter" if version else "unresolved",
+                "runner_errors": runner_errors,
+                "instruction": (
+                    f"Repair portable frontmatter in {skill_md.relative_to(root).as_posix()}"
+                    if version else
+                    f"Resolve and add metadata.version in "
+                    f"{skill_md.relative_to(root).as_posix()}; do not guess a release"
+                ),
+            })
+    supported = [
+        agent for agent in DISCOVERY
+        if skills and all(agent in item.get("discovery", {}) for item in skills)
+    ]
+    return {
+        "supported_agents": supported,
+        "role_policy": None,
+        "skills": skills,
+        "role_selectors": [],
+        "implicit_required_skills": [],
+        "mechanical_preflight": {
+            "status": "needs-action" if actions else "ready",
+            "actions": actions,
+        },
+    }
+
+
+def neutral_project_roles_template(prefill: dict) -> dict:
+    """Return a fail-visible scaffold, never the package's example profession."""
+    agents = list(prefill.get("supported_agents", []))
+    return {
+        "schema": 1,
+        "supported_agents": agents,
+        "role_posture": {
+            "status": "UNRESOLVED",
+            "rationale": "UNRESOLVED: the project owner decides the role posture",
+            "unmatched_material_work": "stop",
+            "multiple_matches": "load-all",
+            "conflict": "preserve-and-escalate",
+        },
+        "roles": [],
+        "skills": [],
+        "cost_policy": {
+            "review_above_bytes": 8192,
+            "all_roles_scenario": "UNRESOLVED",
+            "scenarios": [],
+        },
+        "acceptance": {
+            "status": "candidate",
+            "protocol": CURRENT_LIGHT_PROTOCOL,
+            "accepted_skill_sha256": {},
+            "project_check": {
+                "status": "PENDING", "command": None, "execution": None,
+            },
+            "live_test": {
+                "status": "PENDING", "agent": None, "fresh_context": True,
+                "unforced": True,
+                "covers": ["role-selection", "knowledge-recall", "authority-stop"],
+                "summary": "Replace with one short observed result",
+                "observation": {"observed_at": None, "run_id": None},
+            },
+            "agents": {
+                agent: {"status": "UNKNOWN", "basis": "Not tested yet"}
+                for agent in agents
+            },
+            "owner": {
+                "status": "PENDING", "accepted_by": None, "accepted_at": None,
+            },
+            "open": [],
+        },
+    }
+
+
 def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
     """Return a deterministic read-only preparation envelope for one migration."""
     registry = choose_registry(root, explicit)
@@ -1997,18 +2137,15 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
         }
 
     template_root = Path(__file__).resolve().parent.parent / "assets" / "templates"
-    project_template = load_json_object(template_root / "project-roles.json") or {}
     index_template = load_json_object(template_root / "knowledge-index.json") or {}
     application_template = load_json_object(
         template_root / "release-application.json") or {}
     legacy = source if source and source.get("schema") in (1, 2) \
         and isinstance(source.get("skills"), list) else None
-    prefill = legacy_candidate_prefill(root, legacy) if legacy else {
-        "supported_agents": [], "role_policy": None, "skills": [],
-        "role_selectors": [], "implicit_required_skills": [],
-        "mechanical_preflight": {"status": "ready", "actions": []},
-    }
+    prefill = legacy_candidate_prefill(root, legacy) if legacy \
+        else tracked_candidate_prefill(root)
     mechanical_preflight = prefill.pop("mechanical_preflight")
+    project_template = neutral_project_roles_template(prefill)
 
     existing_index = load_json_object(root / "KNOWLEDGE_INDEX.json")
     marker, marker_source = current_marker(root)
@@ -2038,6 +2175,8 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
         "source_registry": source_registry if source else None,
         "source_commit": source_commit,
         "templates_are_unapplied": True,
+        "prefill_source": ("legacy-registry" if legacy else
+                           "tracked-project-skills" if prefill["skills"] else "none"),
         "legacy_prefill": prefill,
         "mechanical_preflight": mechanical_preflight,
         "suggested_project_check": next((

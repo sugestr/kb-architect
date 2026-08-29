@@ -45,10 +45,9 @@ version/commit → fresh-context acceptance. Community-метод принима
 
 ## Проверяемая готовность без отдельной бюрократии
 
-`kb_skills.py <root> --prepare-candidate` даёт read-only legacy/template/source prefill,
-`UNRESOLVED` и `mechanical_preflight`; принятый — `action: none`. Preflight
-отделяет `1.0.0` от legacy prose, называет exact `metadata.version`, без token не
-угадывает. Роль решает человек.
+`kb_skills.py <root> --prepare-candidate` read-only: legacy/Git-tracked skills,
+`UNRESOLVED` scaffold и `mechanical_preflight`; профессия/selector/posture не
+назначаются. Принятый: `action: none`. Version — только явный token, иначе `UNKNOWN`.
 
 Новый candidate хранит compact `kb-role-acceptance/v3` в `PROJECT_ROLES.json`.
 Отдельный receipt tree и mutation-suite не нужны; accepted schema 2–5, compact v1/v2

@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.2.5"
+          and data.get("baseline_version") == "6.2.6"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -4818,13 +4818,77 @@ def t_623_prepare_candidate_does_not_invent_a_domain_role():
         prepared = {}
     prefill = prepared.get("legacy_prefill", {})
     out = Vyvod(result, result.code)
+    template = prepared.get("templates", {}).get("PROJECT_ROLES.json", {})
     check("prepare-candidate does not invent a European or other domain role",
           result.code == 0 and prefill.get("role_selectors") == []
           and prefill.get("implicit_required_skills") == []
           and prefill.get("skills") == []
           and prepared.get("templates_are_unapplied") is True
+          and template.get("roles") == [] and template.get("skills") == []
+          and template.get("role_posture", {}).get("status") == "UNRESOLVED"
+          and "research-adviser" not in str(result)
           and "europe" not in str(result).lower(),
           out, "no legacy role means a visible semantic decision, not guessed expertise")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_626_prepare_candidate_discovers_tracked_skills_without_a_registry():
+    """Flor had two tracked skills while the helper proposed research-adviser."""
+    import json
+    d = base({
+        "AGENTS.md": "# fixture\n\nkb_standard_version: 5.14\n",
+        "skills/flor-copy/SKILL.md": (
+            "---\nname: flor-copy\ndescription: Fixture copy method\n"
+            "metadata:\n  version: 1.0.0\n---\nmethod\n"),
+        "skills/flor-design/SKILL.md": (
+            "---\nname: flor-design\ndescription: Fixture design method\n---\nmethod\n"),
+    })
+    for base_name in (".agents/skills", ".claude/skills"):
+        os.makedirs(os.path.join(d, base_name), exist_ok=True)
+        for name in ("flor-copy", "flor-design"):
+            os.symlink(os.path.join("..", "..", "skills", name),
+                       os.path.join(d, base_name, name))
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "AGENTS.md", "skills",
+                    ".agents", ".claude"], check=True)
+    subprocess.run(["git", "-C", d, "-c", "user.name=Fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "before"],
+                   check=True)
+    before = subprocess.run(
+        ["git", "-C", d, "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True, text=True, check=True).stdout
+    first = run_candidate_preparation(d)
+    second = run_candidate_preparation(d)
+    after = subprocess.run(
+        ["git", "-C", d, "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True, text=True, check=True).stdout
+    try:
+        prepared = json.loads(first)
+    except (TypeError, ValueError):
+        prepared = {}
+    skills = prepared.get("legacy_prefill", {}).get("skills", [])
+    template = prepared.get("templates", {}).get("PROJECT_ROLES.json", {})
+    actions = prepared.get("mechanical_preflight", {}).get("actions", [])
+    out = Vyvod(first + "\n--- second ---\n" + second, first.code)
+    check("prepare-candidate discovers tracked skills without inventing a role",
+          first.code == 0 and second.code == 0 and str(first) == str(second)
+          and before == after == ""
+          and prepared.get("prefill_source") == "tracked-project-skills"
+          and [item.get("name") for item in skills] ==
+              ["flor-copy", "flor-design"]
+          and [item.get("canonical") for item in skills] ==
+              ["skills/flor-copy", "skills/flor-design"]
+          and skills[0].get("version") == "1.0.0"
+          and "version" not in skills[1]
+          and all(item.get("detected_from") == "git-tracked-project-skill"
+                  for item in skills)
+          and template.get("roles") == [] and template.get("skills") == []
+          and "research-adviser" not in str(first)
+          and any(action.get("skill") == "flor-design"
+                  and action.get("version_source") == "unresolved"
+                  and "do not guess" in action.get("instruction", "")
+                  for action in actions),
+          out, "tracked skill facts are visible; profession and version remain unresolved")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -4847,7 +4911,7 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
 
 
 def t_620_compact_application_uses_contract_line_not_patch_build():
-    """A 6.2 project stays accepted when the installed exact build is 6.2.5."""
+    """A 6.2 project stays accepted when the installed exact build is 6.2.6."""
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
@@ -4877,7 +4941,7 @@ def t_620_compact_application_uses_contract_line_not_patch_build():
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("contract line 6.2 accepts exact installed build 6.2.5 without remigration",
+    check("contract line 6.2 accepts exact installed build 6.2.6 without remigration",
           p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
           and "PROJECT_LINE_OK" in p.stdout,
           out, "patch build is delivery, not a new project migration")
