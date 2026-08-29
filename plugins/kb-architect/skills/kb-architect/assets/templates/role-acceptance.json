@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "outcomes": {
     "STRUCTURAL_PASS": {
       "status": "PASS",
@@ -36,6 +36,7 @@
     "BEHAVIOR_PASS": {
       "status": "PASS",
       "proof_mode": "synthetic-first",
+      "runtime_scope": "shared",
       "evidence": [{"path": "role-acceptance/behavior.txt", "sha256": "replace"}],
       "cases": {
         "role-selection": {"result": "PASS", "evidence": [{"path": "role-acceptance/role-selection.txt", "sha256": "replace"}]},
@@ -65,7 +66,7 @@
   "scenario_baselines": {
     "ordinary-subject-answer": {
       "accepted_role_entry_bytes": 2048,
-      "accepted_static_route_bytes": 8192,
+      "accepted_static_route_bytes": 12288,
       "route_files": ["knowledge/subject-authority.md", "knowledge/project-case-state.md"]
     }
   },

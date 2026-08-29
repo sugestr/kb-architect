@@ -10,7 +10,7 @@ visible.**
 восстанавливаемые профессиональные роли и проверки, которые делают уверенные
 противоречия видимыми.**
 
-> Agent Skill · one-page frozen core · optional reference library · tested
+> Agent Skill · one-page versioned core · optional reference library · tested
 > maintenance tools · Russian contract and references · bilingual overview · MIT
 
 ---
@@ -94,7 +94,7 @@ in the indexed knowledge base, not in the role.
 Role readiness has four separate receipts: structural validity, unforced fresh-session
 runtime discovery, synthetic-first behavioural cases, and post-results owner
 acceptance. It is also bound to a named quality review, exact role tree, manifest,
-knowledge-index hashes and split static cost baselines. A shadow candidate does not
+knowledge-index hashes and split static cost budgets. A shadow candidate does not
 replace the old role early. Same-name active runtime copies are inventoried; shared
 roles run from an exact pin; an all-roles scenario keeps combined cost visible.
 
@@ -130,7 +130,7 @@ personal data first.
 - Measured retrieval misses can justify a semantic/vector index as a derived search layer; it finds candidates, but source files remain the canon.
 - It does not supply professional advice, credentials, runtime access or permission for external actions.
 - Cloud-ready project files do not prove that a local MCP, account or secret exists in a cloud runtime.
-- The mandatory core is one frozen page; optional modules are adopted only for a demonstrated project need.
+- The mandatory core is one versioned page; optional modules are adopted only for a demonstrated project need. A core revision is a project migration, not a silent install-side change.
 
 ### Installation
 
@@ -237,7 +237,7 @@ project-owned профессиональные роли и решения, ко�
 точные источники и остановись, если они противоречат друг другу.
 ```
 
-Минимум — одна замороженная страница `references/contract.md`. Справочник и
+Минимум — одна версионируемая страница `references/contract.md`. Справочник и
 инструменты подключаются только тогда, когда проект встретил соответствующую
 проблему. Векторная база, отдельный сервер и proprietary memory service не нужны.
 
@@ -267,7 +267,8 @@ project-specific `KNOWLEDGE_INDEX.json`, один Git-канон и discovery д
 
 Но он **не выбирает профессии за владельца, не сочиняет экспертизу и не заменяет
 первичные источники или квалифицированную проверку**. Законы, факты дела, диагнозы и
-рецепты госпорталов остаются индексируемым знанием, а не текстом роли. Все совпавшие роли загружаются
+рецепты госпорталов остаются индексируемым знанием, а не текстом роли. Все совпавшие
+роли загружаются; их конфликт сохраняется, а не усредняется.
 вместе; конфликт сохраняется и эскалируется. Один skill может реализовать несколько
 именованных ролей только при общей иерархии источников, evidence threshold и
 stop-gates; иначе роли разделяются.
@@ -404,7 +405,7 @@ post-results приёмка владельца.
 ```text
 plugins/kb-architect/skills/kb-architect/
   SKILL.md               лёгкий маршрутизатор к одной нужной процедуре
-  references/contract.md замороженный обязательный контракт на одной странице
+  references/contract.md версионируемый обязательный контракт на одной странице
   references/            опциональный справочник
   assets/templates/      вход, текущее состояние, журнал, вопросы и хендовер
   agents/openai.yaml     интерфейс skill в Codex
@@ -423,9 +424,9 @@ plugins/kb-architect/skills/kb-architect/
 ## Версии и лицензия
 
 Номер в `metadata.version` файла `SKILL.md` меняется при любой правке содержимого
-пакета. Первая цифра меняется при изменении контракта или архитектуры обязательной
-загрузки/доставки; совместимая документация и инструменты поднимают вторую. История
-лежит в `references/releases.md`.
+пакета. Начиная с 6.1, совместимая починка поднимает patch, изменение обязательного
+контракта — minor, полная смена operating model — major. История лежит в
+`references/releases.md`.
 
 MIT. Бери, адаптируй и проверяй на своей работе. Если сломалось — расскажи как.
 

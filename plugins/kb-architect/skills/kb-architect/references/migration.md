@@ -12,6 +12,9 @@
   `read-only`/`только отчёт` — диагностика без записи.
 - Переиспользуй валидные snapshot, ledger, shadow, tests и receipts: сверь
   commit/hash и продолжи с первого незакрытого шага без широкого повторного аудита.
+- Явный `to_version` владельца/receipt ограничивает цикл: новая installed version
+  его не расширяет. Проверяй цель через
+  `kb_apply.py <root> --target-version <to_version>`; остальное — следующая дельта.
 
 Предметный выбор, post-results acceptance, secrets/private runtime, внешнее действие
 и push/publication сохраняют отдельную authority.
@@ -67,7 +70,9 @@ Marker одной поздней версии не закрывает проме
 1. заверши ledger и owner evidence;
 2. поставь `status: finalized` и `finalized_at`;
 3. повысь `kb_standard_version` до `to_version`;
-4. прогони `kb_apply.py`, `kb_check.py`, `kb_due.py` и project tests.
+4. прогони `kb_apply.py <root> --target-version <to_version>`, `kb_check.py`,
+   `kb_due.py` и project tests; более новая installed version в `kb_due.py` —
+   следующая дельта, не провал этой приёмки.
 
 Для v6+ `kb_apply.py` возвращает 0 только если tracked receipt восстанавливает source,
 имеет непрерывную цепочку до marker и точный ledger всех выпусков. Неполная квитанция —

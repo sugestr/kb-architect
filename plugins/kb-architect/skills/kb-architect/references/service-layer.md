@@ -102,6 +102,10 @@ backup, замена и повторные тесты. Ошибка сети и�
 `references/migration.md` до настоящего owner gate. Сам скрипт не принимает
 предметные решения за владельца.
 
+По умолчанию цель — installed stable. Явный более ранний `to_version` не расширяй:
+проверь его через `kb_apply.py <root> --target-version <to_version>`; детали — в
+`references/migration.md`.
+
 Совпавшие HEAD + receipt + fingerprint делают этот gate дешёвым. Внутри той же живой
 задачи не запускай этот цикл снова, если root и receipt не изменились. `CURRENT`
 разрешает обычный вход. `INSTALLED` требует прочитать установленный `SKILL.md` и

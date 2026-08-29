@@ -3,6 +3,7 @@
 kb_apply.py — что новая редакция значит для ЭТОЙ базы.
 
     python3 kb_apply.py <корень базы>
+    python3 kb_apply.py <корень базы> --target-version 6.0.1
 
 Скрипт **сам ничего не применяет**: он детерминированно обнаруживает дельту.
 Это не делает весь workflow read-only. В action-first задаче «Обнови скилл базы
@@ -27,6 +28,7 @@ Post-results acceptance, secrets/private runtime и push остаются отд
 пропуск. Точный ответ даёт прогон проверок после применения.
 """
 
+import argparse
 import hashlib
 import json
 import os
@@ -291,10 +293,16 @@ APPLICABLE = [
 
 
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        return 2
-    root = os.path.abspath(sys.argv[1])
+    parser = argparse.ArgumentParser(
+        description="Проверить применение release delta к конкретной базе")
+    parser.add_argument("root", help="корень базы")
+    parser.add_argument(
+        "--target-version",
+        help=("явная граница текущего migration cycle; более новая установленная "
+              "редакция остаётся следующей дельтой и не расширяет scope"),
+    )
+    args = parser.parse_args()
+    root = os.path.abspath(args.root)
     if not os.path.isdir(root):
         print(f"нет такой папки: {root}")
         return 2
@@ -304,6 +312,22 @@ def main():
 
     if not inst:
         print("не вижу установленной редакции — читать нечего")
+        return 2
+    target = args.target_version or inst
+    try:
+        target_key = ver_key(target)
+        installed_key = ver_key(inst)
+    except (AttributeError, ValueError):
+        print(f"некорректная целевая редакция: {target}")
+        return 2
+    if target_key > installed_key:
+        print(f"целевая редакция {target} новее установленного скилла {inst} — "
+              "эта копия не может проверить будущий contract")
+        return 2
+    known_targets = {version for version, _ in releases_between("0", inst)}
+    if target not in known_targets:
+        print(f"целевая редакция {target} отсутствует в release history установленного "
+              f"скилла {inst}")
         return 2
     if not proj:
         print(f"Редакция проекта не записана числом{f' (записано: «{raw}»)' if raw else ''}.")
@@ -321,11 +345,18 @@ def main():
                   f"{APPLICATION_RECEIPT}; marker не повышай до finalize.")
             return 1
         print(f"APPLICATION_RECEIPT_OK: {APPLICATION_RECEIPT} доказывает marker {proj}.")
-    if ver_key(proj) >= ver_key(inst):
-        print(f"проект на {proj}, установлен {inst} — применять нечего")
+    if ver_key(proj) >= target_key:
+        if target != inst:
+            print(f"TARGET_APPLICATION_OK: marker {proj} подтверждает явно заданную "
+                  f"границу {target}.")
+            if ver_key(proj) < installed_key:
+                print(f"NEWER_INSTALLED_OUT_OF_SCOPE: {inst} — отдельная следующая дельта; "
+                      "текущую приёмку не переоткрывает.")
+        else:
+            print(f"проект на {proj}, установлен {inst} — применять нечего")
         return 0
 
-    rows = releases_between(proj, inst)
+    rows = releases_between(proj, target)
     traits = base_traits(root)
 
     dela = []
@@ -342,7 +373,8 @@ def main():
             if value not in {"…", "..."}:
                 vozmozhnosti.append((v, value))
 
-    print(f"Проект на {proj}, установлен скилл {inst}. Между ними выпусков: {len(rows)}.\n")
+    print(f"Проект на {proj}, цель цикла {target}, установлен скилл {inst}. "
+          f"До цели выпусков: {len(rows)}.\n")
 
     if not dela:
         print("ОБЯЗАТЕЛЬНЫХ ДЕЛ НЕТ. Правки инструментов и текста уже работают,")
@@ -378,7 +410,7 @@ def main():
     print("  4. поправить найденное, каждую правку — записью в канал с адресом;")
     print("  5. показать ledger, hashes, PASS/FAIL/UNKNOWN и rollback владельцу;")
     print("  6. только после post-results acceptance финализировать receipt и")
-    print("     обновить kb_standard_version на " + str(inst) + ".")
+    print("     обновить kb_standard_version на " + str(target) + ".")
     print()
     print("От чего-то можно отказаться — это часть системы, а не отступление.")
     print("Но отказ записывается, иначе следующая сессия примет его за недоделку.")

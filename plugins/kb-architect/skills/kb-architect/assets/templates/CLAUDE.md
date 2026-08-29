@@ -20,9 +20,9 @@ Acceptance, secrets/private runtime и push требуют отдельной au
    один раз запусти `kb_update.py --public --fast --сделать --project <корень-проекта>`. После
    `INSTALLED` прочитай новый entry и текущий route; `UNKNOWN` не называй PASS.
 2. Прочитай указанное текущее состояние; не загружай всю базу.
-3. Если в «Соответствии» **явно принята диагностика** при входе, запусти только
-   перечисленные там дешёвые проверки. Ошибка запуска или ненайденный scope —
-   `UNKNOWN`, не PASS.
+3. Если в «Соответствии» **явно принята диагностика** при входе, запусти один
+   объявленный readiness command/manifest. Не дублируй здесь его внутренний список.
+   Ошибка запуска или ненайденный scope — `UNKNOWN`, не PASS.
 4. Если задача предметная и обязательная project role объявлена ниже, прочитай её
    до вывода. Отсутствие required skill — stop-condition.
 
@@ -48,7 +48,7 @@ release application: `KB_RELEASE_APPLICATION.json`
 инбокс отчётов: <для local-inbox — прямой путь>
 
 Принято:
-- <например: диагностика при входе: kb_due.py, kb_check.py>
+- <например: readiness: один script/manifest, который сам владеет составом проверок>
 - <например: service-layer fast update>
 
 Отклонено или отложено:
@@ -64,18 +64,17 @@ ledger и post-results приёмки; marker меняется последни�
 roles: `PROJECT_ROLES.json`
 knowledge routes: `KNOWLEDGE_INDEX.json`
 role selection: project-declared; load every matching required role
+role readiness: `PROJECT_ROLES.json` → `skills[].validation` + `acceptance`
 
 ## Среды и внешние возможности
 
 cloud policy: <allowed | pending | prohibited>
 runtime capabilities: <нет | реестр .kb-environments.json>
 
-<Локальный MCP, Keychain или папка вне Git не появляются в облаке автоматически.
-Если задача зависит от почты, ERP, мессенджера или другого внешнего контура, реестр
-называет логическую возможность и отдельно — provider, identity, scope, authority и
-acceptance для каждой среды. Недоступность required capability — точный BLOCKED, а не
-повод утверждать, что источник проверен. Проверка выполняется при setup/adopt/cloud
-acceptance, не на каждый обычный вопрос.>
+<Локальный MCP, Keychain и папка вне Git не появляются в облаке автоматически.
+Required external capability получает provider, identity, scope, authority и acceptance
+для каждой среды. Недоступность — точный BLOCKED. Проверяй при setup/adopt, не на
+каждый обычный вопрос.>
 
 ## Граница записи и совместная работа
 
@@ -84,12 +83,14 @@ acceptance, не на каждый обычный вопрос.>
 - Параллельные писатели — отдельные worktree/ветки; коммит только exact paths.
 - `read-only`, `только отчёт` или `диагностируй` в текущем запросе отменяет старую
   write-authority до явного списка targets.
-- Реорганизация — только после показа точного плана и согласия владельца.
+- Реорганизация требует точного scope, rollback и task-authority; явная команда
+  обновить/мигрировать разрешает обратимые изменения внутри названного проекта.
 
 ## Минимальная семантика знания
 
 - Совершённое действие без достаточного `verify` — не факт.
-- Файл о настоящем получает `valid_until`, если он не является объявленным входом.
+- `valid_until` ставится только при предметно обоснованном сроке; неизвестная
+  свежесть остаётся `UNKNOWN`, а не получает произвольную дату.
 - Производный файл получает `generated_from` и правится в источнике.
 - Ошибка сначала дописывается в `CORRECTIONS.md`; закрывается ссылкой на исправленный
   канон, а не одной записью о проблеме.

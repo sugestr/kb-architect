@@ -68,25 +68,25 @@ def t_report_only_envelope_cancels_old_write_authority():
           out, "current task scope wins before first write")
 
 
-def t_thin_router_preserves_frozen_contract_by_reference():
-    """Ночной замер: полный entry 40 955 Б читался даже для простой маршрутизации."""
+def t_610_thin_router_points_to_versioned_contract():
+    """6.1 unfreezes the core without putting its full text back into every turn."""
     router = skill_text("SKILL.md")
     contract = skill_text("references/contract.md")
-    rules = (
-        "Ни один класс текущего состояния не обслуживается двумя",
-        "Не утверждать поведение внешней системы из памяти",
-        "Производное представление правят в источнике",
-        "Реорганизация — только с предварительного согласия",
-    )
     out = Vyvod(router + "\n" + contract, 0)
-    check("тонкий entry маршрутизирует к неизменному обязательному контракту",
+    check("тонкий entry маршрутизирует к версионируемому обязательному контракту",
           len(router.encode("utf-8")) <= 8_192
           and "references/contract.md" in router
-          and "## Три поля" not in router
-          and all(rule in contract for rule in rules)
+          and "С версии 6.1 контракт снова **версионируется**" in contract
+          and "заморожен" not in contract.lower()
+          and "role posture" in contract
+          and "пустой lexical/search result не доказывает отсутствие" in contract
+          and "Cost baseline — **потолок/бюджет**" in contract
+          and "Project entry/current ≤8 КиБ" in contract
+          and "Readiness имеет один канонический executable command" in contract
           and "CORRECTIONS.md" in contract
-          and "один сменный слот" in contract,
-          out, "router <=8KiB; four rules, corrections and control test stay in contract")
+          and "контрольных вопросов является одним таким каноном" in contract
+          and "adversarial case ложной уверенности" in contract,
+          out, "router <=8KiB; versioned core keeps truth, roles, cost and semantic acceptance")
 
 
 def t_layer_cost_is_measured_from_the_single_router():
@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.0.2"
+          and data.get("baseline_version") == "6.1"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -154,6 +154,9 @@ def t_project_entry_is_two_layer_and_keeps_stop_gates():
           and "подробные правила" in tpl
           and "Authority и stop-gates" in tpl
           and "обязательная project role" in tpl
+          and "один\n   объявленный readiness command/manifest" in tpl
+          and "role readiness: `PROJECT_ROLES.json`" in tpl
+          and "measure-route-costs.py" not in tpl
           and "`UNKNOWN`, не PASS" in tpl,
           out, "static details move out; current, authority, checks and role trigger remain")
 
@@ -437,6 +440,7 @@ def write_role_acceptance(root, registry):
     registry["acceptance"] = {
         "status": "accepted",
         "receipt": "ROLE_ACCEPTANCE.json",
+        "behavior_scope": "shared",
     }
     with open(os.path.join(root, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
         json.dump(registry, f)
@@ -518,7 +522,7 @@ def write_role_acceptance(root, registry):
                      "source-conflict", "context-cost")
     }
     receipt = {
-        "schema": 2,
+        "schema": 3,
         "outcomes": {
             "STRUCTURAL_PASS": {
                 "status": "PASS", "evidence": [common_evidence],
@@ -536,6 +540,7 @@ def write_role_acceptance(root, registry):
                                "agents": agents},
             "BEHAVIOR_PASS": {
                 "status": "PASS", "proof_mode": "synthetic-first",
+                "runtime_scope": "shared",
                 "evidence": [common_evidence], "cases": cases,
                 "private_real_data": {
                     "authority": "not-granted", "result": "UNKNOWN",
@@ -591,6 +596,119 @@ def accepted_role_fixture(skill_body=None):
                     "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
                     "skills", ".agents", ".claude"], check=True)
     return d, registry
+
+
+def t_610_schema_two_role_receipt_remains_backward_readable():
+    """Installed 6.1 must not invalidate an accepted 6.0.1 project before migration."""
+    import json
+    body = (
+        "---\nname: domain-auditor\ndescription: Fixture role\n"
+        "metadata:\n  version: 1.0.0\n---\n"
+        "Load [the detailed method](references/deep.md) for subject work.\n"
+    )
+    d, registry = accepted_role_fixture(skill_body=body)
+    support = os.path.join(d, "skills", "domain-auditor", "references", "deep.md")
+    os.makedirs(os.path.dirname(support), exist_ok=True)
+    with open(support, "w", encoding="utf-8") as f:
+        f.write("x" * 1_000_000)
+    write_role_acceptance(d, registry)
+    path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(path, encoding="utf-8"))
+    receipt["schema"] = 2
+    receipt["outcomes"]["BEHAVIOR_PASS"].pop("runtime_scope")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "skills/domain-auditor",
+                    "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json"], check=True)
+    out = run_skills(d)
+    check("schema-2 role acceptance остаётся читаемой до project migration 6.1",
+          out.code == 0
+          and "ROLE_ACCEPTANCE_SCHEMA_2_LEGACY" in out
+          and "ROLE_COST_SCHEMA_2_LEGACY" in out
+          and "linked-role-support=1000000" in out,
+          out, "new linked-support accounting is a migration delta, not a retroactive failure")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_610_behavior_scope_is_machine_readable_and_bound():
+    """Sk-tax audit: opaque prose claimed per-runtime behavior beyond the green receipt."""
+    import json
+    d, _registry = accepted_role_fixture()
+    path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(path, encoding="utf-8"))
+    receipt["outcomes"]["BEHAVIOR_PASS"]["runtime_scope"] = "per-runtime"
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    out = run_skills(d)
+    check("behavior scope manifest и receipt не расходятся в свободном тексте",
+          out.code == 1
+          and "BEHAVIOR_PASS.runtime_scope must match acceptance.behavior_scope" in out,
+          out, "schema 3 binds shared behavior while discovery remains per runtime")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_610_role_cost_uses_headroom_budget_not_exact_mutable_snapshot():
+    """Claude audit: exact baselines over append-only routes punish correct project work."""
+    d, registry = accepted_role_fixture()
+    scenario = registry["cost_policy"]["scenarios"][0]
+    scenario["accepted_role_entry_bytes"] = 1024
+    scenario["accepted_static_route_bytes"] = 4096
+    scenario["accepted_reason"] = "fixture budget with normal-growth headroom"
+    write_role_acceptance(d, registry)
+    path = os.path.join(d, "knowledge", "case.md")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("ordinary append-only growth\n" * 100)
+    within = run_skills(d)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("x" * 5_000)
+    above = run_skills(d)
+    combined = Vyvod(str(within) + "\n" + str(above), above.code)
+    check("role cost baseline — бюджет с headroom, а не точный слепок",
+          within.code == 0 and above.code == 1
+          and "OPTIMIZATION_REQUIRED subject-work" in above,
+          combined, "normal change stays green; only growth beyond the accepted ceiling reopens cost")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_610_linked_role_support_cannot_hide_from_cost_gate():
+    """Independent audit: standard Markdown link forms must all enter role cost."""
+    variants = [
+        ("inline", "[method](references/deep.md)", "references/deep.md"),
+        ("reference", "[method][deep]\n\n[deep]: references/deep.md",
+         "references/deep.md"),
+        ("angle", "[method](<references/deep method.md>)",
+         "references/deep method.md"),
+        ("percent-space", "[method](references/deep%20method.md)",
+         "references/deep method.md"),
+        ("parentheses", "[method](references/deep(1).md)",
+         "references/deep(1).md"),
+    ]
+    passed = True
+    details = []
+    for label, link, relative in variants:
+        body = (
+            "---\nname: domain-auditor\ndescription: Fixture role\n"
+            "metadata:\n  version: 1.0.0\n---\n"
+            f"Load {link} for subject work.\n"
+        )
+        d, registry = accepted_role_fixture(skill_body=body)
+        support = os.path.join(d, "skills", "domain-auditor", *relative.split("/"))
+        os.makedirs(os.path.dirname(support), exist_ok=True)
+        with open(support, "w", encoding="utf-8") as f:
+            f.write("x" * 1_000_000)
+        write_role_acceptance(d, registry)
+        subprocess.run(["git", "-C", d, "add", "skills/domain-auditor",
+                        "ROLE_ACCEPTANCE.json"], check=True)
+        out = run_skills(d)
+        variant_passed = (out.code == 1
+                          and "OPTIMIZATION_REQUIRED subject-work" in out
+                          and "linked-role-support=1000000" in out)
+        passed = passed and variant_passed
+        details.append(f"{label}: {out}")
+        shutil.rmtree(d, ignore_errors=True)
+    out = Vyvod("\n".join(details), 0 if passed else 1)
+    check("linked supporting file роли автоматически входит в cost gate",
+          passed, out, "inline, reference and angle destinations cannot hide 1 MB context")
 
 
 def knowledge_index():
@@ -855,6 +973,9 @@ def t_capability_registry_expresses_role_not_only_location():
                   ("accepted_role_entry_bytes", "accepted_static_route_bytes", "route_files"))
           and set(acceptance["outcomes"]) == {
               "STRUCTURAL_PASS", "DISCOVERY_PASS", "BEHAVIOR_PASS", "OWNER_ACCEPTED"}
+          and data["acceptance"]["behavior_scope"] == "shared"
+          and acceptance["schema"] == 3
+          and acceptance["outcomes"]["BEHAVIOR_PASS"]["runtime_scope"] == "shared"
           and acceptance["actual_usage"]["status"] == "UNKNOWN",
           out, "method stays in one SKILL; registry carries split gates and costs")
 
@@ -2663,6 +2784,18 @@ def t_516_report_router_separates_local_and_remote_delivery():
     shutil.rmtree(remote, ignore_errors=True)
 
 
+def t_602_private_family_report_defaults_to_detailed_local_route():
+    """28.08: an agent anonymised a same-owner local report despite project policy."""
+    template = skill_text("assets/templates/defect-report.md")
+    out = Vyvod(template, 0)
+    check("private family report is detailed by verified route, not agent guess",
+          "Private local owner/family group — детальный по умолчанию" in template
+          and "External/public — только обезличенный" in template
+          and "Обезличенный (по умолчанию)" not in template
+          and "сначала preview" in template,
+          out, "trusted local delivery preserves diagnostics; public delivery is anonymised")
+
+
 def t_516_broad_evidence_query_refuses_context_overrun():
     """27.08 audit: evidence mode printed and required an unbounded candidate set."""
     files = {f"sources/f{i:03}.md": "shared support and shared challenge " + "x" * 180
@@ -2722,11 +2855,11 @@ def t_601_release_application_binds_source_and_exact_ledger():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.0.2\n")
+        f.write("# rules\n\nkb_standard_version: 6.1\n")
     receipt = {
         "schema": 1,
         "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.0.2",
+            "kind": "migration", "from_version": "6.0", "to_version": "6.1",
             "status": "finalized",
             "source_snapshot": {
                 "ref": source, "commit": source, "version_source": "CLAUDE.md",
@@ -2736,6 +2869,8 @@ def t_601_release_application_binds_source_and_exact_ledger():
                 {"version": "6.0.1", "decision": "applied",
                  "evidence": ["tests/migration.txt"]},
                 {"version": "6.0.2", "decision": "tool-inherited",
+                 "evidence": ["tests/migration.txt"]},
+                {"version": "6.1", "decision": "applied",
                  "evidence": ["tests/migration.txt"]},
             ],
             "owner_acceptance": {"accepted_by": "fixture owner",
@@ -2757,8 +2892,61 @@ def t_601_release_application_binds_source_and_exact_ledger():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_602_release_application_template_has_full_intermediate_ledger():
-    """The shipped 6.0→6.0.2 example must not teach projects to omit 6.0.1."""
+def t_610_scoped_migration_target_survives_newer_installed_skill():
+    """Live 28.08 counterexample: newer stable appeared while sk-tax finalized 6.0.1."""
+    import json
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.0\n",
+              "tests/migration.txt": "migration checks passed\n",
+              "tests/owner.txt": "owner accepted shown results\n"})
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.email",
+                    "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "Fixture"], check=True)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "source"], check=True)
+    source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
+                                  capture_output=True, check=True).stdout
+    with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write("# rules\n\nkb_standard_version: 6.0.1\n")
+    receipt = {"schema": 1, "applications": [{
+        "kind": "migration", "from_version": "6.0", "to_version": "6.0.1",
+        "status": "finalized",
+        "source_snapshot": {"ref": source, "commit": source,
+                            "version_source": "CLAUDE.md",
+                            "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
+        "release_ledger": [{"version": "6.0.1", "decision": "applied",
+                            "evidence": ["tests/migration.txt"]}],
+        "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
+                             "evidence": ["tests/owner.txt"]},
+        "finalized_at": "2026-08-28",
+    }]}
+    with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md", "tests",
+                    "KB_RELEASE_APPLICATION.json"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "finalize 6.0.1"], check=True)
+
+    latest = run("kb_apply.py", d)
+    scoped_run = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_apply.py"), d,
+         "--target-version", "6.0.1"],
+        capture_output=True, text=True, timeout=120)
+    scoped = Vyvod(scoped_run.stdout + scoped_run.stderr, scoped_run.returncode)
+    combined = Vyvod(str(latest) + str(scoped), 0)
+    check("явная цель миграции не расширяется новой installed версией",
+          latest.code == 1 and "NEEDS_APPLICATION" in latest
+          and scoped.code == 0
+          and "APPLICATION_RECEIPT_OK" in scoped
+          and "TARGET_APPLICATION_OK" in scoped
+          and "NEWER_INSTALLED_OUT_OF_SCOPE: 6.1" in scoped,
+          combined, "default still reports latest delta; scoped acceptance closes 6.0.1")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_610_release_application_template_has_full_intermediate_ledger():
+    """The shipped 6.0→6.1 example must not omit either intermediate patch."""
     import json
 
     template = json.loads(skill_text("assets/templates/release-application.json"))
@@ -2767,8 +2955,8 @@ def t_602_release_application_template_has_full_intermediate_ledger():
     out = Vyvod(json.dumps(template, ensure_ascii=False), 0)
     check("release-application template lists every intermediate patch",
           application.get("from_version") == "6.0"
-          and application.get("to_version") == "6.0.2"
-          and versions == ["6.0.1", "6.0.2"],
+          and application.get("to_version") == "6.1"
+          and versions == ["6.0.1", "6.0.2", "6.1"],
           out, "the copyable template satisfies the same full-range rule as the validator")
 
 
@@ -2787,14 +2975,14 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.0.2\n")
+        f.write("\nkb_standard_version: 6.1\n")
     receipt = {"schema": 1, "applications": [{
-        "kind": "initial-adoption", "from_version": None, "to_version": "6.0.2",
+        "kind": "initial-adoption", "from_version": None, "to_version": "6.1",
         "status": "finalized",
         "source_snapshot": {"ref": source, "commit": source,
                             "version_source": "CLAUDE.md",
                             "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.0.2", "decision": "applied",
+        "release_ledger": [{"version": "6.1", "decision": "applied",
                             "evidence": ["tests/proof.txt"]}],
         "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
                              "evidence": ["tests/proof.txt"]},

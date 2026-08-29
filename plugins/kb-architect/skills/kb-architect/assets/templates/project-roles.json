@@ -62,13 +62,14 @@
           "knowledge/project-case-state.md"
         ],
         "accepted_role_entry_bytes": 2048,
-        "accepted_static_route_bytes": 8192,
-        "accepted_reason": "Initial measured baseline; replace with the actual value"
+        "accepted_static_route_bytes": 12288,
+        "accepted_reason": "Budget with explicit headroom for normal routed-knowledge growth"
       }
     ]
   },
   "acceptance": {
     "status": "candidate",
-    "receipt": "ROLE_ACCEPTANCE.json"
+    "receipt": "ROLE_ACCEPTANCE.json",
+    "behavior_scope": "shared"
   }
 }

@@ -3,7 +3,7 @@ name: kb-architect
 description: "Durable AI knowledge-base router: start, audit, update, restructure or move a KB; coordinate Claude/Codex; manage project roles, runtimes, credentials, cloud/MCP and multi-agent work; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.0.2"
+  version: "6.1"
   author: "sugestr"
 ---
 
@@ -44,8 +44,7 @@ metadata:
 
 ## Инварианты исполнения
 
-- Контракт заморожен в `references/contract.md`; справочник не добавляет проекту
-  обязательств молча.
+- Контракт — `references/contract.md`; reference обязателен только после явного принятия.
 - Локальные правила и project role задают модальность, authority, source ladder и stops.
 - `PROJECT_ROLES.json` объявляет role posture и triggers, `KNOWLEDGE_INDEX.json` —
   project-specific адреса знаний; непокрытая существенная работа — stop,

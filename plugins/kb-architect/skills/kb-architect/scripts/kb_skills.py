@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 from typing import Optional
+from urllib.parse import unquote
 
 import kb_index
 
@@ -417,6 +418,134 @@ def route_file(root: Path, value: object, label: str,
     return None
 
 
+def markdown_link_targets(text: str) -> list[str]:
+    """Return local-looking destinations used by Markdown links.
+
+    Fenced and inline code are excluded.  Both inline links (including angle-bracket
+    destinations with spaces) and reference-style links are recognised.  This is
+    deliberately a small Markdown extractor, not a path guesser.
+    """
+    visible: list[str] = []
+    fence_char = ""
+    fence_size = 0
+    for line in text.splitlines():
+        marker = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", line)
+        if marker:
+            token = marker.group(1)
+            if not fence_char:
+                fence_char, fence_size = token[0], len(token)
+            elif token[0] == fence_char and len(token) >= fence_size:
+                fence_char, fence_size = "", 0
+            continue
+        if not fence_char:
+            visible.append(line)
+    source = "\n".join(visible)
+    source = re.sub(r"`+[^`\n]*`+", "", source)
+
+    destinations: list[str] = []
+    inline_start = re.compile(r"!?\[[^\]\n]*\]\([ \t]*")
+    for match in inline_start.finditer(source):
+        cursor = match.end()
+        if cursor < len(source) and source[cursor] == "<":
+            end = source.find(">", cursor + 1)
+            if end >= 0 and "\n" not in source[cursor + 1:end]:
+                destinations.append(source[cursor + 1:end])
+            continue
+        start = cursor
+        depth = 0
+        escaped = False
+        while cursor < len(source):
+            char = source[cursor]
+            if char == "\n" or (char.isspace() and depth == 0):
+                break
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    break
+                depth -= 1
+            cursor += 1
+        if cursor > start and depth == 0:
+            destinations.append(source[start:cursor])
+
+    definitions: dict[str, str] = {}
+    definition = re.compile(
+        r"(?m)^[ ]{0,3}\[([^\]\n]+)\]:[ \t]*(?:<([^>\n]+)>|((?:\\.|\S)+))")
+    for match in definition.finditer(source):
+        label = " ".join(match.group(1).split()).casefold()
+        definitions[label] = match.group(2) or match.group(3)
+
+    used: set[str] = set()
+    for match in re.finditer(r"!?\[([^\]\n]+)\]\[([^\]\n]*)\]", source):
+        label = match.group(2) or match.group(1)
+        used.add(" ".join(label.split()).casefold())
+    for match in re.finditer(r"(?<![!\[])\[([^\]\n]+)\](?![\[(])", source):
+        if source[match.end():].lstrip(" \t").startswith(":"):
+            continue
+        used.add(" ".join(match.group(1).split()).casefold())
+    destinations.extend(definitions[label] for label in used if label in definitions)
+    return destinations
+
+
+def role_linked_files(canonical: Path, name: str,
+                      errors: list[str]) -> set[Path]:
+    """Find existing local support files directly linked by the role entry.
+
+    This is intentionally narrow.  It catches actual Markdown links without guessing
+    from inline-code path mentions, which produced excessive false positives in an
+    earlier live experiment.  Linked files are included automatically in cost.
+    """
+    skill_md = canonical / "SKILL.md"
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    found: set[Path] = set()
+    for raw in markdown_link_targets(text):
+        value = raw.strip().strip("'\"")
+        value = re.sub(r"\\([\\`*{}\[\]()#+.!_<>\- ])", r"\1", value)
+        value = value.split("#", 1)[0].split("?", 1)[0]
+        value = unquote(value)
+        if not value or value.startswith("#") or re.match(
+                r"^[A-Za-z][A-Za-z0-9+.-]*:", value):
+            continue
+        if any(mark in value for mark in ("<", ">", "{", "}", "*", "$")):
+            continue
+        relative = Path(value)
+        if relative.is_absolute():
+            continue
+        path = (canonical / relative).resolve(strict=False)
+        if outside(canonical, path) or not path.is_file() or path == skill_md:
+            continue
+        probe = git(path.parent, "rev-parse", "--show-toplevel")
+        repo = Path(probe.stdout.strip()).resolve() if not probe.returncode else canonical
+        if not tracked(repo, path):
+            errors.append(f"{name}: linked role support file is not Git-tracked: {value}")
+            continue
+        found.add(path)
+    return found
+
+
+def acceptance_schema_hint(root: Path, data: dict) -> int | None:
+    """Read only the accepted receipt schema needed for compatibility costing."""
+    acceptance = data.get("acceptance")
+    if not isinstance(acceptance, dict) or acceptance.get("status") != "accepted":
+        return None
+    raw = acceptance.get("receipt")
+    path = (root / str(raw or "")).resolve(strict=False)
+    if not raw or outside(root, path) or not path.is_file():
+        return None
+    try:
+        receipt = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return receipt.get("schema") if isinstance(receipt.get("schema"), int) else None
+
+
 def validate_visible(root: Path, data: dict, registry: Path,
                      runtime_roots: list[Path] | None = None
                      ) -> tuple[list[str], list[str], int]:
@@ -457,6 +586,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
     elif status == "not-applicable" and (data["roles"] or data["skills"]):
         errors.append("not-applicable posture must have empty roles and skills")
 
+    receipt_schema_hint = acceptance_schema_hint(root, data)
+
     role_by_id: dict[str, dict] = {}
     for role in data["roles"]:
         if not isinstance(role, dict):
@@ -485,6 +616,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                  (", ".join(str(path) for path in roots) if roots else "none"))
     skill_by_name: dict[str, dict] = {}
     skill_sizes: dict[str, int] = {}
+    skill_supports: dict[str, set[Path]] = {}
     quality_hashes: dict[str, str | None] = {}
     resolved_by_name: dict[str, Path] = {}
     for entry in data["skills"]:
@@ -511,6 +643,9 @@ def validate_visible(root: Path, data: dict, registry: Path,
         quality_hashes[checked_name] = quality_review(root, entry, errors)
         raw = Path(str(entry.get("canonical", ""))).expanduser()
         canonical = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
+        link_errors = errors if receipt_schema_hint != 2 else []
+        skill_supports[checked_name] = role_linked_files(
+            canonical, checked_name, link_errors)
         check_runtime_collisions(checked_name, canonical, roots, errors, notes)
     for role_id, role in role_by_id.items():
         if role.get("skill") not in skill_by_name:
@@ -563,6 +698,9 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 covered_roles.update(selected)
                 unique_skills = {str(role_by_id[role]["skill"]) for role in selected}
                 entry_bytes = sum(skill_sizes.get(name, 0) for name in unique_skills)
+                support_paths = {path for name in unique_skills
+                                 for path in skill_supports.get(name, set())}
+                support_bytes = sum(path.stat().st_size for path in support_paths)
                 required_routes = {route for role in selected
                                    for route in role_by_id[role].get("knowledge_routes", [])}
                 required_paths = {path for route in required_routes
@@ -578,29 +716,38 @@ def validate_visible(root: Path, data: dict, registry: Path,
                                   ", ".join(missing_paths))
                 paths = [route_file(root, value, scenario_id, errors)
                          for value in dict.fromkeys(declared_files)]
-                static_bytes = entry_bytes + sum(path.stat().st_size for path in paths if path)
+                routed_bytes = sum(path.stat().st_size for path in paths if path)
+                static_bytes = entry_bytes + support_bytes + routed_bytes
+                accepted_semantics_bytes = (entry_bytes + routed_bytes
+                                            if receipt_schema_hint == 2 else static_bytes)
                 accepted_entry = scenario.get("accepted_role_entry_bytes")
                 accepted_static = scenario.get("accepted_static_route_bytes")
                 for label, accepted, actual in (
                         ("accepted_role_entry_bytes", accepted_entry, entry_bytes),
-                        ("accepted_static_route_bytes", accepted_static, static_bytes)):
+                        ("accepted_static_route_bytes", accepted_static,
+                         accepted_semantics_bytes)):
                     if not isinstance(accepted, int) or accepted < 0:
                         errors.append(f"{scenario_id}: {label} must be a non-negative integer")
                     elif actual > accepted:
                         errors.append(f"OPTIMIZATION_REQUIRED {scenario_id}: {label} grew "
                                       f"{accepted} -> {actual} bytes")
-                if static_bytes > threshold and not scenario.get("accepted_reason"):
-                    errors.append(f"{scenario_id}: {static_bytes} bytes exceeds review threshold "
+                if accepted_semantics_bytes > threshold and not scenario.get("accepted_reason"):
+                    errors.append(f"{scenario_id}: {accepted_semantics_bytes} bytes exceeds review threshold "
                                   "without accepted_reason")
-                elif static_bytes > threshold:
-                    notes.append(f"COST_SIGNAL {scenario_id}: {static_bytes} static bytes; "
+                elif accepted_semantics_bytes > threshold:
+                    notes.append(f"COST_SIGNAL {scenario_id}: {accepted_semantics_bytes} static bytes; "
                                  f"accepted because {scenario['accepted_reason']}")
+                if receipt_schema_hint == 2 and support_bytes:
+                    notes.append(f"ROLE_COST_SCHEMA_2_LEGACY {scenario_id}: "
+                                 f"linked-role-support={support_bytes} is migration delta; "
+                                 "schema-2 accepted cost remains valid until schema 3 migration")
                 measured_costs[scenario_id] = {
                     "accepted_role_entry_bytes": accepted_entry,
                     "accepted_static_route_bytes": accepted_static,
                     "route_files": declared_files,
                 }
                 notes.append(f"route-cost {scenario_id}: role-entry={entry_bytes}; "
+                             f"linked-role-support={support_bytes}; "
                              f"static-end-to-end={static_bytes}; actual-usage=receipt")
             missing = sorted(set(role_by_id) - covered_roles)
             if missing:
@@ -628,10 +775,15 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 except (OSError, json.JSONDecodeError) as exc:
                     errors.append(f"role acceptance receipt unreadable: {exc}")
                     receipt = {}
+                receipt_schema = receipt.get("schema")
                 outcomes = receipt.get("outcomes", {})
-                if receipt.get("schema") != 2 or not isinstance(outcomes, dict):
-                    errors.append("ROLE_ACCEPTANCE_SCHEMA_2_REQUIRED")
+                if receipt_schema not in {2, 3} or not isinstance(outcomes, dict):
+                    errors.append("ROLE_ACCEPTANCE_SCHEMA_2_OR_3_REQUIRED")
                     outcomes = {}
+                elif receipt_schema == 2:
+                    notes.append("ROLE_ACCEPTANCE_SCHEMA_2_LEGACY: accepted for "
+                                 "backward compatibility; migrate to schema 3 for "
+                                 "machine-readable behavior scope")
                 if set(outcomes) != ACCEPTANCE_OUTCOMES:
                     errors.append("role acceptance must separate STRUCTURAL_PASS, "
                                   "DISCOVERY_PASS, BEHAVIOR_PASS and OWNER_ACCEPTED")
@@ -669,28 +821,29 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 for agent in agents:
                     result = discovered_agents.get(agent, {}) \
                         if isinstance(discovered_agents, dict) else {}
+                    label = f"DISCOVERY_PASS.{agent}"
                     if result.get("fresh_context") is not True or result.get("unforced") is not True:
-                        errors.append(f"DISCOVERY_PASS.{agent}: fresh_context and unforced are required")
+                        errors.append(f"{label}: fresh_context and unforced are required")
                     if result.get("new_session_required") is not True \
                             or result.get("session_boundary") != "new-session":
-                        errors.append(f"DISCOVERY_PASS.{agent}: new-session boundary is required")
+                        errors.append(f"{label}: new-session boundary is required")
                     inventory = result.get("inventory", [])
                     selected = result.get("selected", [])
                     if not isinstance(inventory, list) or not isinstance(selected, list):
-                        errors.append(f"DISCOVERY_PASS.{agent}: inventory and selected arrays required")
+                        errors.append(f"{label}: inventory and selected arrays required")
                         continue
                     for item_index, item in enumerate(inventory):
                         if not isinstance(item, dict) or any(
                                 item.get(field) in (None, "")
                                 for field in ("id", "path", "sha256", "version")):
-                            errors.append(f"DISCOVERY_PASS.{agent}.inventory[{item_index}] "
+                            errors.append(f"{label}.inventory[{item_index}] "
                                           "needs id/path/hash/version")
                     for name, entry in skill_by_name.items():
                         point = root / str(entry.get("discovery", {}).get(agent, "")) / "SKILL.md"
                         try:
                             point_path = point.relative_to(root).as_posix()
                         except ValueError:
-                            errors.append(f"DISCOVERY_PASS.{agent}: {name} path leaves project root")
+                            errors.append(f"{label}: {name} path leaves project root")
                             continue
                         expected_item = {
                             "id": name, "path": point_path,
@@ -698,13 +851,20 @@ def validate_visible(root: Path, data: dict, registry: Path,
                             "version": str(entry.get("version")),
                         }
                         if expected_item not in inventory or expected_item not in selected:
-                            errors.append(f"DISCOVERY_PASS.{agent}: selected inventory does not "
+                            errors.append(f"{label}: selected inventory does not "
                                           f"match {name} id/path/hash/version")
 
                 behavior = outcomes.get("BEHAVIOR_PASS", {})
                 cases = behavior.get("cases", {}) if isinstance(behavior, dict) else {}
                 if behavior.get("proof_mode") != "synthetic-first":
                     errors.append("BEHAVIOR_PASS: proof_mode must be synthetic-first")
+                if receipt_schema == 3:
+                    declared_scope = acceptance.get("behavior_scope")
+                    if declared_scope != "shared":
+                        errors.append("acceptance.behavior_scope must be shared")
+                    if behavior.get("runtime_scope") != declared_scope:
+                        errors.append("BEHAVIOR_PASS.runtime_scope must match "
+                                      "acceptance.behavior_scope")
                 for case in BEHAVIOURAL_COVERAGE:
                     result = cases.get(case, {}) if isinstance(cases, dict) else {}
                     if result.get("result") != "PASS":
