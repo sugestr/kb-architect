@@ -4,7 +4,9 @@
 Version 6 uses the visible ``PROJECT_ROLES.json``. Existing
 ``.kb-skills.json`` schema 1/2 registries remain readable during interactive
 migration; they are reported as legacy, not rejected merely for being old.
-The checker reads files and Git metadata but never executes project code.
+The checker reads files and Git metadata.  It executes the one declared narrow
+project check only with the explicit ``--execute-project-check`` acceptance flag;
+ordinary validation never runs project code.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 from typing import Optional
@@ -36,6 +39,8 @@ LIGHT_STOP_COVERAGE = {"authority-stop", "source-conflict"}
 ACCEPTANCE_OUTCOMES = {
     "STRUCTURAL_PASS", "DISCOVERY_PASS", "BEHAVIOR_PASS", "OWNER_ACCEPTED",
 }
+LIGHT_PROTOCOLS = {"kb-role-acceptance/v1", "kb-role-acceptance/v2"}
+CURRENT_LIGHT_PROTOCOL = "kb-role-acceptance/v2"
 
 # Exact public 6.1.4 runner. Schema 4 is legacy-readable only with this released
 # implementation, never with an arbitrary historical or project-provided hash.
@@ -844,7 +849,7 @@ def acceptance_schema_hint(root: Path, data: dict) -> int | None:
     acceptance = data.get("acceptance")
     if not isinstance(acceptance, dict):
         return None
-    if acceptance.get("protocol") == "kb-role-acceptance/v1":
+    if acceptance.get("protocol") in LIGHT_PROTOCOLS:
         return 6
     status = acceptance.get("status")
     raw = acceptance.get("receipt")
@@ -869,10 +874,19 @@ def acceptance_schema_hint(root: Path, data: dict) -> int | None:
 
 def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dict],
                             agents: list[str]) -> list[str]:
-    """Validate one compact, non-self-referential project acceptance record."""
+    """Validate one compact project acceptance record and its run locators.
+
+    The manifest is not an execution engine.  Protocol v2 therefore binds PASS
+    claims to the external command/model runs that produced them; the explicit
+    CLI execution gate below independently runs the narrow project command while
+    a candidate manifest is being finalized.
+    """
     errors: list[str] = []
     acceptance = data.get("acceptance", {})
     accepted = acceptance.get("status") == "accepted"
+    protocol = acceptance.get("protocol")
+    if protocol == "kb-role-acceptance/v1" and not accepted:
+        errors.append("new compact candidates require kb-role-acceptance/v2 run locators")
     live = acceptance.get("live_test")
     if not isinstance(live, dict) or live.get("status") not in {"PASS", "PENDING"}:
         errors.append("light acceptance needs live_test status PASS or PENDING")
@@ -890,6 +904,11 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
             errors.append("live_test must cover selection, recall and one stop/conflict case")
         if not live.get("summary"):
             errors.append("live_test PASS requires a short result summary")
+        if protocol == CURRENT_LIGHT_PROTOCOL:
+            observation = live.get("observation")
+            if not isinstance(observation, dict) or not observation.get("observed_at") \
+                    or not observation.get("run_id"):
+                errors.append("live_test PASS requires observed_at and external run_id")
 
     project_check = acceptance.get("project_check")
     if not isinstance(project_check, dict) or project_check.get("status") not in {
@@ -907,6 +926,11 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
     if project_check.get("status") == "PASS" \
             and project_check.get("command") not in declared_commands:
         errors.append("project_check must bind one declared project validator command")
+    if project_check.get("status") == "PASS" and protocol == CURRENT_LIGHT_PROTOCOL:
+        execution = project_check.get("execution")
+        if not isinstance(execution, dict) or not execution.get("executed_at") \
+                or not execution.get("run_id") or execution.get("exit_code") != 0:
+            errors.append("project_check PASS requires executed_at, run_id and exit_code 0")
 
     bindings = acceptance.get("accepted_skill_sha256")
     if not isinstance(bindings, dict):
@@ -949,8 +973,58 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
     return errors
 
 
+def registry_changed_from_head(root: Path, registry: Path) -> bool:
+    """Return whether the candidate manifest differs from committed HEAD."""
+    try:
+        relative = registry.relative_to(root).as_posix()
+    except ValueError:
+        return True
+    head = git(root, "rev-parse", "--verify", "HEAD^{commit}")
+    if head.returncode:
+        return True
+    tracked = git(root, "ls-files", "--error-unmatch", "--", relative)
+    if tracked.returncode:
+        return True
+    changed = git(root, "diff", "--quiet", "HEAD", "--", relative)
+    return changed.returncode != 0
+
+
+def execute_compact_project_check(root: Path, data: dict, timeout: int,
+                                  errors: list[str], notes: list[str]) -> None:
+    """Run the single v2 project check explicitly, without a shell."""
+    acceptance = data.get("acceptance")
+    if not isinstance(acceptance, dict) \
+            or acceptance.get("protocol") != CURRENT_LIGHT_PROTOCOL:
+        errors.append("--execute-project-check requires kb-role-acceptance/v2")
+        return
+    project_check = acceptance.get("project_check")
+    if not isinstance(project_check, dict) or project_check.get("status") != "PASS":
+        errors.append("--execute-project-check requires project_check status PASS")
+        return
+    command = project_check.get("command")
+    try:
+        argv = shlex.split(command) if isinstance(command, str) else []
+    except ValueError as exc:
+        errors.append(f"project_check command is not parseable: {exc}")
+        return
+    if not argv:
+        errors.append("project_check command is empty")
+        return
+    try:
+        result = subprocess.run(argv, cwd=root, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        errors.append(f"PROJECT_CHECK_EXECUTION_FAILED: {exc}")
+        return
+    if result.returncode:
+        errors.append(f"PROJECT_CHECK_EXECUTION_FAILED: exit {result.returncode}")
+    else:
+        notes.append("PROJECT_CHECK_EXECUTED_PASS: explicit narrow validator exit 0")
+
+
 def validate_visible(root: Path, data: dict, registry: Path,
-                     runtime_roots: list[Path] | None = None
+                     runtime_roots: list[Path] | None = None,
+                     execute_project_check: bool = False,
+                     project_check_timeout: int = 300,
                      ) -> tuple[list[str], list[str], int]:
     errors: list[str] = []
     notes: list[str] = []
@@ -1215,8 +1289,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
         candidate_mode = acceptance_status == "candidate"
         invalid_status = not isinstance(acceptance_status, str) \
             or acceptance_status not in ("candidate", "accepted")
-        light_mode = isinstance(acceptance, dict) \
-            and acceptance.get("protocol") == "kb-role-acceptance/v1"
+        protocol = acceptance.get("protocol") if isinstance(acceptance, dict) else None
+        light_mode = protocol in LIGHT_PROTOCOLS
         receipt_supplied = isinstance(acceptance, dict) and bool(acceptance.get("receipt"))
         pre_owner_mode = candidate_mode or (invalid_status and (receipt_supplied or light_mode))
         if not accepted_mode:
@@ -1225,6 +1299,21 @@ def validate_visible(root: Path, data: dict, registry: Path,
             errors.append("ROLE_ACCEPTANCE_STATUS_INVALID: status must be candidate or accepted")
         if light_mode and (accepted_mode or pre_owner_mode):
             errors.extend(light_acceptance_errors(root, data, skill_by_name, agents))
+            if protocol == "kb-role-acceptance/v1" and accepted_mode:
+                notes.append("ROLE_ACCEPTANCE_V1_LEGACY_ATTESTED: accepted without v2 "
+                             "external run locators; patch builds do not reopen it")
+            if protocol == CURRENT_LIGHT_PROTOCOL:
+                project_check = acceptance.get("project_check", {})
+                check_pass = isinstance(project_check, dict) \
+                    and project_check.get("status") == "PASS"
+                changed = registry_changed_from_head(root, registry)
+                if execute_project_check:
+                    execute_compact_project_check(
+                        root, data, project_check_timeout, errors, notes)
+                elif check_pass and changed:
+                    errors.append("PROJECT_CHECK_EXECUTION_REQUIRED: candidate manifest "
+                                  "changed; rerun kb_skills.py with "
+                                  "--execute-project-check")
         if not light_mode and (accepted_mode or pre_owner_mode):
             receipt_raw = acceptance.get("receipt")
             receipt_path = (root / str(receipt_raw or "")).resolve(strict=False)
@@ -1525,7 +1614,9 @@ def choose_registry(root: Path, explicit: Path | None) -> Path:
     return visible
 
 
-def validate(root: Path, registry: Path, runtime_roots: list[Path] | None = None
+def validate(root: Path, registry: Path, runtime_roots: list[Path] | None = None,
+             execute_project_check: bool = False,
+             project_check_timeout: int = 300,
              ) -> tuple[list[str], list[str], int]:
     if not registry.exists():
         observed = project_skills(root)
@@ -1547,11 +1638,14 @@ def validate(root: Path, registry: Path, runtime_roots: list[Path] | None = None
             return ["superseded role registry target leaves project root"], [], 0
         if target == registry.resolve():
             return ["superseded role registry points to itself"], [], 0
-        errors, notes, count = validate(root, target, runtime_roots)
+        errors, notes, count = validate(
+            root, target, runtime_roots, execute_project_check,
+            project_check_timeout)
         return errors, [f"ROLE_REGISTRY_MOVED: {registry.name} -> "
                         f"{target.relative_to(root)}"] + notes, count
     if registry.name == VISIBLE_REGISTRY or "role_posture" in data:
-        return validate_visible(root, data, registry, runtime_roots)
+        return validate_visible(root, data, registry, runtime_roots,
+                                execute_project_check, project_check_timeout)
     return validate_legacy(root, data, registry)
 
 
@@ -1561,6 +1655,12 @@ def main() -> int:
     parser.add_argument("--registry", type=Path)
     parser.add_argument("--runtime-root", action="append", default=[], type=Path,
                         help="additional active skill root to inventory for collisions")
+    parser.add_argument(
+        "--execute-project-check", action="store_true",
+        help="explicitly execute the one v2 narrow project validator without a shell")
+    parser.add_argument(
+        "--project-check-timeout", type=int, default=300,
+        help="seconds allowed for --execute-project-check (default: 300)")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     registry = choose_registry(root, args.registry)
@@ -1568,7 +1668,9 @@ def main() -> int:
     runtime_roots.extend(path.expanduser().resolve() for path in args.runtime_root)
     # Preserve order while making the stated coverage exact.
     runtime_roots = list(dict.fromkeys(runtime_roots))
-    errors, notes, count = validate(root, registry, runtime_roots)
+    errors, notes, count = validate(
+        root, registry, runtime_roots, args.execute_project_check,
+        args.project_check_timeout)
     for note in notes:
         print("OK:", note)
     print(f"coverage: registry={registry} declared={count} errors={len(errors)}")

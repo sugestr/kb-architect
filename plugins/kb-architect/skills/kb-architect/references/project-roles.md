@@ -45,10 +45,10 @@ version/commit → fresh-context acceptance. Community-метод принима
 
 ## Проверяемая готовность без отдельной бюрократии
 
-Новый проект хранит короткую приёмку прямо в `PROJECT_ROLES.json` по протоколу
-`kb-role-acceptance/v1`. Отдельные `ROLE_ACCEPTANCE.json`, пять behavior-case,
+Новый project candidate хранит короткую приёмку прямо в `PROJECT_ROLES.json` по
+протоколу `kb-role-acceptance/v2`. Отдельные `ROLE_ACCEPTANCE.json`, пять behavior-case,
 mutation-suite и россыпь input/expected/observed receipts не требуются. Старые schema
-2–5 остаются читаемыми и не переписываются только ради нового формата.
+2–5 и accepted compact v1 остаются читаемыми: patch их не переписывает.
 
 Перед `accepted` достаточно четырёх наблюдаемых результатов:
 
@@ -57,6 +57,12 @@ mutation-suite и россыпь input/expected/observed receipts не треб�
 3. один обычный fresh-context вопрос без имени роли доказывает selection, indexed
    recall и хотя бы один реальный stop/conflict;
 4. владелец видит результат и принимает его, сохраняя честные `OPEN`.
+
+Строка `PASS` не исполняет проверку. Новый candidate один раз запускает
+`kb_skills.py --execute-project-check`; без флага изменённый manifest остаётся
+`PROJECT_CHECK_EXECUTION_REQUIRED`. Compact record хранит время, exit code и внешний
+run id. Fresh-context observation ссылается на native task/turn либо tracked evidence:
+checker проверяет связь, но не изображает model runner.
 
 Приёмка связывает только SHA-256 текущих `SKILL.md`. Owner status живёт в manifest и
 не входит в эти hashes, поэтому переход `candidate → accepted` не протухляет
@@ -105,7 +111,8 @@ route/aliases → связать роль → доказать fresh-context rec
 Заимствование редкое: owner выпускает version, потребитель фиксирует repository + exact
 pin + recovery, а изменения возвращает owner; knowledge routes остаются локальными.
 
-Проекты мигрируют по одному: source commit → candidate → один project check + один
+Проекты мигрируют по одному: source commit → candidate → один project check через
+явный execution flag + один
 живой вопрос → решение владельца → marker последним. Применение patch-сборки внутри
 той же contract line не является новой миграцией. Короткая запись описана в
 `references/migration.md`.

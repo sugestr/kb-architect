@@ -150,6 +150,62 @@ def source_bytes_at_commit(root, commit, source):
     return None, "version_source symlink chain is too deep"
 
 
+def marker_line_at_commit(root, commit, source):
+    """Return the contract line visible through ``source`` at one commit."""
+    data, error = source_bytes_at_commit(root, commit, source)
+    if error:
+        return None
+    marker = marker_from_bytes(data)
+    if not marker:
+        return None
+    try:
+        return line_text(marker)
+    except (AttributeError, ValueError):
+        return None
+
+
+def actual_transition_parent(root, source_commit, source, from_line, to_line, marker):
+    """Find the actual parent on which the current line candidate was based.
+
+    A session-start commit may remain an ancestor after another writer advances the
+    branch.  That makes it useful provenance but no longer the exact pre-change
+    rollback promised by the compact receipt.  Check the uncommitted candidate first,
+    then the first-parent history after the recorded source.
+    """
+    head_run = git(root, "rev-parse", "HEAD")
+    if head_run.returncode:
+        return None, "cannot resolve candidate HEAD"
+    head = head_run.stdout.strip()
+    head_line = marker_line_at_commit(root, head, source)
+    expected_from = line_text(from_line) if from_line is not None else None
+    expected_to = line_text(to_line)
+    try:
+        current_line = line_text(marker)
+    except (AttributeError, ValueError):
+        return None, "current marker is not a contract line"
+
+    # Before commit, HEAD itself is the only honest candidate parent.
+    if head_line != current_line:
+        if head_line == expected_from and current_line == expected_to:
+            return head, None
+        return None, "working-tree marker is not based on the declared from_line"
+
+    history = git(root, "rev-list", "--first-parent", "--reverse",
+                  f"{source_commit}..HEAD")
+    if history.returncode:
+        return None, "cannot inspect contract-line transition history"
+    for candidate in history.stdout.splitlines():
+        parent_run = git(root, "rev-parse", f"{candidate}^1")
+        if parent_run.returncode:
+            continue
+        parent = parent_run.stdout.strip()
+        before = marker_line_at_commit(root, parent, source)
+        after = marker_line_at_commit(root, candidate, source)
+        if before == expected_from and after == expected_to:
+            return parent, None
+    return None, "cannot locate the declared contract-line transition after source commit"
+
+
 def _evidence_errors(root, value, label):
     if not isinstance(value, list) or not value:
         return [f"{label} has no evidence"]
@@ -227,6 +283,13 @@ def application_receipt_errors(root, marker):
                     if from_line is not None and (not old_marker
                                                   or line_text(old_marker) != from_line):
                         errors.append("compact application source marker does not match from_line")
+                    transition_parent, transition_error = actual_transition_parent(
+                        root, commit, locator, from_line, to_line, marker)
+                    if transition_error:
+                        errors.append(transition_error)
+                    elif transition_parent != commit:
+                        errors.append("compact application source commit is not the actual "
+                                      f"candidate parent; expected {transition_parent}")
         owner = application.get("owner")
         if not isinstance(owner, dict) or not owner.get("accepted_by") \
                 or not owner.get("accepted_at"):

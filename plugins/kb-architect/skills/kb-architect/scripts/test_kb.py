@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.2.0"
+          and data.get("baseline_version") == "6.2.1"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -688,15 +688,25 @@ def compact_role_fixture(accepted=False):
     skill_hash = hashlib.sha256(open(
         os.path.join(d, "skills", "domain-auditor", "SKILL.md"), "rb").read()).hexdigest()
     registry["acceptance"] = {
-        "protocol": "kb-role-acceptance/v1",
+        "protocol": "kb-role-acceptance/v2",
         "status": "accepted" if accepted else "candidate",
         "accepted_skill_sha256": {"domain-auditor": skill_hash},
-        "project_check": {"status": "PASS", "command": "python3 tests.py"},
+        "project_check": {
+            "status": "PASS", "command": "python3 tests.py",
+            "execution": {
+                "executed_at": "2026-08-29T00:00:00Z", "exit_code": 0,
+                "run_id": "fixture-project-check-run",
+            },
+        },
         "live_test": {
             "status": "PASS", "agent": "codex", "fresh_context": True,
             "unforced": True,
             "covers": ["role-selection", "knowledge-recall", "authority-stop"],
             "summary": "role selected, indexed fact found, unsupported action stopped",
+            "observation": {
+                "observed_at": "2026-08-29T00:00:00Z",
+                "run_id": "fixture-fresh-context-run",
+            },
         },
         "agents": {
             "codex": {"status": "TESTED", "basis": "live_test"},
@@ -710,7 +720,10 @@ def compact_role_fixture(accepted=False):
     }
     with open(registry_path, "w", encoding="utf-8") as f:
         json.dump(registry, f)
-    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json"], check=True)
+    with open(os.path.join(d, "tests.py"), "w", encoding="utf-8") as f:
+        f.write("raise SystemExit(0)\n")
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "tests.py"],
+                   check=True)
     return d
 
 
@@ -963,12 +976,15 @@ def knowledge_index():
     }
 
 
-def run_skills(root, home=None):
+def run_skills(root, home=None, execute_project_check=False):
     env = dict(os.environ)
     if home:
         env["HOME"] = home
+    command = [sys.executable, os.path.join(HERE, "kb_skills.py"), root]
+    if execute_project_check:
+        command.append("--execute-project-check")
     p = subprocess.run(
-        [sys.executable, os.path.join(HERE, "kb_skills.py"), root],
+        command,
         capture_output=True, text=True, timeout=120, env=env)
     return Vyvod(p.stdout + p.stderr, p.returncode)
 
@@ -1209,9 +1225,13 @@ def t_capability_registry_expresses_role_not_only_location():
               "role-selection", "knowledge-recall", "authority-stop"}
           and all(key in scenario for key in
                   ("accepted_end_to_end_bytes", "route_files"))
-          and acceptance.get("protocol") == "kb-role-acceptance/v1"
+          and acceptance.get("protocol") == "kb-role-acceptance/v2"
           and acceptance["live_test"].get("fresh_context") is True
           and acceptance["live_test"].get("unforced") is True
+          and set(acceptance["live_test"].get("observation", {})) == {
+              "observed_at", "run_id"}
+          and set(acceptance["project_check"].get("execution", {})) == {
+              "executed_at", "exit_code", "run_id"}
           and acceptance["agents"]["codex"]["status"] == "TESTED"
           and acceptance["agents"]["claude"]["status"] == "UNKNOWN",
           out, "method stays in one SKILL; registry carries split gates and costs")
@@ -3228,6 +3248,57 @@ def t_620_release_application_binds_source_line_and_owner():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_621_compact_application_requires_the_actual_candidate_parent():
+    """An older ancestor is rejected after another writer advances main."""
+    import json
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.email",
+                    "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "Fixture"], check=True)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "session source"], check=True)
+    session_source = subprocess.run(
+        ["git", "-C", d, "rev-parse", "HEAD"], capture_output=True,
+        text=True, check=True).stdout.strip()
+    with open(os.path.join(d, "unrelated.txt"), "w", encoding="utf-8") as f:
+        f.write("concurrent work\n")
+    subprocess.run(["git", "-C", d, "add", "unrelated.txt"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "concurrent"], check=True)
+    actual_parent = subprocess.run(
+        ["git", "-C", d, "rev-parse", "HEAD"], capture_output=True,
+        text=True, check=True).stdout.strip()
+    with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write("# rules\n\nkb_standard_version: 6.2\n")
+
+    def write_receipt(source):
+        with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump({"schema": 2, "application": {
+                "from_line": "6.1", "to_line": "6.2", "status": "finalized",
+                "source": {"commit": source, "version_source": "CLAUDE.md"},
+                "owner": {"accepted_by": "fixture owner",
+                          "accepted_at": "2026-08-29"},
+                "finalized_at": "2026-08-29", "open": [],
+            }}, f)
+        subprocess.run(["git", "-C", d, "add", "CLAUDE.md",
+                        "KB_RELEASE_APPLICATION.json"], check=True)
+
+    write_receipt(session_source)
+    stale = run("kb_apply.py", d)
+    write_receipt(actual_parent)
+    exact = run("kb_apply.py", d)
+    out = Vyvod("\n--- stale ancestor ---\n" + stale
+                + "\n--- actual parent ---\n" + exact, exact.code)
+    check("compact application distinguishes session snapshot from candidate parent",
+          stale.code == 1
+          and "source commit is not the actual candidate parent" in stale
+          and actual_parent in stale
+          and exact.code == 0 and "APPLICATION_RECEIPT_OK" in exact,
+          out, "concurrent commits are inspected; rollback cannot reset over newer work")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def t_612_release_application_follows_safe_boot_symlink():
     """29.08 Foxio: recommended AGENTS.md -> CLAUDE.md failed source receipt."""
     import json
@@ -4296,7 +4367,7 @@ def t_620_owner_transition_does_not_invalidate_role_behavior():
     with open(path, "w", encoding="utf-8") as f:
         json.dump(registry, f)
     subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json"], check=True)
-    accepted = run_skills(d)
+    accepted = run_skills(d, execute_project_check=True)
     out = Vyvod(candidate + "\n--- accepted ---\n" + accepted, accepted.code)
     check("candidate to accepted does not rerun or invalidate role behavior",
           candidate.code == 1 and "ROLE_ACCEPTANCE_REQUIRED" in candidate
@@ -4306,8 +4377,63 @@ def t_620_owner_transition_does_not_invalidate_role_behavior():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_621_compact_acceptance_executes_the_declared_check_before_commit():
+    """A typed PASS previously hid a project command that actually failed."""
+    import json
+    d = compact_role_fixture(accepted=True)
+    declared_only = run_skills(d)
+    executed = run_skills(d, execute_project_check=True)
+    with open(os.path.join(d, "tests.py"), "w", encoding="utf-8") as f:
+        f.write("raise SystemExit(2)\n")
+    subprocess.run(["git", "-C", d, "add", "tests.py"], check=True)
+    failed = run_skills(d, execute_project_check=True)
+    out = Vyvod("\n--- declared ---\n" + declared_only
+                + "\n--- executed ---\n" + executed
+                + "\n--- failing command ---\n" + failed, failed.code)
+    check("compact acceptance cannot turn a declared PASS into execution proof",
+          declared_only.code == 1
+          and "PROJECT_CHECK_EXECUTION_REQUIRED" in declared_only
+          and executed.code == 0
+          and "PROJECT_CHECK_EXECUTED_PASS" in executed
+          and failed.code == 1
+          and "PROJECT_CHECK_EXECUTION_FAILED: exit 2" in failed,
+          out, "one explicit pre-commit runner replaces a self-asserted command result")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_621_untracked_compact_manifest_still_requires_execution():
+    """A first-adoption manifest is new, so Git diff alone cannot see its bytes."""
+    d = compact_role_fixture(accepted=True)
+    subprocess.run(["git", "-C", d, "reset", "-q", "--", "PROJECT_ROLES.json"],
+                   check=True)
+    out = run_skills(d)
+    check("untracked compact manifest still requires explicit project execution",
+          out.code == 1 and "PROJECT_CHECK_EXECUTION_REQUIRED" in out,
+          out, "first adoption cannot bypass the v2 execution gate")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_621_accepted_v1_compact_receipt_remains_legacy_readable():
+    """Patch 6.2.1 must not reopen projects already accepted on contract line 6.2."""
+    import json
+    d = compact_role_fixture(accepted=True)
+    path = os.path.join(d, "PROJECT_ROLES.json")
+    registry = json.load(open(path, encoding="utf-8"))
+    registry["acceptance"]["protocol"] = "kb-role-acceptance/v1"
+    registry["acceptance"]["project_check"].pop("execution")
+    registry["acceptance"]["live_test"].pop("observation")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json"], check=True)
+    out = run_skills(d)
+    check("accepted compact v1 stays readable without patch remigration",
+          out.code == 0 and "ROLE_ACCEPTANCE_V1_LEGACY_ATTESTED" in out,
+          out, "new candidates use v2; accepted v1 remains an explicit legacy attestation")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def t_620_compact_application_uses_contract_line_not_patch_build():
-    """A 6.2 project stays accepted when the installed exact build is 6.2.0."""
+    """A 6.2 project stays accepted when the installed exact build is 6.2.1."""
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
@@ -4337,7 +4463,7 @@ def t_620_compact_application_uses_contract_line_not_patch_build():
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("contract line 6.2 accepts exact installed build 6.2.0 without remigration",
+    check("contract line 6.2 accepts exact installed build 6.2.1 without remigration",
           p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
           and "PROJECT_LINE_OK" in p.stdout,
           out, "patch build is delivery, not a new project migration")

@@ -73,13 +73,18 @@
   },
   "acceptance": {
     "status": "candidate",
-    "protocol": "kb-role-acceptance/v1",
+    "protocol": "kb-role-acceptance/v2",
     "accepted_skill_sha256": {
       "research-adviser": "replace-after-the-live-test"
     },
     "project_check": {
       "status": "PENDING",
-      "command": "python3 skills/research-adviser/tests/run.py"
+      "command": "python3 skills/research-adviser/tests/run.py",
+      "execution": {
+        "executed_at": null,
+        "exit_code": null,
+        "run_id": null
+      }
     },
     "live_test": {
       "status": "PENDING",
@@ -87,7 +92,11 @@
       "fresh_context": true,
       "unforced": true,
       "covers": ["role-selection", "knowledge-recall", "authority-stop"],
-      "summary": "Replace with one short observed result"
+      "summary": "Replace with one short observed result",
+      "observation": {
+        "observed_at": null,
+        "run_id": null
+      }
     },
     "agents": {
       "codex": {"status": "TESTED", "basis": "live_test"},
