@@ -43,71 +43,56 @@ version/commit → fresh-context acceptance. Community-метод принима
 `quality_owner` отвечает за метод; `kb-architect` — gate/receipt/rollback; владелец —
 за acceptance/authority. `packaging-only` review не получает профессиональный `PASS`.
 
-## Проверяемая готовность
+## Проверяемая готовность без отдельной бюрократии
 
-Schema 5 `ROLE_ACCEPTANCE.json` разделяет четыре исхода; schema 2/3/4 читаются как
-legacy до следующей project migration:
+Новый проект хранит короткую приёмку прямо в `PROJECT_ROLES.json` по протоколу
+`kb-role-acceptance/v1`. Отдельные `ROLE_ACCEPTANCE.json`, пять behavior-case,
+mutation-suite и россыпь input/expected/observed receipts не требуются. Старые schema
+2–5 остаются читаемыми и не переписываются только ради нового формата.
 
-1. `STRUCTURAL_PASS` — tracked canon, portable frontmatter, общий Agent Skills и
-   project validators, knowledge wiring, hashes и static costs;
-2. `DISCOVERY_PASS` — для Claude и Codex inventory и выбранные `id/path/hash/version`,
-   unforced fresh context и `new-session` boundary;
-3. `BEHAVIOR_PASS` — synthetic-first `role-selection`, `knowledge-recall`,
-   `authority-stop`, `source-conflict`, `context-cost`; private real-data proof без
-   authority остаётся `UNKNOWN`;
-4. `OWNER_ACCEPTED` — отдельная post-results приёмка владельца.
+Перед `accepted` достаточно четырёх наблюдаемых результатов:
 
-`DISCOVERY_PASS` обязателен каждому агенту. `behavior_scope: shared` означает один
-suite; расхождение среды переоткрывает acceptance как `UNKNOWN`, а не создаёт второй
-набор правил.
+1. `kb_skills.py` видит один Git-канон роли, knowledge routes и бюджет;
+2. один узкий project validator проходит;
+3. один обычный fresh-context вопрос без имени роли доказывает selection, indexed
+   recall и хотя бы один реальный stop/conflict;
+4. владелец видит результат и принимает его, сохраняя честные `OPEN`.
 
-До owner gate checker проверяет candidate receipt: `PASS` проходит gate,
-`PENDING/UNKNOWN` видим, `ROLE_ACCEPTANCE_REQUIRED` блокирует финал. Новый candidate
-требует schema 5. Только `candidate`/`accepted`; иной статус диагностируется и не
-скрывает receipt.
+Приёмка связывает только SHA-256 текущих `SKILL.md`. Owner status живёт в manifest и
+не входит в эти hashes, поэтому переход `candidate → accepted` не протухляет
+собственный тест. Git commit уже связывает остальные bytes и даёт rollback.
 
-Schema-5 case получает PASS только с разными tracked+hashed input/expected/observed и
-одним tracked harness. `kb_behavior.py <root> --execute` записывает
-exit/time/case ids/hashes; `kb_skills.py` код проекта не запускает, а сверяет receipt.
-Ручной JSON или отсутствующий harness дают `BEHAVIOR_EVIDENCE_UNEXECUTED`.
+Хотя бы один агент получает `TESTED`. Другой агент может получить `INHERITED`, если
+его discovery ведёт к тем же canonical bytes, wiring/config не менялись, а способность
+этого runtime уже доказана; либо честный `UNKNOWN` с причиной. Новый model-turn нужен
+при изменении wiring, конфигурации, видимого контента или при реальном расхождении, а
+не в каждом проекте.
 
-Каждый case объявляет harmful и neutral `replace-text` одной hash-bound цели. Runner
-проверяет их во временной копии тем же harness/argv. Harmful обязан дать exit `10` и
-structured results, где красный только этот case; neutral — exit `0` и все зелёные.
-Parser error, timeout, self-mutation, общий red и детектор любого изменения не
-подходят: `BEHAVIOR_EVIDENCE_INADEQUATE`. Inspection и остальные gates отдельны.
+Полный `kb_behavior.py`, mutation controls, per-case attribution и повтор по всем
+runtimes — maintainer/deep-audit инструменты. Проект включает их только по найденному
+риску, а не ради финализации. Core test suite выполняется при выпуске `kb-architect`;
+проект не повторяет его.
 
-Schema 5 запрещает host-absolute `harness.argv`: project paths относительны, locator
-установленного ядра runner передаёт как `KB_ARCHITECT_SCRIPTS`.
-
-Ссылка, symlink или список test names доказывают только structure. Метод, trigger,
-wiring, quality review, дерево роли или budget change протухляют acceptance. Команды
-validator имеют один канон в `PROJECT_ROLES.json`; boot указывает туда и не повторяет
-список.
-
-`kb_skills.py` проверяет active roots `~/.codex/skills`, `~/.claude/skills`,
-`~/.agents/skills` и дополнительные `--runtime-root`. Одинаковое имя при разных hash
-— stop. Retired copy вне active roots не считается проверенной.
+`kb_skills.py` по-прежнему проверяет active roots и останавливается при одноимённой
+активной копии с другими bytes. Retired copy вне active roots не считается активной.
 
 ## Стоимость
 
-- `accepted_role_entry_bytes` — обязательный вход роли;
-- `accepted_static_route_bytes` — entry, существующие supporting-файлы, на которые
-  прямо ссылается `SKILL.md`, и объявленные knowledge `route_files`;
-- `accepted_control_plane_bytes` — `PROJECT_ROLES.json` и `KNOWLEDGE_INDEX.json`;
-- `accepted_end_to_end_bytes` — сумма static route и control plane;
+- `accepted_end_to_end_bytes` — один бюджет полного обычного маршрута: role entry,
+  прямо связанные supporting-файлы, knowledge routes и control plane;
 - actual receipt — input/cached-input/output/orchestration tokens либо `UNKNOWN`.
 
-Обязателен `all_roles_scenario`; 8 КиБ — review threshold, `accepted_*` — budget с
-headroom. Рост даёт `OPTIMIZATION_REQUIRED`; экономия с потерей recall/stop отклоняется.
-Tree hash доказывает integrity, не автозагрузку tests/evidence.
+Обязателен `all_roles_scenario`; 8 КиБ — review threshold, единый end-to-end budget
+получает headroom. Рост даёт `OPTIMIZATION_REQUIRED`; экономия с потерей recall/stop
+отклоняется. Детальная разбивка печатается диагностически, но проект не переписывает
+четыре числа после каждой нормальной правки.
 
 Вынос знания из толстой роли атомарен: создать knowledge canon → добавить
 route/aliases → связать роль → доказать fresh-context recall → удалить копию.
-При legacy-миграции для каждой роли запиши один честный исход boundary review:
-`method-only`, extraction применён, `deferred` с условием возврата или `declined`.
-Поле — `ROLE_QUALITY_REVIEW.role_knowledge_boundary`; `deferred` требует
-`return_condition` и safe mode. Semantic classifier это решение не заменяет.
+Для каждой роли компактный `quality` в manifest называет владельца метода, состояние
+профессионального review, `knowledge_boundary` и причину. `deferred` требует условие
+возврата. Отдельный quality-файл нужен только если предметной команде действительно
+нужен подробный документ, а не для удовлетворения ядра.
 
 Шаблоны лежат в `assets/templates/`; канонические проверки — `kb_index.py` и
 `kb_skills.py`.
@@ -120,8 +105,10 @@ route/aliases → связать роль → доказать fresh-context rec
 Заимствование редкое: owner выпускает version, потребитель фиксирует repository + exact
 pin + recovery, а изменения возвращает owner; knowledge routes остаются локальными.
 
-Проекты мигрируют по одному: source snapshot → candidate → четыре исхода → post-results
-решение владельца → marker последним. Полный ledger описан в `references/migration.md`.
+Проекты мигрируют по одному: source commit → candidate → один project check + один
+живой вопрос → решение владельца → marker последним. Применение patch-сборки внутри
+той же contract line не является новой миграцией. Короткая запись описана в
+`references/migration.md`.
 Индекс и его recovery pointers должны быть Git-tracked.
 
 Успех измеряется не красотой схемы: агент быстрее выбирает роль, без подсказки находит

@@ -1,93 +1,69 @@
-# Применение выпуска без самоудостоверяющего marker
+# Применение contract line без повторной миграции на patch
 
 Этот reference читают только когда `kb_apply.py` вернул `NEEDS_APPLICATION` или
-`APPLICATION_UNPROVEN`. Доставка файлов скилла и миграция проекта — разные результаты.
-`kb_standard_version` является финальным указателем, а не доказательством сделанной
-работы.
+`APPLICATION_UNPROVEN`. Доставка build и применение contract line — разные результаты.
 
-## Режим задачи
+## Версия состоит из двух смыслов
 
-- **«Обнови скилл базы знаний»** — action-first: после `kb_apply.py` выполняй
-  обратимые локальные шаги и commits ниже до owner gate. `Проверь`/`аудит`/
-  `read-only`/`только отчёт` — диагностика без записи.
-- Переиспользуй валидные snapshot, ledger, candidate changes, tests и receipts: сверь
-  commit/hash и продолжи с первого незакрытого шага без широкого повторного аудита.
-- Явный `to_version` владельца/receipt ограничивает цикл: новая installed version
-  его не расширяет. Проверяй цель через
-  `kb_apply.py <root> --target-version <to_version>`; остальное — следующая дельта.
+- `kb_standard_version: 6.2` — принятая проектом **contract line**;
+- metadata `6.2.0`, `6.2.1` — точная сборка установленного инструмента.
 
-Предметный выбор, post-results acceptance, secrets/private runtime, внешнее действие
-и push/publication сохраняют отдельную authority.
+Patch внутри линии обновляет tool/docs и не переоткрывает роли, owner acceptance или
+миграцию. Новый project gate появляется только у явно выпущенной contract line.
+`kb_apply.py` применяет текущий contract напрямую: проект не воспроизводит историю всех
+patch-релизов и не ведёт строку ledger на каждый из них.
 
-## 1. До первой записи
+## Короткий цикл
 
-В чистом или честно описанном Git checkout зафиксируй:
+1. До первой записи сохранить exact pre-change Git commit и файл, где прочитан marker.
+   Для tracked-only проекта этот commit уже является rollback; второй checkout не нужен.
+2. Применить только дельту новой contract line. Не переделывать то, что уже удовлетворяет
+   текущему контракту, и не переснимать действующие доказательства без изменившегося
+   смысла, wiring или bytes роли.
+3. Запустить только project checks, способные изменить решение. Для роли обычно это
+   `kb_skills.py`, один узкий validator и один обычный fresh-context вопрос без имени
+   роли, который проверяет selection, indexed recall и один stop/conflict.
+4. Показать владельцу содержательный diff, реальные `PASS/FAIL/UNKNOWN`, известные
+   `OPEN` и rollback. Предметная корректность роли обсуждается столько, сколько нужно;
+   служебная финализация не должна занимать основную работу.
+5. После post-results acceptance записать одну короткую schema-2 квитанцию, поставить
+   marker contract line, сделать точечный commit и — только при отдельной authority — push.
 
-- exact commit/ref до миграции;
-- project-relative файл, где прочитан прежний marker, его SHA-256 и прежнюю версию;
-- полный диапазон выпусков `(from_version, to_version]`, который показал `kb_apply.py`;
-- текущие проверки, незакоммиченные изменения и authority задачи.
+## Короткая квитанция
 
-Создай незавершённый `KB_RELEASE_APPLICATION.json` из
-`assets/templates/release-application.json`, но не ставь `finalized` и не повышай marker.
-Source commit должен оставаться доступным предком итогового checkout. Если marker раньше
-не было, сначала восстанови его по истории; не назначай прошлую версию на глаз.
-Если locator — tracked относительный symlink вроде `AGENTS.md -> CLAUDE.md`, записывай
-именно locator и hash прочитанных target bytes: checker безопасно разыменует его внутри
-того же source commit и запретит absolute/escaping/looping target.
+`KB_RELEASE_APPLICATION.json` schema 2 хранит один текущий переход:
 
-Tracked-only candidate живёт в текущем checkout: exact pre-change commit уже rollback,
-поэтому второй каталог/ветка не нужны. Worktree нужен для реальной параллельной записи;
-Keychain, MCP, AWS и другое состояние вне Git — для отдельного staged cutover.
+```json
+{
+  "schema": 2,
+  "application": {
+    "from_line": "6.1",
+    "to_line": "6.2",
+    "status": "finalized",
+    "source": {"commit": "exact-pre-change-commit", "version_source": "CLAUDE.md"},
+    "owner": {"accepted_by": "owner", "accepted_at": "ISO-8601"},
+    "finalized_at": "ISO-8601",
+    "open": []
+  }
+}
+```
 
-Для нового проекта допустим первый элемент `kind: initial-adoption`,
-`from_version: null`: source snapshot доказывает отсутствие marker, а ledger содержит
-только принятую текущую редакцию. Это не заставляет новый проект разбирать всю историю.
+Git commit является source и историей старых receipts. Поэтому schema 2 не дублирует
+ref + hash, release rows, evidence paths и один owner gate в нескольких файлах. `OPEN`
+не блокирует структурную миграцию, если владелец принял безопасный текущий режим.
 
-## 2. Один ledger на весь диапазон
+## Что не входит в обычную миграцию
 
-На каждую строку release history запиши ровно один исход:
+- full core suite `kb-architect` — release gate самого скилла;
+- повторный model-turn Claude/Codex при тех же canonical bytes и неизменном wiring;
+- пять искусственных behavior-case, mutation suite и per-case hash receipts;
+- предметное исследование, не нужное для изменения структуры;
+- новый acceptance только потому, что вышел patch той же линии.
 
-- `applied` — изменение применено и названо evidence;
-- `deferred` — сознательно отложено, записаны условие возврата и безопасный текущий режим;
-- `declined` — владелец отказался, записаны причина и последствия;
-- `not-applicable` — проверена неприменимость к этому проекту;
-- `tool-inherited` — изменение относится только к установленному инструменту и
-  подтверждено его тестом/версией.
+Эти проверки допустимы при найденном риске или специальном аудите. Их отсутствие не
+называется доказательством того, чего проект не проверял.
 
-Marker одной поздней версии не закрывает промежуточные строки. Evidence — адреса
-проверяемых project receipts, diff или test output, а не фраза «сделано».
+## Authority
 
-## 3. Candidate, результаты, владелец
-
-Сначала внеси обратимый candidate и прогони применимые project tests. Покажи владельцу:
-
-- exact diff и что осталось вне scope;
-- отдельные `PASS`, `FAIL`, `UNKNOWN`, без превращения недоступного proof в PASS;
-- стоимость до/после и rollback;
-- для ролей — четыре независимых gate из `references/project-roles.md`.
-
-Только после этого получи post-results acceptance. Разрешение начать миграцию не равно
-приёмке её результата.
-
-## 4. Finalize
-
-В одном точечном project commit:
-
-1. заверши ledger и owner evidence;
-2. поставь `status: finalized` и `finalized_at`;
-3. повысь `kb_standard_version` до `to_version`;
-4. прогони `kb_apply.py <root> --target-version <to_version>`, `kb_check.py`,
-   `kb_due.py` и project tests; более новая installed version в `kb_due.py` —
-   следующая дельта, не провал этой приёмки.
-
-Для v6+ `kb_apply.py` возвращает 0 только если tracked receipt восстанавливает source,
-имеет непрерывную цепочку до marker и точный ledger всех выпусков. Неполная квитанция —
-`APPLICATION_UNPROVEN`, даже если номер уже новый.
-
-## 5. Три независимые authority
-
-Project-local commit, доставка приватного отчёта его объявленному получателю и push/
-publication во внешний remote — три разных действия. Разрешение на первое не переносится
-на второе или третье. `BLOCKED_LOCAL` не разрешает GitHub fallback. Prepared, committed,
-delivered, pushed и owner-accepted записываются разными исходами.
+Project-local commit, private report delivery и external push/publication остаются
+разными действиями. `BLOCKED_LOCAL` не разрешает public fallback.

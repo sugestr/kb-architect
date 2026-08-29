@@ -45,6 +45,14 @@ REVIEW_DAYS = 30            # журнал и вопросы: давно не р
 DATE_RE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 
 
+def contract_line(version):
+    try:
+        parts = tuple(int(value) for value in version.split("."))
+    except (AttributeError, ValueError):
+        return None
+    return parts[:2] if len(parts) >= 2 else None
+
+
 def find(root, names):
     for n in names:
         p = os.path.join(root, n)
@@ -588,18 +596,16 @@ def main():
             due.append(f"редакция контракта записана словами: «{proj_raw}» — сравнить не с чем. "
                        f"Поставь номер: «kb_standard_version: {skill_v or '<номер>'}», "
                        f"описание можно оставить рядом")
-        elif skill_v and proj_v != skill_v:
-            due.append(f"проект записан на редакцию {proj_v}, установлен скилл {skill_v} — "
+        elif skill_v and contract_line(proj_v) != contract_line(skill_v):
+            due.append(f"проект записан на contract line {proj_v}, установлен build {skill_v} — "
                        f"запусти `python3 scripts/kb_apply.py .` (он покажет, что менялось "
                        f"между ними и чего это касается здесь), примени применимое и обнови "
                        f"строку. Сама строка не двигается: она говорит, по какой редакции "
                        f"проект собран, а не какая лежит на диске — поднять её без разбора "
-                       f"значит соврать. Если текущая задача явно финализирует более ранний "
-                       f"to_version, проверь её через `kb_apply.py . --target-version "
-                       f"<to_version>`: новая installed version остаётся следующей дельтой "
-                       f"и не расширяет scope")
+                       f"значит соврать")
         elif skill_v:
-            ok.append(f"редакция контракта: {proj_v} — совпадает с установленным скиллом")
+            ok.append(f"contract line: {proj_v} — совместима с build {skill_v}; "
+                      "patch не требует миграции")
     if skill_version_now:
         # Печатается всегда, даже когда всё сходится: скилл меняется под
         # сессией молча, и «я читал этот код час назад» — не то же самое,

@@ -10,11 +10,12 @@ kb_apply.py — что новая редакция значит для ЭТОЙ 
 знаний» вызывающий агент после кода 1 продолжает обратимые локальные изменения по
 `references/migration.md`; в явном audit/read-only режиме он только сообщает итог.
 Post-results acceptance, secrets/private runtime и push остаются отдельными gates.
+Migration unit is the contract line (for example 6.2); 6.2.1 is a tool build and
+does not reopen a project accepted on 6.2.
 
 Код 1 означает `NEEDS_APPLICATION` либо `APPLICATION_UNPROVEN`: проект отстаёт
-или его marker не подтверждён полным release ledger. Это не crash, а машинно
-заметное незавершённое применение. Для редакций 6.0+ код 0 возможен только при
-валидной `KB_RELEASE_APPLICATION.json`, а не по одному номеру в правилах.
+по contract line или его 6.2+ marker не подтверждён короткой финальной квитанцией.
+Patch history не превращается в project ledger.
 
 Зачем отдельная команда. `kb_due.py` умеет сказать «проект записан на 4.0,
 установлен 4.5 — посмотри таблицу выпусков». Это верно и бесполезно:
@@ -64,6 +65,18 @@ VERSION_MARKER = re.compile(
 
 def ver_key(v):
     return tuple(int(x) for x in v.split("."))
+
+
+def contract_line(v):
+    """Return the migration line; patch builds do not create project migrations."""
+    parts = ver_key(v)
+    if len(parts) < 2:
+        raise ValueError(v)
+    return parts[:2]
+
+
+def line_text(v):
+    return ".".join(str(part) for part in contract_line(v))
 
 
 def releases_between(low, high):
@@ -175,6 +188,53 @@ def application_receipt_errors(root, marker):
         data = json.loads(kb_paths.read(path))
     except (OSError, json.JSONDecodeError) as exc:
         return [f"{APPLICATION_RECEIPT} is unreadable: {exc}"]
+    if data.get("schema") == 2:
+        application = data.get("application")
+        if not isinstance(application, dict):
+            return [f"{APPLICATION_RECEIPT} schema 2 requires one application object"]
+        errors = []
+        from_line = application.get("from_line")
+        to_line = application.get("to_line")
+        if application.get("status") != "finalized" or not application.get("finalized_at"):
+            errors.append("compact application is not finalized")
+        try:
+            if contract_line(to_line) != ver_key(to_line) \
+                    or line_text(marker) != to_line:
+                errors.append("compact application to_line does not match project line")
+            if from_line is not None and contract_line(from_line) != ver_key(from_line):
+                errors.append("compact application from_line is not a contract line")
+        except (AttributeError, ValueError):
+            errors.append("compact application has invalid from_line/to_line")
+        source = application.get("source")
+        if not isinstance(source, dict) or not source.get("commit") \
+                or not source.get("version_source"):
+            errors.append("compact application source needs commit and version_source")
+        else:
+            commit = source["commit"]
+            locator = source["version_source"]
+            if os.path.isabs(locator) or ".." in locator.replace("\\", "/").split("/"):
+                errors.append("compact application version_source leaves project root")
+            elif git(root, "rev-parse", "--verify", commit + "^{commit}").returncode:
+                errors.append("compact application source commit is unavailable")
+            elif git(root, "merge-base", "--is-ancestor", commit, "HEAD").returncode:
+                errors.append("compact application source commit is not an ancestor of HEAD")
+            else:
+                shown, source_error = source_bytes_at_commit(root, commit, locator)
+                if source_error:
+                    errors.append(source_error)
+                else:
+                    old_marker = marker_from_bytes(shown)
+                    if from_line is not None and (not old_marker
+                                                  or line_text(old_marker) != from_line):
+                        errors.append("compact application source marker does not match from_line")
+        owner = application.get("owner")
+        if not isinstance(owner, dict) or not owner.get("accepted_by") \
+                or not owner.get("accepted_at"):
+            errors.append("compact application lacks owner acceptance")
+        if not isinstance(application.get("open", []), list):
+            errors.append("compact application open must be an array")
+        return errors
+
     applications = data.get("applications")
     if data.get("schema") != 1 or not isinstance(applications, list) or not applications:
         return [f"{APPLICATION_RECEIPT} requires schema 1 and applications array"]
@@ -358,6 +418,8 @@ def main():
     try:
         target_key = ver_key(target)
         installed_key = ver_key(inst)
+        target_line = contract_line(target)
+        installed_line = contract_line(inst)
     except (AttributeError, ValueError):
         print(f"некорректная целевая редакция: {target}")
         return 2
@@ -366,38 +428,49 @@ def main():
               "эта копия не может проверить будущий contract")
         return 2
     known_targets = {version for version, _ in releases_between("0", inst)}
-    if target not in known_targets:
-        print(f"целевая редакция {target} отсутствует в release history установленного "
-              f"скилла {inst}")
+    known_lines = {contract_line(version) for version in known_targets}
+    if target not in known_targets and target_line not in known_lines:
+        print(f"целевая линия {line_text(target)} отсутствует в release history "
+              f"установленного скилла {inst}")
         return 2
     if not proj:
         print(f"Редакция проекта не записана числом{f' (записано: «{raw}»)' if raw else ''}.")
         print(f"Установлен скилл {inst}. Впиши в «Соответствие» строку")
-        print(f"«kb_standard_version: {inst}» только после release-wide ledger и приёмки —")
+        print(f"«kb_standard_version: {line_text(inst)}» только после короткой приёмки —")
         print("без исходной редакции сначала надо восстановить source snapshot.")
         return 1
-    if ver_key(proj) >= RECEIPT_REQUIRED_FROM:
-        receipt_errors = application_receipt_errors(root, proj)
-        if receipt_errors:
-            print(f"APPLICATION_UNPROVEN: marker {proj} не доказывает применение выпуска.")
-            for error in receipt_errors:
-                print("  ERROR:", error)
-            print(f"Сохрани source snapshot, полный release ledger и post-results acceptance в "
-                  f"{APPLICATION_RECEIPT}; marker не повышай до finalize.")
-            return 1
-        print(f"APPLICATION_RECEIPT_OK: {APPLICATION_RECEIPT} доказывает marker {proj}.")
-    if ver_key(proj) >= target_key:
-        if target != inst:
-            print(f"TARGET_APPLICATION_OK: marker {proj} подтверждает явно заданную "
-                  f"границу {target}.")
-            if ver_key(proj) < installed_key:
-                print(f"NEWER_INSTALLED_OUT_OF_SCOPE: {inst} — отдельная следующая дельта; "
-                      "текущую приёмку не переоткрывает.")
+    try:
+        project_line = contract_line(proj)
+    except (AttributeError, ValueError):
+        print(f"некорректная редакция проекта: {proj}")
+        return 2
+    if project_line >= target_line:
+        if project_line >= (6, 2):
+            receipt_errors = application_receipt_errors(root, proj)
+            if receipt_errors:
+                print(f"APPLICATION_UNPROVEN: линия {line_text(proj)} не имеет короткой "
+                      "финальной квитанции.")
+                for error in receipt_errors:
+                    print("  ERROR:", error)
+                return 1
+            print(f"APPLICATION_RECEIPT_OK: {APPLICATION_RECEIPT} подтверждает линию "
+                  f"{line_text(proj)}.")
+        if project_line == target_line and ver_key(proj) != target_key:
+            print(f"PROJECT_LINE_OK: проект принят на линии {line_text(proj)}; "
+                  f"сборка {target} не открывает новую миграцию.")
+        elif target != inst:
+            print(f"TARGET_APPLICATION_OK: проект на линии {line_text(proj)} уже покрывает "
+                  f"цель {line_text(target)}.")
         else:
-            print(f"проект на {proj}, установлен {inst} — применять нечего")
+            print(f"проект на линии {line_text(proj)}, установлен build {inst} — "
+                  "миграции нет")
         return 0
 
-    rows = releases_between(proj, target)
+    # A migration applies the current contract directly. Patch history is tool
+    # provenance, not a to-do list that every project must replay.
+    target_line_name = line_text(target)
+    rows = [(version, text) for version, text in releases_between("0", target)
+            if version == target_line_name]
     traits = base_traits(root)
 
     dela = []
@@ -414,15 +487,14 @@ def main():
             if value not in {"…", "..."}:
                 vozmozhnosti.append((v, value))
 
-    print(f"Проект на {proj}, цель цикла {target}, установлен скилл {inst}. "
-          f"До цели выпусков: {len(rows)}.\n")
+    print(f"Проект на линии {line_text(proj)}, цель {target_line_name}, "
+          f"установлен build {inst}.\n")
 
     if not dela:
         print("ОБЯЗАТЕЛЬНЫХ ДЕЛ НЕТ. Правки инструментов и текста уже работают,")
         print("потому что скилл установлен.\n")
     else:
-        print(f"ТРЕБУЮТ ДЕЙСТВИЯ: {len(dela)} из {len(rows)}. Остальные — правки инструментов")
-        print("и текста, они уже работают и от базы ничего не требуют.\n")
+        print(f"ТРЕБУЮТ ДЕЙСТВИЯ: {len(dela)} для линии {target_line_name}.\n")
         for k, (v, act) in enumerate(dela, 1):
             print(f"  {k}. [{v}] {act}\n")
 
@@ -439,24 +511,15 @@ def main():
         print(f"Что в этой базе вообще есть: {', '.join(hits_all)}.")
     print()
     print("─" * 70)
-    print("Дальше по порядку:")
-    print("  0. до первой проектной правки сохранить Git source snapshot и")
-    print(f"     начать полный ledger в {APPLICATION_RECEIPT};")
-    print("  1. сделать обязательные дела выше как обратимые candidate changes;")
-    print("     для tracked-only проекта rollback — exact Git source commit,")
-    print("     без второй копии дерева; внешнее состояние переключать поэтапно;")
-    print("  2. по каждому выпуску и новой возможности записать: applied /")
-    print("     deferred / declined / not-applicable / tool-inherited;")
-    print("     для возможности отдельно сохранить решение владельца;")
-    print("  3. прогнать kb_check.py и kb_due.py: они написаны новее вашей")
-    print("     редакции и найдут ошибки, которые база могла накопить под старой;")
-    print("  4. поправить найденное, каждую правку — записью в канал с адресом;")
-    print("  5. показать ledger, hashes, PASS/FAIL/UNKNOWN и rollback владельцу;")
-    print("  6. только после post-results acceptance финализировать receipt и")
-    print("     обновить kb_standard_version на " + str(target) + ".")
-    print()
-    print("От чего-то можно отказаться — это часть системы, а не отступление.")
-    print("Но отказ записывается, иначе следующая сессия примет его за недоделку.")
+    print("Короткий путь:")
+    print("  1. сохранить exact pre-change Git commit;")
+    print("  2. применить текущий contract напрямую, не проигрывая patch history;")
+    print("  3. для ролей: один узкий project check и один обычный fresh-context вопрос;")
+    print("  4. показать владельцу изменения и честные OPEN;")
+    print(f"  5. после acceptance записать одну schema-2 квитанцию в {APPLICATION_RECEIPT},")
+    print(f"     поставить kb_standard_version: {target_line_name}, commit и отдельно push.")
+    print("Full core suite, повтор каждого runtime и mutation receipts принадлежат")
+    print("выпуску скилла или специальному аудиту, а не обычной миграции проекта.")
     print("\nNEEDS_APPLICATION: дельта проекта не закрыта.")
     return 1
 

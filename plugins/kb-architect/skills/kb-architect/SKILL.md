@@ -3,7 +3,7 @@ name: kb-architect
 description: "Durable AI knowledge-base router: start, audit, update, restructure or move a KB; coordinate Claude/Codex; manage project roles, runtimes, credentials, cloud/MCP and multi-agent work; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.1.6"
+  version: "6.2.0"
   author: "sugestr"
 ---
 
@@ -59,8 +59,8 @@ metadata:
   `supported|qualified` это draft/`UNKNOWN`. Domain skill задаёт темы, core — гейт.
 - Update — не report-only: installed entry ведёт обратимые local changes до owner gate;
   public — только freshness/delivery.
-- V6 marker требует tracked `KB_RELEASE_APPLICATION.json`: source snapshot, полный
-  ledger и post-results acceptance.
+- Marker хранит contract line; compact receipt — source/owner. Patch build
+  не переоткрывает migration.
 - Рост released route блокирует `kb_cost.py --check` как `OPTIMIZATION_REQUIRED`;
   число модулей не заменяет бюджет реально загружаемого маршрута.
 - Не перечитывай неизменный reference в одной логической задаче. Новый выпуск,

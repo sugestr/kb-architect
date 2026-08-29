@@ -65,7 +65,7 @@ repo-relative boot canon, recoverable project skills и `kb_environments.py` д�
 
 **«Обнови скилл базы знаний»** — action-first: доставить stable, проверить project
 delta и сразу продолжить обратимые candidate changes, tests и точечные local commits. Валидные
-snapshot/ledger/results переиспользуй по commit/hash. Preflight и diff — evidence, не
+source/results переиспользуй. Preflight и diff — evidence, не
 остановка для нового «сделай»; длинный protocol prompt владельцу не нужен.
 
 Остановись перед новым предметным выбором, post-results acceptance,
@@ -95,7 +95,7 @@ backup, замена и повторные тесты. Ошибка сети и�
 не `CURRENT`/PASS. Совместимая опция `--ttl-hours` больше не отменяет remote probe.
 
 `--project` сразу запускает `kb_apply.py` из той же проверенной редакции: код 0 означает,
-что marker актуален **и для v6+ подтверждён tracked release receipt**;
+что line актуальна; patch её не переоткрывает;
 код 1 (`NEEDS_APPLICATION` или `APPLICATION_UNPROVEN`) — что дельта либо
 доказательство её применения не закрыты. В action-first режиме это
 `SESSION_ACTION=APPLY_PROJECT_DELTA_NOW`, а не конечный отчёт: агент продолжает по
@@ -140,11 +140,11 @@ python3 <установленный-скилл>/scripts/kb_apply.py <корен�
   `отклонено` или `отложено`.
 
 Если код ненулевой, продолжить по `references/migration.md`: **до первой записи**
-сохранить exact source commit/hash и открыть release-wide ledger; применить candidate;
-показать владельцу diff, tests, `PASS/FAIL/UNKNOWN`, cost и rollback. Tracked-only
+сохранить exact source commit; применить текущую line напрямую; показать владельцу
+diff, узкие tests, `PASS/FAIL/UNKNOWN`, cost и rollback. Tracked-only
 rollback — pre-change Git commit без второй копии; внешнее состояние проходит staged cutover. Только после
-post-results acceptance финализировать tracked `KB_RELEASE_APPLICATION.json` и поднять
-`kb_standard_version`. Просто заменить номер значит скрыть неприменённое обновление;
+post-results acceptance записать schema-2 `KB_RELEASE_APPLICATION.json` и поднять
+`kb_standard_version` до line. Просто заменить номер значит скрыть неприменённое обновление;
 начальное разрешение на миграцию не является приёмкой результата.
 
 ### 3. Проверить текущее состояние

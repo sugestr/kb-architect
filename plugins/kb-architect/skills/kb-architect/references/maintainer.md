@@ -86,9 +86,8 @@ Cost baseline — бюджет. Не принимай точное равенс�
 - Выпускай связный batch, а не версию на каждую мысль. Новый подтверждённый риск может
   переоткрыть diff; повторное ревью без новой evidence — нет.
 
-Изменение контракта получает minor release (`6.1`, `6.2`), совместимая починка
-инструмента или документации — patch (`6.1.1`). Полная смена operating model требует
-major. Исторические номера не переименовываются.
+Контракт получает line (`6.2`), совместимая починка — build (`6.2.1`). Marker хранит
+line, metadata — build; patch не переоткрывает миграцию. Смена operating model — major.
 
 ## Release и authority
 
@@ -98,6 +97,5 @@ snapshot. Local commit, private delivery, public push/release и изменен�
 cost gate, portable validator, двух одинаковых builds, allowlist/leakage проверки,
 exact public diff, tag/asset push, private receipt и повторной drift-проверки.
 
-Проект не мигрирует автоматически от установки новых файлов. Он сохраняет pre-change
-source, полный release ledger, candidate/rollback, фактические `PASS / FAIL / UNKNOWN` и
-post-results решение владельца. Только после этого меняется marker.
+Новая line требует pre-change commit, candidate, честные исходы и решение владельца.
+Одна короткая квитанция меняет marker; patch её не трогает.

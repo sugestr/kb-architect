@@ -68,8 +68,8 @@ def t_report_only_envelope_cancels_old_write_authority():
           out, "current task scope wins before first write")
 
 
-def t_610_thin_router_points_to_versioned_contract():
-    """6.1 unfreezes the core without putting its full text back into every turn."""
+def t_620_thin_router_points_to_versioned_contract():
+    """The core stays versioned without putting its full text into every turn."""
     router = skill_text("SKILL.md")
     contract = skill_text("references/contract.md")
     out = Vyvod(router + "\n" + contract, 0)
@@ -77,15 +77,15 @@ def t_610_thin_router_points_to_versioned_contract():
           len(router.encode("utf-8")) <= 8_192
           and "references/contract.md" in router
           and "С версии 6.1 контракт снова **версионируется**" in contract
-          and "заморожен" not in contract.lower()
           and "role posture" in contract
           and "пустой lexical/search result не доказывает отсутствие" in contract
           and "Cost baseline — **потолок/бюджет**" in contract
           and "Project entry/current ≤8 КиБ" in contract
           and "Readiness имеет один канонический executable command" in contract
           and "CORRECTIONS.md" in contract
-          and "контрольных вопросов является одним таким каноном" in contract
-          and "adversarial case ложной уверенности" in contract,
+          and "обычный fresh-context вопрос" in contract
+          and "найти существующее" in contract
+          and "реальный stop/conflict" in contract,
           out, "router <=8KiB; versioned core keeps truth, roles, cost and semantic acceptance")
 
 
@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.1.6"
+          and data.get("baseline_version") == "6.2.0"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -664,6 +664,56 @@ def accepted_role_fixture(skill_body=None):
     return d, registry
 
 
+def compact_role_fixture(accepted=False):
+    """6.2 fixture: one manifest, one live scenario, no receipt tree."""
+    import json
+    d, _registry = accepted_role_fixture()
+    registry_path = os.path.join(d, "PROJECT_ROLES.json")
+    registry = json.load(open(registry_path, encoding="utf-8"))
+    skill = registry["skills"][0]
+    skill.pop("quality_review", None)
+    skill["quality"] = {
+        "status": "reviewed",
+        "professional_method": "fixture source-led method",
+        "external_practice": "not-applicable",
+        "knowledge_boundary": "method-only",
+        "reason": "fixture facts remain in indexed knowledge",
+        "return_condition": None,
+    }
+    scenario = registry["cost_policy"]["scenarios"][0]
+    for field in ("accepted_role_entry_bytes", "accepted_static_route_bytes",
+                  "accepted_control_plane_bytes"):
+        scenario.pop(field, None)
+    scenario["accepted_end_to_end_bytes"] = 300_000
+    skill_hash = hashlib.sha256(open(
+        os.path.join(d, "skills", "domain-auditor", "SKILL.md"), "rb").read()).hexdigest()
+    registry["acceptance"] = {
+        "protocol": "kb-role-acceptance/v1",
+        "status": "accepted" if accepted else "candidate",
+        "accepted_skill_sha256": {"domain-auditor": skill_hash},
+        "project_check": {"status": "PASS", "command": "python3 tests.py"},
+        "live_test": {
+            "status": "PASS", "agent": "codex", "fresh_context": True,
+            "unforced": True,
+            "covers": ["role-selection", "knowledge-recall", "authority-stop"],
+            "summary": "role selected, indexed fact found, unsupported action stopped",
+        },
+        "agents": {
+            "codex": {"status": "TESTED", "basis": "live_test"},
+            "claude": {"status": "INHERITED",
+                       "basis": "same canonical bytes and unchanged wiring"},
+        },
+        "owner": ({"status": "PASS", "accepted_by": "fixture owner",
+                   "accepted_at": "2026-08-29"} if accepted else
+                  {"status": "PENDING", "accepted_by": None, "accepted_at": None}),
+        "open": [],
+    }
+    with open(registry_path, "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json"], check=True)
+    return d
+
+
 def upgrade_fixture_to_schema4(root):
     """Give the accepted fixture runner-owned per-case mutations."""
     import json
@@ -1142,8 +1192,8 @@ def t_capability_registry_expresses_role_not_only_location():
     entry = data["skills"][0]
     role = data["roles"][0]
     policy = data["role_posture"]
-    acceptance = __import__("json").loads(skill_text("assets/templates/role-acceptance.json"))
     scenario = data["cost_policy"]["scenarios"][0]
+    acceptance = data["acceptance"]
     out = Vyvod(str(entry) + str(acceptance), 0)
     check("видимый реестр проводит роль, знания, recovery и cost без копии метода",
           data.get("schema") == 1
@@ -1153,21 +1203,17 @@ def t_capability_registry_expresses_role_not_only_location():
           and all(role.get(field) for field in
                   ("id", "purpose", "load_when", "skill", "knowledge_routes"))
           and entry.get("canonical")
-          and entry.get("quality_owner") and entry.get("quality_review")
+          and entry.get("quality_owner") and entry.get("quality")
           and set(entry["validation"]) == {"platform", "project"}
           and set(entry["validation"]["project"]["covers"]) == {
-              "role-selection", "knowledge-recall", "authority-stop",
-              "source-conflict", "context-cost"}
+              "role-selection", "knowledge-recall", "authority-stop"}
           and all(key in scenario for key in
-                  ("accepted_role_entry_bytes", "accepted_static_route_bytes",
-                   "accepted_control_plane_bytes", "accepted_end_to_end_bytes",
-                   "route_files"))
-          and set(acceptance["outcomes"]) == {
-              "STRUCTURAL_PASS", "DISCOVERY_PASS", "BEHAVIOR_PASS", "OWNER_ACCEPTED"}
-          and data["acceptance"]["behavior_scope"] == "shared"
-          and acceptance["schema"] == 5
-          and acceptance["outcomes"]["BEHAVIOR_PASS"]["runtime_scope"] == "shared"
-          and acceptance["actual_usage"]["status"] == "UNKNOWN",
+                  ("accepted_end_to_end_bytes", "route_files"))
+          and acceptance.get("protocol") == "kb-role-acceptance/v1"
+          and acceptance["live_test"].get("fresh_context") is True
+          and acceptance["live_test"].get("unforced") is True
+          and acceptance["agents"]["codex"]["status"] == "TESTED"
+          and acceptance["agents"]["claude"]["status"] == "UNKNOWN",
           out, "method stays in one SKILL; registry carries split gates and costs")
 
 
@@ -1599,19 +1645,16 @@ def t_keychain_is_storage_canon_not_blanket_non_disclosure():
           out, "Git keeps a locator; authorized local use is allowed and auditable")
 
 
-def t_54_apply_requests_safe_credential_cleanup():
-    """14.08: every updating project must see the owner's one-time cleanup duty."""
+def t_620_apply_does_not_replay_historical_cleanup():
+    """6.2 applies the current contract directly instead of replaying old duties."""
     d = base({"NOW.md": NOW_OK,
               "CLAUDE.md": "# правила\n\nkb_standard_version: 5.3\n"})
     out = run("kb_apply.py", d)
-    check("5.4 application names safe Keychain cleanup",
-          "[5.4]" in out
-          and "credential cleanup" in out
-          and "не выводя значения" in out
-          and "точными locator-ами" in out
-          and "поставь на ротацию" in out
-          and "явно разреши Claude/Codex" in out,
-          out, "migration verifies Keychain before deleting plaintext duplicates")
+    check("6.2 application does not replay historical cleanup rows",
+          "[6.2]" in out
+          and "[5.4]" not in out
+          and "credential cleanup" not in out,
+          out, "current contract line replaces a per-patch historical replay")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -1760,22 +1803,16 @@ def t_claude_cloud_is_a_first_class_runtime():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_update_names_optional_capabilities():
-    """4.19 установился, но проекты не узнали о новой работе Claude + Codex.
-
-    Старый kb_apply.py читал только метки обязательных дел и при переходе
-    4.18 → 4.20 печатал «ДЕЛ НЕТ». Новая способность без сигнала снаружи
-    неотличима от отсутствующей.
-    """
+def t_620_update_does_not_replay_old_optional_capabilities():
+    """A direct contract migration does not reopen historical choices."""
     d = base({"NOW.md": NOW_OK,
               "CLAUDE.md": "# правила\n\nkb_standard_version: 4.18\n"})
     out = run("kb_apply.py", d)
-    check("обновление показывает возможности, а не только обязанности",
-          "НОВЫЕ ВОЗМОЖНОСТИ НА РЕШЕНИЕ" in out
-          and "[4.19]" in out
-          and "Claude и Codex" in out
-          and "deferred / declined" in out,
-          out, "4.19 видна как решение проекта, даже когда обязательных дел нет")
+    check("обновление не переоткрывает старые опциональные возможности",
+          "[6.2]" in out
+          and "[4.19]" not in out
+          and "НОВЫХ ВОЗМОЖНОСТЕЙ, ТРЕБУЮЩИХ РЕШЕНИЯ, НЕТ" in out,
+          out, "the project considers choices declared by the current contract line")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -2346,9 +2383,9 @@ def t_apply_ignores_marker_syntax_examples():
     out = run("kb_apply.py", d)
     check("пример маркера не становится действием проекта",
           "[4.17] …" not in out and "[4.21] …" not in out
-          and "[5.0] при следующем обновлении" in out
+          and "[5.0]" not in out and "[6.2]" in out
           and "ТРЕБУЮТ ДЕЙСТВИЯ" in out, out,
-          "парсер пропускает placeholder-маркеры и сохраняет реальное дело 5.0")
+          "parser skips placeholders and shows only the current contract line")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -2863,7 +2900,8 @@ def t_512_update_project_option_really_runs_apply():
           and "ПРИМЕНЕНИЕ К ПРОЕКТУ" in out
           and "NEEDS_APPLICATION" in out
           and "SESSION_ACTION=APPLY_PROJECT_DELTA_NOW" in out
-          and "[5.4]" in out,
+          and "[6.2]" in out
+          and "[5.4]" not in out,
           out, "the single entry command executes kb_apply and propagates exit 1")
     shutil.rmtree(source, ignore_errors=True)
     shutil.rmtree(project, ignore_errors=True)
@@ -3058,16 +3096,16 @@ def t_516_broad_evidence_query_refuses_context_overrun():
     shutil.rmtree(project, ignore_errors=True)
 
 
-def t_601_marker_without_release_ledger_is_unproven():
-    """A marker must not erase the migration steps that justified itself."""
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.0\n"})
+def t_620_marker_without_compact_application_is_unproven():
+    """A current-line marker still needs one compact owner receipt."""
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.2\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
     out = run("kb_apply.py", d)
-    check("marker v6 без полного receipt не скрывает незавершённую миграцию",
+    check("marker 6.2 без короткой квитанции не скрывает незавершённую миграцию",
           out.code == 1 and "APPLICATION_UNPROVEN" in out
           and "missing KB_RELEASE_APPLICATION.json" in out,
-          out, "the marker is an outcome, not proof of its own preconditions")
+          out, "the marker is an outcome, but no per-release ledger is required")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -3083,13 +3121,14 @@ def t_611_git_only_candidate_uses_commit_without_second_shadow():
     text = migration + "\n" + service + "\n" + roles + "\n" + p.stdout
     out = Vyvod(text + p.stderr, p.returncode)
     check("Git-only migration uses one candidate and the existing commit rollback",
-          "exact pre-change commit уже rollback" in migration
-          and "второй каталог/ветка не нужны" in migration
+          "exact pre-change Git commit" in migration
+          and "commit уже является rollback" in migration
+          and "второй checkout не нужен" in migration
           and "внешнее состояние проходит staged cutover" in service
           and "source commit даёт rollback" in roles
-          and "без второй копии дерева" in p.stdout
+          and "без второй копии" in service
           and "post-results acceptance" in migration
-          and "не повышай marker" in migration,
+          and "marker contract line" in migration,
           out, "remove duplicate shadow mechanics without weakening marker-last acceptance")
     shutil.rmtree(project, ignore_errors=True)
 
@@ -3153,12 +3192,10 @@ def t_612_git_root_trailing_space_preserves_tracking():
     shutil.rmtree(worktree_parent, ignore_errors=True)
 
 
-def t_601_release_application_binds_source_and_exact_ledger():
-    """The migration receipt binds the immutable source before project writes."""
+def t_620_release_application_binds_source_line_and_owner():
+    """The compact receipt binds source line and owner without a patch ledger."""
     import json
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.0\n",
-              "tests/migration.txt": "migration checks passed\n",
-              "tests/owner.txt": "owner accepted shown results\n"})
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "config", "user.email",
                     "fixture@example.invalid"], check=True)
@@ -3167,64 +3204,34 @@ def t_601_release_application_binds_source_and_exact_ledger():
     subprocess.run(["git", "-C", d, "commit", "-qm", "source"], check=True)
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
-    source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
-                                  capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.1.6\n")
+        f.write("# rules\n\nkb_standard_version: 6.2\n")
     receipt = {
-        "schema": 1,
-        "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.1.6",
-            "status": "finalized",
-            "source_snapshot": {
-                "ref": source, "commit": source, "version_source": "CLAUDE.md",
-                "version_source_sha256": hashlib.sha256(source_bytes).hexdigest(),
-            },
-            "release_ledger": [
-                {"version": "6.0.1", "decision": "applied",
-                 "evidence": ["tests/migration.txt"]},
-                {"version": "6.0.2", "decision": "tool-inherited",
-                 "evidence": ["tests/migration.txt"]},
-                {"version": "6.1", "decision": "applied",
-                 "evidence": ["tests/migration.txt"]},
-                {"version": "6.1.1", "decision": "tool-inherited",
-                 "evidence": ["tests/migration.txt"]},
-                {"version": "6.1.2", "decision": "applied",
-                 "evidence": ["tests/migration.txt"]},
-                {"version": "6.1.3", "decision": "applied",
-                 "evidence": ["tests/migration.txt"]},
-                {"version": "6.1.4", "decision": "applied",
-                 "evidence": ["tests/migration.txt"]},
-                {"version": "6.1.5", "decision": "applied",
-                 "evidence": ["tests/migration.txt"]},
-                {"version": "6.1.6", "decision": "applied",
-                 "evidence": ["tests/migration.txt"]},
-            ],
-            "owner_acceptance": {"accepted_by": "fixture owner",
-                                 "accepted_at": "2026-08-28",
-                                 "evidence": ["tests/owner.txt"]},
-            "finalized_at": "2026-08-28",
-        }],
+        "schema": 2,
+        "application": {
+            "from_line": "6.1", "to_line": "6.2", "status": "finalized",
+            "source": {"commit": source, "version_source": "CLAUDE.md"},
+            "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
+            "finalized_at": "2026-08-29", "open": [],
+        },
     }
     with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w",
               encoding="utf-8") as f:
         json.dump(receipt, f)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md",
-                    "KB_RELEASE_APPLICATION.json", "tests"], check=True)
+                    "KB_RELEASE_APPLICATION.json"], check=True)
     out = run("kb_apply.py", d)
-    check("release application binds source snapshot and exact release ledger",
+    check("release application binds source line and owner without patch ledger",
           out.code == 0 and "APPLICATION_RECEIPT_OK" in out
-          and "применять нечего" in out,
-          out, "source commit, old marker, release row and post-results owner receipt are bound")
+          and "PROJECT_LINE_OK" in out,
+          out, "source commit, old line and post-results owner receipt are bound once")
     shutil.rmtree(d, ignore_errors=True)
 
 
 def t_612_release_application_follows_safe_boot_symlink():
     """29.08 Foxio: recommended AGENTS.md -> CLAUDE.md failed source receipt."""
     import json
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.0\n",
-              "tests/migration.txt": "migration checks passed\n",
-              "tests/owner.txt": "owner accepted shown results\n"})
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     os.symlink("CLAUDE.md", os.path.join(d, "AGENTS.md"))
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "config", "user.email",
@@ -3234,35 +3241,22 @@ def t_612_release_application_follows_safe_boot_symlink():
     subprocess.run(["git", "-C", d, "commit", "-qm", "source"], check=True)
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
-    source_bytes = open(os.path.join(d, "CLAUDE.md"), "rb").read()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.1.6\n")
+        f.write("# rules\n\nkb_standard_version: 6.2\n")
     receipt = {
-        "schema": 1,
-        "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.1.6",
-            "status": "finalized",
-            "source_snapshot": {
-                "ref": source, "commit": source, "version_source": "AGENTS.md",
-                "version_source_sha256": hashlib.sha256(source_bytes).hexdigest(),
-            },
-            "release_ledger": [
-                {"version": version, "decision": "applied",
-                 "evidence": ["tests/migration.txt"]}
-                for version in ("6.0.1", "6.0.2", "6.1", "6.1.1", "6.1.2",
-                                "6.1.3", "6.1.4", "6.1.5", "6.1.6")
-            ],
-            "owner_acceptance": {"accepted_by": "fixture owner",
-                                 "accepted_at": "2026-08-29",
-                                 "evidence": ["tests/owner.txt"]},
-            "finalized_at": "2026-08-29",
-        }],
+        "schema": 2,
+        "application": {
+            "from_line": "6.1", "to_line": "6.2", "status": "finalized",
+            "source": {"commit": source, "version_source": "AGENTS.md"},
+            "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
+            "finalized_at": "2026-08-29", "open": [],
+        },
     }
     with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w",
               encoding="utf-8") as f:
         json.dump(receipt, f)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md",
-                    "KB_RELEASE_APPLICATION.json", "tests"], check=True)
+                    "KB_RELEASE_APPLICATION.json"], check=True)
     out = run("kb_apply.py", d)
     check("source receipt follows the safe in-repo boot-canon symlink",
           out.code == 0 and "APPLICATION_RECEIPT_OK" in out,
@@ -3316,26 +3310,26 @@ def t_610_scoped_migration_target_survives_newer_installed_skill():
     check("явная цель миграции не расширяется новой installed версией",
           latest.code == 1 and "NEEDS_APPLICATION" in latest
           and scoped.code == 0
-          and "APPLICATION_RECEIPT_OK" in scoped
           and "TARGET_APPLICATION_OK" in scoped
-          and "NEWER_INSTALLED_OUT_OF_SCOPE: 6.1.6" in scoped,
-          combined, "default still reports latest delta; scoped acceptance closes 6.0.1")
+          and "APPLICATION_UNPROVEN" not in scoped,
+          combined, "default reports the new line; scoped legacy acceptance is not reopened")
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_610_release_application_template_has_full_intermediate_ledger():
-    """The shipped 6.0→6.1 example must not omit either intermediate patch."""
+def t_620_release_application_template_is_one_compact_receipt():
+    """The shipped template must not recreate the per-patch ledger."""
     import json
 
     template = json.loads(skill_text("assets/templates/release-application.json"))
-    application = template["applications"][0]
-    versions = [row.get("version") for row in application.get("release_ledger", [])]
+    application = template["application"]
     out = Vyvod(json.dumps(template, ensure_ascii=False), 0)
-    check("release-application template lists every intermediate patch",
-          application.get("from_version") == "6.0"
-          and application.get("to_version") == "6.1"
-          and versions == ["6.0.1", "6.0.2", "6.1"],
-          out, "the copyable template satisfies the same full-range rule as the validator")
+    check("release-application template contains one compact line receipt",
+          template.get("schema") == 2
+          and set(application) == {"from_line", "to_line", "status", "source",
+                                   "owner", "finalized_at", "open"}
+          and "applications" not in template
+          and "release_ledger" not in application,
+          out, "the copyable template cannot grow with patch history")
 
 
 def t_601_initial_adoption_records_source_without_replaying_history():
@@ -3350,35 +3344,27 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     subprocess.run(["git", "-C", d, "commit", "-qm", "pre-adoption"], check=True)
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
-    source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
-                                  capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.1.6\n")
-    receipt = {"schema": 1, "applications": [{
-        "kind": "initial-adoption", "from_version": None, "to_version": "6.1.6",
-        "status": "finalized",
-        "source_snapshot": {"ref": source, "commit": source,
-                            "version_source": "CLAUDE.md",
-                            "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.1.6", "decision": "applied",
-                            "evidence": ["tests/proof.txt"]}],
-        "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
-                             "evidence": ["tests/proof.txt"]},
-        "finalized_at": "2026-08-28",
-    }]}
+        f.write("\nkb_standard_version: 6.2\n")
+    receipt = {"schema": 2, "application": {
+        "from_line": None, "to_line": "6.2", "status": "finalized",
+        "source": {"commit": source, "version_source": "CLAUDE.md"},
+        "owner": {"accepted_by": "owner", "accepted_at": "2026-08-29"},
+        "finalized_at": "2026-08-29", "open": [],
+    }}
     with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
         json.dump(receipt, f)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md", "tests",
                     "KB_RELEASE_APPLICATION.json"], check=True)
     out = run("kb_apply.py", d)
-    check("initial adoption proves pre-marker source without replaying all releases",
+    check("initial adoption proves pre-marker source without replaying releases",
           out.code == 0 and "APPLICATION_RECEIPT_OK" in out,
           out, "new projects use one current release row, not a fabricated migration history")
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_601_late_marker_cannot_hide_intermediate_release():
-    """A receipt ending at current must still cover every release after source."""
+def t_620_direct_migration_does_not_replay_intermediate_releases():
+    """A project moves directly from its source line to the current line."""
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 5.16\n",
               "tests/proof.txt": "proof\n"})
@@ -3390,30 +3376,22 @@ def t_601_late_marker_cannot_hide_intermediate_release():
     subprocess.run(["git", "-C", d, "commit", "-qm", "source"], check=True)
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
-    source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
-                                  capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.0.1\n")
-    receipt = {"schema": 1, "applications": [{
-        "kind": "migration", "from_version": "5.16", "to_version": "6.0.1",
-        "status": "finalized",
-        "source_snapshot": {"ref": source, "commit": source,
-                            "version_source": "CLAUDE.md",
-                            "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.0.1", "decision": "applied",
-                            "evidence": ["tests/proof.txt"]}],
-        "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
-                             "evidence": ["tests/proof.txt"]},
-        "finalized_at": "2026-08-28",
-    }]}
+        f.write("# rules\n\nkb_standard_version: 6.2\n")
+    receipt = {"schema": 2, "application": {
+        "from_line": "5.16", "to_line": "6.2", "status": "finalized",
+        "source": {"commit": source, "version_source": "CLAUDE.md"},
+        "owner": {"accepted_by": "owner", "accepted_at": "2026-08-29"},
+        "finalized_at": "2026-08-29", "open": [],
+    }}
     with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
         json.dump(receipt, f)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md", "tests",
                     "KB_RELEASE_APPLICATION.json"], check=True)
     out = run("kb_apply.py", d)
-    check("поздний marker не скрывает пропущенную промежуточную редакцию",
-          out.code == 1 and "release ledger must be exact ['6.0', '6.0.1']" in out,
-          out, "every release after the immutable source receives an explicit outcome")
+    check("direct migration does not replay intermediate releases",
+          out.code == 0 and "APPLICATION_RECEIPT_OK" in out,
+          out, "one source line and one current line replace the patch ledger")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -4301,6 +4279,69 @@ def t_601_report_addendum_preserves_payload_and_bidirectional_link():
           and child_id in index["reports"][parent_id]["relations"]["amended_by"],
           out, "content-derived ids and a mutable index preserve both history and navigation")
     shutil.rmtree(project, ignore_errors=True)
+
+
+def t_620_owner_transition_does_not_invalidate_role_behavior():
+    """Owner acceptance must not change the bytes used to bind role behavior."""
+    import json
+    d = compact_role_fixture(accepted=False)
+    candidate = run_skills(d)
+    path = os.path.join(d, "PROJECT_ROLES.json")
+    registry = json.load(open(path, encoding="utf-8"))
+    registry["acceptance"]["status"] = "accepted"
+    registry["acceptance"]["owner"] = {
+        "status": "PASS", "accepted_by": "fixture owner",
+        "accepted_at": "2026-08-29",
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json"], check=True)
+    accepted = run_skills(d)
+    out = Vyvod(candidate + "\n--- accepted ---\n" + accepted, accepted.code)
+    check("candidate to accepted does not rerun or invalidate role behavior",
+          candidate.code == 1 and "ROLE_ACCEPTANCE_REQUIRED" in candidate
+          and "compact acceptance does not match" not in candidate
+          and accepted.code == 0 and "errors=0" in accepted,
+          out, "acceptance state is outside the hash-bound SKILL.md bytes")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_620_compact_application_uses_contract_line_not_patch_build():
+    """A 6.2 project stays accepted when the installed exact build is 6.2.0."""
+    import json
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
+    subprocess.run(["git", "-C", d, "-c", "user.name=Fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "before"],
+                   check=True)
+    source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write("# rules\n\nkb_standard_version: 6.2\n")
+    with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "schema": 2,
+            "application": {
+                "from_line": "6.1", "to_line": "6.2", "status": "finalized",
+                "source": {"commit": source, "version_source": "CLAUDE.md"},
+                "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
+                "finalized_at": "2026-08-29", "open": [],
+            },
+        }, f)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md",
+                    "KB_RELEASE_APPLICATION.json"], check=True)
+    subprocess.run(["git", "-C", d, "-c", "user.name=Fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "accepted"],
+                   check=True)
+    p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
+                       capture_output=True, text=True, timeout=30)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("contract line 6.2 accepts exact installed build 6.2.0 without remigration",
+          p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
+          and "PROJECT_LINE_OK" in p.stdout,
+          out, "patch build is delivery, not a new project migration")
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def main():

@@ -31,6 +31,8 @@ BEHAVIOURAL_COVERAGE = {
     "role-selection", "knowledge-recall", "authority-stop",
     "source-conflict", "context-cost",
 }
+LIGHT_REQUIRED_COVERAGE = {"role-selection", "knowledge-recall"}
+LIGHT_STOP_COVERAGE = {"authority-stop", "source-conflict"}
 ACCEPTANCE_OUTCOMES = {
     "STRUCTURAL_PASS", "DISCOVERY_PASS", "BEHAVIOR_PASS", "OWNER_ACCEPTED",
 }
@@ -227,17 +229,20 @@ def check_external(path: Path, dependency: object,
 def check_skill_source(root: Path, entry: dict, agents: list[str],
                        errors: list[str], notes: list[str],
                        resolved_by_name: dict[str, Path],
-                       strict_version: bool = True) -> tuple[str | None, int]:
+                       strict_version: bool = True,
+                       compact_quality: bool = False) -> tuple[str | None, int]:
     name = entry.get("name")
     if not isinstance(name, str) or not name:
         errors.append("skill entry has no name")
         return None, 0
-    required = (("canonical", "owner", "quality_owner", "quality_review",
+    required = (("canonical", "owner", "quality_owner",
                  "version", "validation", "failure_policy", "recovery_cost",
                  "discovery") if strict_version else
                 ("canonical", "owner", "version", "validation",
                  "failure_policy", "recovery_cost", "discovery"))
     missing = [key for key in required if not entry.get(key)]
+    if strict_version and not compact_quality and not entry.get("quality_review"):
+        missing.append("quality_review")
     if missing:
         errors.append(f"{name}: missing {', '.join(missing)}")
         return name, 0
@@ -623,6 +628,36 @@ def quality_review(root: Path, entry: dict, errors: list[str]) -> str | None:
     return file_sha256(path)
 
 
+def inline_quality(entry: dict, errors: list[str]) -> None:
+    """Validate the compact 6.2 quality decision stored with the role entry.
+
+    Git already preserves the reviewed bytes and history.  The project therefore
+    records the decision once instead of maintaining a second hashed review file.
+    """
+    name = str(entry.get("name", "<unknown>"))
+    owner = entry.get("quality_owner")
+    quality = entry.get("quality")
+    if not owner:
+        errors.append(f"{name}: quality_owner is required")
+    if not isinstance(quality, dict):
+        errors.append(f"{name}: compact quality decision is required")
+        return
+    if quality.get("status") not in {"reviewed", "deferred"}:
+        errors.append(f"{name}: quality.status must be reviewed or deferred")
+    if not quality.get("professional_method"):
+        errors.append(f"{name}: quality.professional_method is required")
+    if quality.get("external_practice") not in {
+            "performed", "deferred", "not-applicable"}:
+        errors.append(f"{name}: quality.external_practice has an unknown outcome")
+    boundary = quality.get("knowledge_boundary")
+    if boundary not in {"method-only", "extraction-applied", "deferred", "declined"}:
+        errors.append(f"{name}: quality.knowledge_boundary has an unknown outcome")
+    if not quality.get("reason"):
+        errors.append(f"{name}: quality.reason is required")
+    if quality.get("status") == "deferred" and not quality.get("return_condition"):
+        errors.append(f"{name}: deferred quality review needs return_condition")
+
+
 def default_runtime_roots() -> list[Path]:
     home = Path(os.path.expanduser("~")).resolve()
     roots = [home / ".codex/skills", home / ".claude/skills", home / ".agents/skills"]
@@ -809,6 +844,8 @@ def acceptance_schema_hint(root: Path, data: dict) -> int | None:
     acceptance = data.get("acceptance")
     if not isinstance(acceptance, dict):
         return None
+    if acceptance.get("protocol") == "kb-role-acceptance/v1":
+        return 6
     status = acceptance.get("status")
     raw = acceptance.get("receipt")
     if status != "accepted" and raw:
@@ -828,6 +865,88 @@ def acceptance_schema_hint(root: Path, data: dict) -> int | None:
     if not isinstance(receipt, dict):
         return None
     return receipt.get("schema") if isinstance(receipt.get("schema"), int) else None
+
+
+def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dict],
+                            agents: list[str]) -> list[str]:
+    """Validate one compact, non-self-referential project acceptance record."""
+    errors: list[str] = []
+    acceptance = data.get("acceptance", {})
+    accepted = acceptance.get("status") == "accepted"
+    live = acceptance.get("live_test")
+    if not isinstance(live, dict) or live.get("status") not in {"PASS", "PENDING"}:
+        errors.append("light acceptance needs live_test status PASS or PENDING")
+        live = {}
+    if accepted and live.get("status") != "PASS":
+        errors.append("accepted role manifest requires one live_test PASS")
+    if live.get("status") == "PASS":
+        if live.get("agent") not in agents:
+            errors.append("live_test.agent must be a supported agent")
+        if live.get("fresh_context") is not True or live.get("unforced") is not True:
+            errors.append("live_test PASS requires fresh_context and unforced")
+        covers = set(live.get("covers", [])) if isinstance(live.get("covers"), list) else set()
+        if not LIGHT_REQUIRED_COVERAGE.issubset(covers) \
+                or not covers.intersection(LIGHT_STOP_COVERAGE):
+            errors.append("live_test must cover selection, recall and one stop/conflict case")
+        if not live.get("summary"):
+            errors.append("live_test PASS requires a short result summary")
+
+    project_check = acceptance.get("project_check")
+    if not isinstance(project_check, dict) or project_check.get("status") not in {
+            "PASS", "PENDING"}:
+        errors.append("light acceptance needs project_check status PASS or PENDING")
+        project_check = {}
+    if accepted and project_check.get("status") != "PASS":
+        errors.append("accepted role manifest requires one narrow project_check PASS")
+    declared_commands = {
+        entry.get("validation", {}).get("project", {}).get("command")
+        for entry in skill_by_name.values()
+        if isinstance(entry.get("validation"), dict)
+    }
+    declared_commands.discard(None)
+    if project_check.get("status") == "PASS" \
+            and project_check.get("command") not in declared_commands:
+        errors.append("project_check must bind one declared project validator command")
+
+    bindings = acceptance.get("accepted_skill_sha256")
+    if not isinstance(bindings, dict):
+        bindings = {}
+    if accepted or live.get("status") == "PASS":
+        for name, entry in skill_by_name.items():
+            raw = Path(str(entry.get("canonical", ""))).expanduser()
+            canonical = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
+            skill_file = canonical / "SKILL.md"
+            if not skill_file.is_file() or bindings.get(name) != file_sha256(skill_file):
+                errors.append(f"{name}: compact acceptance does not match current SKILL.md")
+
+    runtime = acceptance.get("agents")
+    if not isinstance(runtime, dict):
+        errors.append("light acceptance needs per-agent TESTED/INHERITED/UNKNOWN outcomes")
+        runtime = {}
+    tested = 0
+    for agent in agents:
+        result = runtime.get(agent)
+        if not isinstance(result, dict) or result.get("status") not in {
+                "TESTED", "INHERITED", "UNKNOWN"}:
+            errors.append(f"acceptance.agents.{agent} needs TESTED/INHERITED/UNKNOWN")
+            continue
+        if result.get("status") == "TESTED":
+            tested += 1
+        elif not result.get("basis"):
+            errors.append(f"acceptance.agents.{agent} {result.get('status')} needs basis")
+    if accepted and tested < 1:
+        errors.append("accepted role manifest requires one actually TESTED agent")
+
+    owner = acceptance.get("owner")
+    if not isinstance(owner, dict):
+        errors.append("light acceptance needs owner decision")
+        owner = {}
+    if accepted and (owner.get("status") != "PASS" or not owner.get("accepted_by")
+                     or not owner.get("accepted_at")):
+        errors.append("accepted role manifest lacks owner PASS/by/at")
+    if not isinstance(acceptance.get("open", []), list):
+        errors.append("light acceptance open must be an array")
+    return errors
 
 
 def validate_visible(root: Path, data: dict, registry: Path,
@@ -912,7 +1031,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
             errors.append(f"duplicate skill name: {name}")
             continue
         checked_name, size = check_skill_source(
-            root, entry, agents, errors, notes, resolved_by_name)
+            root, entry, agents, errors, notes, resolved_by_name,
+            compact_quality=receipt_schema_hint == 6)
         if not checked_name:
             continue
         skill_by_name[checked_name] = entry
@@ -920,11 +1040,19 @@ def validate_visible(root: Path, data: dict, registry: Path,
         project_gate = entry.get("validation", {}).get("project", {}) \
             if isinstance(entry.get("validation"), dict) else {}
         covers = set(project_gate.get("covers", [])) if isinstance(project_gate, dict) else set()
-        missing_coverage = sorted(BEHAVIOURAL_COVERAGE - covers)
-        if missing_coverage:
-            errors.append(f"{checked_name}: validation.project does not cover " +
-                          ", ".join(missing_coverage))
-        quality_hashes[checked_name] = quality_review(root, entry, errors)
+        if receipt_schema_hint == 6:
+            if not LIGHT_REQUIRED_COVERAGE.issubset(covers) \
+                    or not covers.intersection(LIGHT_STOP_COVERAGE):
+                errors.append(f"{checked_name}: compact project validation must cover "
+                              "role-selection, knowledge-recall and one stop/conflict case")
+            inline_quality(entry, errors)
+            quality_hashes[checked_name] = None
+        else:
+            missing_coverage = sorted(BEHAVIOURAL_COVERAGE - covers)
+            if missing_coverage:
+                errors.append(f"{checked_name}: validation.project does not cover " +
+                              ", ".join(missing_coverage))
+            quality_hashes[checked_name] = quality_review(root, entry, errors)
         raw = Path(str(entry.get("canonical", ""))).expanduser()
         canonical = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
         link_errors = errors if receipt_schema_hint != 2 else []
@@ -1009,15 +1137,16 @@ def validate_visible(root: Path, data: dict, registry: Path,
                                             if receipt_schema_hint == 2 else static_bytes)
                 accepted_entry = scenario.get("accepted_role_entry_bytes")
                 accepted_static = scenario.get("accepted_static_route_bytes")
-                for label, accepted, actual in (
-                        ("accepted_role_entry_bytes", accepted_entry, entry_bytes),
-                        ("accepted_static_route_bytes", accepted_static,
-                         accepted_semantics_bytes)):
-                    if not isinstance(accepted, int) or accepted < 0:
-                        errors.append(f"{scenario_id}: {label} must be a non-negative integer")
-                    elif actual > accepted:
-                        errors.append(f"OPTIMIZATION_REQUIRED {scenario_id}: {label} grew "
-                                      f"{accepted} -> {actual} bytes")
+                if receipt_schema_hint != 6:
+                    for label, accepted, actual in (
+                            ("accepted_role_entry_bytes", accepted_entry, entry_bytes),
+                            ("accepted_static_route_bytes", accepted_static,
+                             accepted_semantics_bytes)):
+                        if not isinstance(accepted, int) or accepted < 0:
+                            errors.append(f"{scenario_id}: {label} must be a non-negative integer")
+                        elif actual > accepted:
+                            errors.append(f"OPTIMIZATION_REQUIRED {scenario_id}: {label} grew "
+                                          f"{accepted} -> {actual} bytes")
                 accepted_control = scenario.get("accepted_control_plane_bytes")
                 accepted_end_to_end = scenario.get("accepted_end_to_end_bytes")
                 if receipt_schema_hint == 5:
@@ -1031,7 +1160,15 @@ def validate_visible(root: Path, data: dict, registry: Path,
                         elif actual > accepted:
                             errors.append(f"OPTIMIZATION_REQUIRED {scenario_id}: {label} grew "
                                           f"{accepted} -> {actual} bytes")
-                review_bytes = end_to_end_bytes if receipt_schema_hint == 5 \
+                elif receipt_schema_hint == 6:
+                    if not isinstance(accepted_end_to_end, int) or accepted_end_to_end < 0:
+                        errors.append(f"{scenario_id}: accepted_end_to_end_bytes must be "
+                                      "a non-negative integer")
+                    elif end_to_end_bytes > accepted_end_to_end:
+                        errors.append(f"OPTIMIZATION_REQUIRED {scenario_id}: "
+                                      f"accepted_end_to_end_bytes grew "
+                                      f"{accepted_end_to_end} -> {end_to_end_bytes} bytes")
+                review_bytes = end_to_end_bytes if receipt_schema_hint in (5, 6) \
                     else accepted_semantics_bytes
                 if review_bytes > threshold and not scenario.get("accepted_reason"):
                     errors.append(f"{scenario_id}: {review_bytes} bytes exceeds review threshold "
@@ -1043,11 +1180,15 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     notes.append(f"ROLE_COST_SCHEMA_2_LEGACY {scenario_id}: "
                                  f"linked-role-support={support_bytes} is migration delta; "
                                  "schema-2 accepted cost remains valid until schema 4 migration")
-                measured_costs[scenario_id] = {
-                    "accepted_role_entry_bytes": accepted_entry,
-                    "accepted_static_route_bytes": accepted_static,
-                    "route_files": declared_files,
-                }
+                measured_costs[scenario_id] = {"route_files": declared_files}
+                if receipt_schema_hint == 6:
+                    measured_costs[scenario_id]["accepted_end_to_end_bytes"] = \
+                        accepted_end_to_end
+                else:
+                    measured_costs[scenario_id].update({
+                        "accepted_role_entry_bytes": accepted_entry,
+                        "accepted_static_route_bytes": accepted_static,
+                    })
                 if receipt_schema_hint == 5:
                     measured_costs[scenario_id].update({
                         "accepted_control_plane_bytes": accepted_control,
@@ -1074,13 +1215,17 @@ def validate_visible(root: Path, data: dict, registry: Path,
         candidate_mode = acceptance_status == "candidate"
         invalid_status = not isinstance(acceptance_status, str) \
             or acceptance_status not in ("candidate", "accepted")
+        light_mode = isinstance(acceptance, dict) \
+            and acceptance.get("protocol") == "kb-role-acceptance/v1"
         receipt_supplied = isinstance(acceptance, dict) and bool(acceptance.get("receipt"))
-        pre_owner_mode = candidate_mode or (invalid_status and receipt_supplied)
+        pre_owner_mode = candidate_mode or (invalid_status and (receipt_supplied or light_mode))
         if not accepted_mode:
             errors.append("ROLE_ACCEPTANCE_REQUIRED: role manifest is not owner-accepted")
         if invalid_status:
             errors.append("ROLE_ACCEPTANCE_STATUS_INVALID: status must be candidate or accepted")
-        if accepted_mode or pre_owner_mode:
+        if light_mode and (accepted_mode or pre_owner_mode):
+            errors.extend(light_acceptance_errors(root, data, skill_by_name, agents))
+        if not light_mode and (accepted_mode or pre_owner_mode):
             receipt_raw = acceptance.get("receipt")
             receipt_path = (root / str(receipt_raw or "")).resolve(strict=False)
             if not receipt_raw or outside(root, receipt_path):

@@ -23,7 +23,14 @@
       "canonical": "skills/research-adviser",
       "owner": "this project",
       "quality_owner": "named domain-role maintainer",
-      "quality_review": "skills/research-adviser/ROLE_QUALITY_REVIEW.json",
+      "quality": {
+        "status": "reviewed",
+        "professional_method": "What professional method and source ladder were reviewed",
+        "external_practice": "performed",
+        "knowledge_boundary": "method-only",
+        "reason": "The role contains method; project facts and tool recipes remain indexed knowledge",
+        "return_condition": null
+      },
       "version": "1.0.0",
       "validation": {
         "platform": {
@@ -36,9 +43,7 @@
           "covers": [
             "role-selection",
             "knowledge-recall",
-            "authority-stop",
-            "source-conflict",
-            "context-cost"
+            "authority-stop"
           ]
         }
       },
@@ -61,9 +66,6 @@
           "knowledge/subject-authority.md",
           "knowledge/project-case-state.md"
         ],
-        "accepted_role_entry_bytes": 2048,
-        "accepted_static_route_bytes": 12288,
-        "accepted_control_plane_bytes": 16384,
         "accepted_end_to_end_bytes": 28672,
         "accepted_reason": "Budget with explicit headroom for normal routed-knowledge growth"
       }
@@ -71,7 +73,31 @@
   },
   "acceptance": {
     "status": "candidate",
-    "receipt": "ROLE_ACCEPTANCE.json",
-    "behavior_scope": "shared"
+    "protocol": "kb-role-acceptance/v1",
+    "accepted_skill_sha256": {
+      "research-adviser": "replace-after-the-live-test"
+    },
+    "project_check": {
+      "status": "PENDING",
+      "command": "python3 skills/research-adviser/tests/run.py"
+    },
+    "live_test": {
+      "status": "PENDING",
+      "agent": "codex",
+      "fresh_context": true,
+      "unforced": true,
+      "covers": ["role-selection", "knowledge-recall", "authority-stop"],
+      "summary": "Replace with one short observed result"
+    },
+    "agents": {
+      "codex": {"status": "TESTED", "basis": "live_test"},
+      "claude": {"status": "UNKNOWN", "basis": "Not tested yet"}
+    },
+    "owner": {
+      "status": "PENDING",
+      "accepted_by": null,
+      "accepted_at": null
+    },
+    "open": []
   }
 }

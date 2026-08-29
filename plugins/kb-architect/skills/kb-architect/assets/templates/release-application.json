@@ -1,28 +1,18 @@
 {
-  "schema": 1,
-  "applications": [
-    {
-      "kind": "migration",
-      "from_version": "6.0",
-      "to_version": "6.1",
-      "status": "finalized",
-      "source_snapshot": {
-        "ref": "exact-pre-migration-commit",
-        "commit": "exact-pre-migration-commit",
-        "version_source": "AGENTS.md",
-        "version_source_sha256": "sha256-of-version-source-at-that-commit"
-      },
-      "release_ledger": [
-        {"version": "6.0.1", "decision": "applied", "evidence": ["tracked evidence or receipt path"]},
-        {"version": "6.0.2", "decision": "tool-inherited", "evidence": ["tracked evidence or receipt path"]},
-        {"version": "6.1", "decision": "applied", "evidence": ["tracked evidence or receipt path"]}
-      ],
-      "owner_acceptance": {
-        "accepted_by": "project owner",
-        "accepted_at": "YYYY-MM-DD after seeing results",
-        "evidence": ["tracked post-results acceptance path"]
-      },
-      "finalized_at": "YYYY-MM-DD"
-    }
-  ]
+  "schema": 2,
+  "application": {
+    "from_line": "previous-contract-line-or-null",
+    "to_line": "current-contract-line",
+    "status": "candidate",
+    "source": {
+      "commit": "exact-pre-change-commit",
+      "version_source": "project-relative-rules-file"
+    },
+    "owner": {
+      "accepted_by": null,
+      "accepted_at": null
+    },
+    "finalized_at": null,
+    "open": []
+  }
 }
