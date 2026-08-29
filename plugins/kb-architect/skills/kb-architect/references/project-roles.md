@@ -1,13 +1,15 @@
 # Проектные роли — специальная дельта
 
-Роль — project-owned Agent Skill о том, **как агент обращается со знаниями**. Для неё
-действует общий KB-контракт; второй системы управления нет.
+Роль — project-specific selector метода и маршрутов знаний. Сам метод — project-owned
+Agent Skill о том, **как агент обращается со знаниями**. Selector-ы могут делить skill;
+всеми управляет общий KB-контракт.
 
 ## Граница
 
 | Слой | Содержимое | Канон |
 |---|---|---|
-| роль | назначение, профессиональный метод, source ladder, evidence threshold, stops и запреты | `skills/<role>/SKILL.md` |
+| role selector | назначение, trigger и маршруты знаний | `PROJECT_ROLES.json` |
+| method skill | общий профессиональный метод, source ladder, evidence threshold, stops и запреты | `skills/<role>/SKILL.md` |
 | знание | факты, законы, диагнозы, события, гипотезы, планы, portal recipes | KB проекта |
 | tool | воспроизводимое извлечение, сверка или отправка | script/MCP/connector |
 
@@ -16,46 +18,36 @@
 
 ## Один канон и выбор
 
-```text
-PROJECT_ROLES.json                 # posture, triggers, wiring, validators, budgets
-KNOWLEDGE_INDEX.json               # project-specific knowledge addresses
-skills/<name>/SKILL.md             # professional method
-.agents/skills/<name> -> ../../skills/<name>
-.claude/skills/<name> -> ../../skills/<name>
-```
-
-Claude, Codex, cloud и AWS обнаруживают один Git-канон. Connectors и secrets
-принимаются отдельно по средам.
-
-`PROJECT_ROLES.json` владеет project-specific `load_when`; `SKILL.md` — методом.
-Проект явно объявляет posture: `required`, `transitioning` или `not-applicable` с
-причиной. Непокрытый существенный вывод — stop. Все совпавшие required-роли
-загружаются; конфликт сохраняется и эскалируется.
+`PROJECT_ROLES.json` хранит posture, selector-ы и budgets; `KNOWLEDGE_INDEX.json` —
+адреса знаний; `skills/<name>/SKILL.md` — метод. `.agents/skills` и `.claude/skills`
+ссылаются на тот же Git-канон. Connectors и secrets принимаются по средам отдельно.
+Posture: `required`, `transitioning` или `not-applicable` с причиной. Непокрытый
+существенный вывод — stop; все совпавшие required-selector-ы загружаются, конфликт
+сохраняется.
 
 ## Как растить и разделять
 
 В роли оставляй только метод. Факты дела, нормативные тексты, контакты, состояние,
 переписку и инструментальные инструкции держи в индексированной KB.
 
-Разделяй skill, если различаются triggers, полномочия, source ladder или stops, либо
-обычная задача использует лишь одну его часть. Число ролей само по себе не лимит;
-лимитируется стоимость реально загружаемого сценария.
+Разные triggers требуют разных selector-ов, но не обязательно разных skills.
+Разделяй method skill, если расходятся полномочия, source ladder, stops, quality owner
+или общий entry заставляет обычную узкую задачу постоянно грузить ненужный метод.
+Один skill допустим для selector-ов с общими инвариантами и подтверждённым route-cost.
+Лимитируется стоимость сценария, а не число selector-ов.
 
-Цикл изменения: реальные задачи → read-only опись → минимальный candidate → tests →
-quality review → version/exact-path commit → fresh-context acceptance. Готовую
-community-роль можно принять, адаптировать или смешать с provenance/licence.
-Пропорциональный внешний обзор получает `done`, `deferred` или `not-applicable` с
-причиной; полный мировой поиск не обязателен на каждую правку.
+Цикл: реальные задачи → read-only опись → минимальный candidate → tests → quality
+review → version/commit → fresh-context acceptance. Community-метод можно принять,
+адаптировать или смешать с provenance/licence; внешний обзор имеет исход `done`,
+`deferred` или `not-applicable`, а не запускается полностью на каждую правку.
 
-`quality_owner` отвечает за метод; `kb-architect` — за gate/receipt/rollback;
-владелец — за acceptance и внешнюю authority. `ROLE_QUALITY_REVIEW.json` сам не
-доказывает предметную правильность. `review_scope`: `packaging-only`,
-`internal-method`, `external-benchmark` или `licensed-review`; перекладка не получает
-профессиональный `PASS`.
+`quality_owner` отвечает за метод; `kb-architect` — gate/receipt/rollback; владелец —
+за acceptance/authority. `packaging-only` review не получает профессиональный `PASS`.
 
 ## Проверяемая готовность
 
-Schema 3 `ROLE_ACCEPTANCE.json` разделяет четыре исхода:
+Schema 4 `ROLE_ACCEPTANCE.json` разделяет четыре исхода; schema 2/3 читаются как
+legacy до следующей project migration:
 
 1. `STRUCTURAL_PASS` — tracked canon, portable frontmatter, общий Agent Skills и
    project validators, knowledge wiring, hashes и static costs;
@@ -66,19 +58,23 @@ Schema 3 `ROLE_ACCEPTANCE.json` разделяет четыре исхода:
    authority остаётся `UNKNOWN`;
 4. `OWNER_ACCEPTED` — отдельная post-results приёмка владельца.
 
-`DISCOVERY_PASS` обязателен каждому заявленному агенту. Manifest
-`acceptance.behavior_scope: shared` и receipt
-`BEHAVIOR_PASS.runtime_scope: shared` означают один общий behavior suite. Свободный
-`validation.*.scope` не усиливает машинный gate. Наблюдаемое расхождение конкретной
-среды переоткрывает acceptance как defect/`UNKNOWN`, а не заводит второй постоянный
-набор правил. Schema 2 читается как legacy до project migration.
+`DISCOVERY_PASS` обязателен каждому агенту. `behavior_scope: shared` означает один
+suite; расхождение среды переоткрывает acceptance как `UNKNOWN`, а не создаёт второй
+набор правил.
 
-Schema-3 behavior case получает PASS только с разными tracked+hashed
+Schema-4 behavior case получает PASS только с разными tracked+hashed
 input/expected/observed и одним structured tracked harness. Явный
 `kb_behavior.py <root> --execute` записывает exit/time/case ids/hashes;
 `kb_skills.py` project code не запускает, а сверяет receipt. Ручной JSON или
 несуществующий harness дают `BEHAVIOR_EVIDENCE_UNEXECUTED`. Это защита от случайного
-самоудостоверения, не криптографическая аттестация; discovery/owner gates отдельны.
+самоудостоверения. Для каждого case schema 4 также требует named negative control.
+Runner сам создаёт временную копию всех tracked-файлов, проверяет hash цели, выполняет
+вредное точное `replace-text`, а затем запускает тот же harness с теми же argv.
+Изменённый проект обязан дать код `10`; parser error и timeout не подходят. Целью не
+может быть сам harness. Отдельная безвредная правка той же цели обязана остаться
+зелёной: детектор любого изменения также не проходит. Иначе результат
+`BEHAVIOR_EVIDENCE_INADEQUATE`. Это проверяет чувствительность, но не заменяет
+inspection; discovery/owner gates отдельны.
 
 Ссылка, symlink или список test names доказывают только structure. Метод, trigger,
 wiring, quality review, дерево роли или budget change протухляют acceptance. Команды
@@ -96,11 +92,9 @@ validator имеют один канон в `PROJECT_ROLES.json`; boot указ�
   прямо ссылается `SKILL.md`, и объявленные knowledge `route_files`;
 - actual receipt — input/cached-input/output/orchestration tokens либо `UNKNOWN`.
 
-Обязателен `all_roles_scenario`; 8 КиБ — review threshold, не максимум, а
-`accepted_*` — budget с headroom. Рост даёт `OPTIMIZATION_REQUIRED`; экономия с
-потерей recall/stop отклоняется. Checker включает routed files и Markdown-ссылки роли;
-schema-2 linked bytes остаются migration delta. Tree hash доказывает integrity, не
-автозагрузку tests/evidence.
+Обязателен `all_roles_scenario`; 8 КиБ — review threshold, `accepted_*` — budget с
+headroom. Рост даёт `OPTIMIZATION_REQUIRED`; экономия с потерей recall/stop отклоняется.
+Tree hash доказывает integrity, не автозагрузку tests/evidence.
 
 Вынос знания из толстой роли атомарен: создать knowledge canon → добавить
 route/aliases → связать роль → доказать fresh-context recall → удалить копию.
@@ -114,16 +108,11 @@ route/aliases → связать роль → доказать fresh-context rec
 
 ## Миграция и редкое заимствование
 
-До приёмки legacy остаётся authoritative; candidate проверяют через
-`--registry <project>/PROJECT_ROLES.json`. Это разделение старого канона и candidate,
-не дубль checkout: source commit даёт rollback, worktree нужен лишь параллельному writer.
-После переключения `.kb-skills.json`
-становится navigation tombstone к новому канону.
+До приёмки legacy authoritative; candidate проверяют через `--registry`; source commit даёт rollback.
+После переключения `.kb-skills.json` становится navigation tombstone.
 
-По умолчанию роль локальна. Для редкого заимствования owner выпускает version, а
-потребитель фиксирует repository + exact pin + recovery и принимает snapshot.
-Изменения возвращаются owner; knowledge routes остаются локальными. Центральный
-репозиторий ролей не нужен без повторяемого спроса.
+Заимствование редкое: owner выпускает version, потребитель фиксирует repository + exact
+pin + recovery, а изменения возвращает owner; knowledge routes остаются локальными.
 
 Проекты мигрируют по одному: source snapshot → candidate → четыре исхода → post-results
 решение владельца → marker последним. Полный ledger описан в `references/migration.md`.

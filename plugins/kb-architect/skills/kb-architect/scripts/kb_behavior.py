@@ -4,7 +4,8 @@
 The ordinary role checker never executes project code.  This command is the
 separate, explicit execution boundary: it runs one tracked Python harness
 without a shell, with a reduced environment, and writes a receipt binding the
-harness and every input/expected/observed artifact declared by schema 3.
+harness and every input/expected/observed artifact declared by schema 3/4. Schema 4
+also records one declared failing negative control per semantic case.
 """
 
 from __future__ import annotations
@@ -15,14 +16,16 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
 
 
-PROTOCOL = "kb-behavior-run/v1"
-RUNNER_VERSION = "1"
+PROTOCOL = "kb-behavior-run/v2"
+RUNNER_VERSION = "2"
 OUTPUT_LIMIT = 32_768
+NEGATIVE_CONTROL_EXIT = 10
 
 
 def sha256(path: Path) -> str:
@@ -55,16 +58,113 @@ def tracked(root: Path, path: Path) -> bool:
     return result.returncode == 0
 
 
-def load_plan(root: Path, acceptance_path: Path) -> tuple[dict, dict[str, str], dict[str, str]]:
+def mutation_spec(case: str, label: str, value: object) -> dict:
+    if not isinstance(value, dict) or value.get("kind") != "replace-text":
+        raise ValueError(f"{case}: {label}.kind must be replace-text")
+    find = value.get("find")
+    replace = value.get("replace")
+    count = value.get("count")
+    if not isinstance(find, str) or not find or not isinstance(replace, str) \
+            or find == replace or count != 1:
+        raise ValueError(
+            f"{case}: {label} requires distinct find/replace and count=1")
+    return value
+
+
+def control_spec(root: Path, case: str, control: object) -> tuple[Path, dict, dict]:
+    if not isinstance(control, dict):
+        raise ValueError(f"{case}: negative_control is required by schema 4")
+    control_id = control.get("id")
+    if not isinstance(control_id, str) or not control_id.strip():
+        raise ValueError(f"{case}: negative_control.id is required")
+    target = control.get("target")
+    if not isinstance(target, dict):
+        raise ValueError(f"{case}: negative_control.target evidence is required")
+    target_path = inside(root, target.get("path"), f"{case}.negative_control.target")
+    if not target_path.is_file() or target_path.is_symlink() or not tracked(root, target_path):
+        raise ValueError(f"{case}: negative-control target must be a tracked regular file")
+    target_hash = target.get("sha256")
+    if target_hash != sha256(target_path):
+        raise ValueError(f"{case}: negative-control target hash does not match")
+    mutation = mutation_spec(case, "mutation", control.get("mutation"))
+    neutral = mutation_spec(case, "neutral_mutation", control.get("neutral_mutation"))
+    if mutation == neutral:
+        raise ValueError(f"{case}: harmful and neutral mutations must differ")
+    try:
+        text = target_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{case}: mutation target must be UTF-8 text") from exc
+    for label, item in (("mutation", mutation), ("neutral_mutation", neutral)):
+        if text.count(item["find"]) != 1:
+            raise ValueError(f"{case}: {label} find text must occur exactly once")
+    if control.get("expected_exit") != NEGATIVE_CONTROL_EXIT:
+        raise ValueError(
+            f"{case}: negative_control.expected_exit must be {NEGATIVE_CONTROL_EXIT}")
+    return target_path, mutation, neutral
+
+
+def copy_tracked_tree(root: Path, destination: Path) -> None:
+    listed = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"], capture_output=True, check=True)
+    for raw in listed.stdout.split(b"\0"):
+        if not raw:
+            continue
+        relative = Path(raw.decode("utf-8", errors="surrogateescape"))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("tracked path leaves project root")
+        source = root / relative
+        target = destination / relative
+        if source.is_symlink():
+            link = os.readlink(source)
+            if os.path.isabs(link):
+                raise ValueError(f"tracked symlink is absolute: {relative}")
+            resolved = (source.parent / link).resolve(strict=False)
+            try:
+                resolved.relative_to(root)
+            except ValueError as exc:
+                raise ValueError(f"tracked symlink leaves project root: {relative}") from exc
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(link)
+        elif source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+    subprocess.run(["git", "-C", str(destination), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(destination), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(destination), "-c", "user.name=kb-behavior-runner",
+         "-c", "user.email=runner@example.invalid", "commit", "-qm", "fixture"],
+        check=True)
+
+
+def apply_control(root: Path, case: str, control: dict, *, neutral: bool = False) -> dict:
+    target_path, harmful, harmless = control_spec(root, case, control)
+    mutation = harmless if neutral else harmful
+    text = target_path.read_text(encoding="utf-8")
+    mutated = text.replace(mutation["find"], mutation["replace"], 1)
+    target_path.write_text(mutated, encoding="utf-8")
+    return {
+        "id": control["id"] + (":neutral" if neutral else ""),
+        "target_path": target_path.relative_to(root).as_posix(),
+        "target_sha256": control["target"]["sha256"],
+        "mutation": mutation,
+        "mutated_sha256": sha256(target_path),
+        "expected_exit": 0 if neutral else control["expected_exit"],
+    }
+
+
+def load_plan(root: Path, acceptance_path: Path
+              ) -> tuple[int, dict, dict[str, str], dict[str, str], dict[str, dict]]:
     data = json.loads(acceptance_path.read_text(encoding="utf-8"))
     behavior = data.get("outcomes", {}).get("BEHAVIOR_PASS", {})
     cases = behavior.get("cases", {}) if isinstance(behavior, dict) else {}
-    if data.get("schema") != 3 or not isinstance(cases, dict) or not cases:
-        raise ValueError("schema-3 BEHAVIOR_PASS.cases are required")
+    schema = data.get("schema")
+    if schema not in {3, 4} or not isinstance(cases, dict) or not cases:
+        raise ValueError("schema-3/4 BEHAVIOR_PASS.cases are required")
 
     harnesses: list[dict] = []
     case_run_ids: dict[str, str] = {}
     artifacts: dict[str, str] = {}
+    controls: dict[str, dict] = {}
     for case, result in cases.items():
         run = result.get("run", {}) if isinstance(result, dict) else {}
         harness = run.get("harness") if isinstance(run, dict) else None
@@ -81,11 +181,28 @@ def load_plan(root: Path, acceptance_path: Path) -> tuple[dict, dict[str, str], 
                 raise ValueError(f"{case}.{field}: artifact is required")
             path = inside(root, item.get("path"), f"{case}.{field}")
             artifacts[path.relative_to(root).as_posix()] = str(item.get("sha256", ""))
+        if schema == 4:
+            control = run.get("negative_control")
+            control_spec(root, str(case), control)
+            controls[str(case)] = control
 
     harness = harnesses[0]
     if any(item != harness for item in harnesses[1:]):
         raise ValueError("all shared behavior cases must bind one identical harness")
-    return harness, case_run_ids, artifacts
+    if schema == 4:
+        ids = [control["id"] for control in controls.values()]
+        mutations = [json.dumps(
+            {"target": control["target"], "mutation": control["mutation"]},
+            sort_keys=True) for control in controls.values()]
+        if len(ids) != len(set(ids)) or len(mutations) != len(set(mutations)):
+            raise ValueError(
+                "schema-4 negative controls require unique ids and target/mutation per case")
+        harness_path = inside(root, harness.get("path"), "harness")
+        for case, control in controls.items():
+            target_path, _harmful, _harmless = control_spec(root, case, control)
+            if target_path == harness_path:
+                raise ValueError(f"{case}: negative-control target cannot be the harness")
+    return schema, harness, case_run_ids, artifacts, controls
 
 
 def main() -> int:
@@ -110,7 +227,8 @@ def main() -> int:
     try:
         acceptance = inside(root, args.acceptance, "acceptance")
         receipt = inside(root, args.receipt, "receipt")
-        harness, case_run_ids, declared_artifacts = load_plan(root, acceptance)
+        schema, harness, case_run_ids, declared_artifacts, controls = load_plan(
+            root, acceptance)
         harness_path = inside(root, harness.get("path"), "harness")
         harness_hash = str(harness.get("sha256", ""))
         harness_argv = harness.get("argv")
@@ -146,6 +264,72 @@ def main() -> int:
         exit_code = 124
         stdout = (exc.stdout or "")[-OUTPUT_LIMIT:]
         stderr = ((exc.stderr or "") + "\nTIMEOUT")[-OUTPUT_LIMIT:]
+    negative_results: dict[str, dict] = {}
+    neutral_results: dict[str, dict] = {}
+    if exit_code == 0 and schema == 4:
+        for case, control in controls.items():
+            control_record: dict = {}
+            try:
+                with tempfile.TemporaryDirectory(prefix="kb-behavior-negative-") as folder:
+                    negative_root = Path(folder).resolve()
+                    copy_tracked_tree(root, negative_root)
+                    control_record = apply_control(negative_root, case, control)
+                    negative_harness = negative_root / harness_path.relative_to(root)
+                    negative = subprocess.run(
+                        [sys.executable, str(negative_harness), *harness_argv],
+                        cwd=negative_root, env=safe_env, capture_output=True, text=True,
+                        timeout=args.timeout_seconds)
+                    actual_exit = negative.returncode
+                    negative_stdout = negative.stdout[-OUTPUT_LIMIT:]
+                    negative_stderr = negative.stderr[-OUTPUT_LIMIT:]
+            except subprocess.TimeoutExpired as exc:
+                actual_exit = 124
+                negative_stdout = (exc.stdout or "")[-OUTPUT_LIMIT:]
+                negative_stderr = ((exc.stderr or "") + "\nTIMEOUT")[-OUTPUT_LIMIT:]
+            except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+                actual_exit = 125
+                negative_stdout = ""
+                negative_stderr = f"NEGATIVE_CONTROL_SETUP_FAILED: {exc}"
+            expected_exit = control["expected_exit"]
+            negative_results[case] = {
+                **control_record,
+                "actual_exit": actual_exit,
+                "stdout_tail": negative_stdout,
+                "stderr_tail": negative_stderr,
+            }
+            if actual_exit != expected_exit:
+                exit_code = exit_code or 4
+            neutral_record: dict = {}
+            try:
+                with tempfile.TemporaryDirectory(prefix="kb-behavior-neutral-") as folder:
+                    neutral_root = Path(folder).resolve()
+                    copy_tracked_tree(root, neutral_root)
+                    neutral_record = apply_control(
+                        neutral_root, case, control, neutral=True)
+                    neutral_harness = neutral_root / harness_path.relative_to(root)
+                    neutral_run = subprocess.run(
+                        [sys.executable, str(neutral_harness), *harness_argv],
+                        cwd=neutral_root, env=safe_env, capture_output=True, text=True,
+                        timeout=args.timeout_seconds)
+                    neutral_exit = neutral_run.returncode
+                    neutral_stdout = neutral_run.stdout[-OUTPUT_LIMIT:]
+                    neutral_stderr = neutral_run.stderr[-OUTPUT_LIMIT:]
+            except subprocess.TimeoutExpired as exc:
+                neutral_exit = 124
+                neutral_stdout = (exc.stdout or "")[-OUTPUT_LIMIT:]
+                neutral_stderr = ((exc.stderr or "") + "\nTIMEOUT")[-OUTPUT_LIMIT:]
+            except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+                neutral_exit = 125
+                neutral_stdout = ""
+                neutral_stderr = f"NEUTRAL_CONTROL_SETUP_FAILED: {exc}"
+            neutral_results[case] = {
+                **neutral_record,
+                "actual_exit": neutral_exit,
+                "stdout_tail": neutral_stdout,
+                "stderr_tail": neutral_stderr,
+            }
+            if neutral_exit != 0:
+                exit_code = exit_code or 4
     finished = utc_now()
 
     actual_artifacts: dict[str, str] = {}
@@ -176,6 +360,8 @@ def main() -> int:
             "argv": harness_argv,
         },
         "case_run_ids": case_run_ids,
+        "negative_controls": negative_results,
+        "neutral_controls": neutral_results,
         "artifacts": actual_artifacts,
         "stdout_tail": stdout,
         "stderr_tail": stderr,

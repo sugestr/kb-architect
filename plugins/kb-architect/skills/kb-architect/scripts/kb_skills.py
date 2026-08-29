@@ -313,12 +313,13 @@ def evidence_errors(root: Path, value: object, label: str) -> list[str]:
     return errors
 
 
-def behavior_run_errors(root: Path, case: str, value: object) -> list[str]:
+def behavior_run_errors(root: Path, case: str, value: object,
+                        receipt_schema: int = 3) -> list[str]:
     """Bind a green behavior case to an executed, inspectable run.
 
     A tracked Markdown assertion can describe the expected behavior without
-    proving that anything ran.  Schema 3 therefore records distinct input,
-    expected and observed artifacts plus run identity and protocol.
+    proving that anything ran. Schema 3 records distinct artifacts and execution;
+    schema 4 additionally requires mutation sensitivity.
     """
     label = f"BEHAVIOR_PASS.{case}"
     if not isinstance(value, dict):
@@ -366,15 +367,24 @@ def behavior_run_errors(root: Path, case: str, value: object) -> list[str]:
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           f"execution receipt unreadable: {exc}")
             receipt = {}
-        if receipt.get("schema") != 1 \
-                or receipt.get("protocol") != "kb-behavior-run/v1" \
-                or receipt.get("runner_version") != "1":
+        protocol = (receipt.get("protocol"), receipt.get("runner_version"))
+        allowed_protocols = {("kb-behavior-run/v1", "1"),
+                             ("kb-behavior-run/v2", "2")}
+        if receipt.get("schema") != 1 or protocol not in allowed_protocols:
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "canonical behavior-run receipt is required")
+        if receipt_schema == 4 and protocol != ("kb-behavior-run/v2", "2"):
+            errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                          "schema 4 requires behavior-run v2 sensitivity evidence")
         runner_hash = receipt.get("runner_sha256")
         if not isinstance(runner_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", runner_hash):
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "runner_sha256 is invalid")
+        elif receipt_schema == 4:
+            runner_path = Path(__file__).with_name("kb_behavior.py")
+            if not runner_path.is_file() or runner_hash != file_sha256(runner_path):
+                errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                              "execution receipt does not bind the installed runner")
         if receipt.get("exit_code") != 0:
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "recorded harness exit must be zero")
@@ -394,6 +404,120 @@ def behavior_run_errors(root: Path, case: str, value: object) -> list[str]:
                 for path, digest in artifact_hashes.items()):
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "execution receipt does not bind behavior artifacts")
+        if receipt_schema == 4:
+            control = value.get("negative_control")
+            if not isinstance(control, dict):
+                errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                              "negative_control is required")
+            else:
+                control_id = control.get("id")
+                if not isinstance(control_id, str) or not control_id.strip():
+                    errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                  "negative_control.id is required")
+                target = control.get("target")
+                target_valid = isinstance(target, dict)
+                if target_valid:
+                    errors.extend(evidence_errors(
+                        root, [target], f"{label}.run.negative_control.target"))
+                else:
+                    errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                  "negative_control.target evidence is required")
+                mutation = control.get("mutation")
+                neutral_mutation = control.get("neutral_mutation")
+                def valid_mutation(item: object) -> bool:
+                    return isinstance(item, dict) \
+                        and item.get("kind") == "replace-text" \
+                        and isinstance(item.get("find"), str) \
+                        and bool(item.get("find")) \
+                        and isinstance(item.get("replace"), str) \
+                        and item.get("find") != item.get("replace") \
+                        and item.get("count") == 1
+
+                mutation_valid = valid_mutation(mutation)
+                neutral_valid = valid_mutation(neutral_mutation)
+                if not mutation_valid:
+                    errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: mutation "
+                                  "requires replace-text, distinct find/replace and count=1")
+                if not neutral_valid:
+                    errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: neutral_mutation "
+                                  "requires replace-text, distinct find/replace and count=1")
+                elif mutation_valid and mutation == neutral_mutation:
+                    errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: harmful and "
+                                  "neutral mutations must differ")
+                expected_exit = control.get("expected_exit")
+                if expected_exit != 10:
+                    errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                  "negative_control.expected_exit must be 10")
+                expected_record = None
+                neutral_record = None
+                if target_valid and mutation_valid and neutral_valid:
+                    raw_target = Path(str(target.get("path", "")))
+                    target_path = (raw_target if raw_target.is_absolute()
+                                   else root / raw_target).resolve(strict=False)
+                    if not outside(root, target_path) and target_path.is_file():
+                        harness_raw = Path(str(harness.get("path", ""))) \
+                            if isinstance(harness, dict) else Path()
+                        harness_path = (harness_raw if harness_raw.is_absolute()
+                                        else root / harness_raw).resolve(strict=False)
+                        if target_path == harness_path:
+                            errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                          "negative-control target cannot be the harness")
+                        try:
+                            original = target_path.read_text(encoding="utf-8")
+                        except (OSError, UnicodeDecodeError):
+                            errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                          "mutation target must be UTF-8 text")
+                        else:
+                            for mutation_label, item in (
+                                    ("mutation", mutation),
+                                    ("neutral_mutation", neutral_mutation)):
+                                if original.count(item["find"]) != 1:
+                                    errors.append(
+                                        f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                        f"{mutation_label} find text must occur exactly once")
+                            if original.count(mutation["find"]) == 1 \
+                                    and original.count(neutral_mutation["find"]) == 1 \
+                                    and target_path != harness_path:
+                                mutated = original.replace(
+                                    mutation["find"], mutation["replace"], 1)
+                                expected_record = {
+                                    "id": control_id,
+                                    "target_path": target_path.relative_to(root).as_posix(),
+                                    "target_sha256": target.get("sha256"),
+                                    "mutation": mutation,
+                                    "mutated_sha256": hashlib.sha256(
+                                        mutated.encode("utf-8")).hexdigest(),
+                                    "expected_exit": expected_exit,
+                                }
+                                neutral = original.replace(
+                                    neutral_mutation["find"],
+                                    neutral_mutation["replace"], 1)
+                                neutral_record = {
+                                    "id": str(control_id) + ":neutral",
+                                    "target_path": target_path.relative_to(root).as_posix(),
+                                    "target_sha256": target.get("sha256"),
+                                    "mutation": neutral_mutation,
+                                    "mutated_sha256": hashlib.sha256(
+                                        neutral.encode("utf-8")).hexdigest(),
+                                    "expected_exit": 0,
+                                }
+                recorded = receipt.get("negative_controls", {})
+                observed = recorded.get(case, {}) if isinstance(recorded, dict) else {}
+                if expected_record is None or not isinstance(observed, dict) or any(
+                        observed.get(key) != expected
+                        for key, expected in expected_record.items()) \
+                        or observed.get("actual_exit") != expected_exit:
+                    errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                  "runner-owned mutation did not fail as declared")
+                neutral_recorded = receipt.get("neutral_controls", {})
+                neutral_observed = neutral_recorded.get(case, {}) \
+                    if isinstance(neutral_recorded, dict) else {}
+                if neutral_record is None or not isinstance(neutral_observed, dict) or any(
+                        neutral_observed.get(key) != expected
+                        for key, expected in neutral_record.items()) \
+                        or neutral_observed.get("actual_exit") != 0:
+                    errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                  "runner-owned neutral mutation did not stay green")
     return errors
 
 
@@ -846,7 +970,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 if receipt_schema_hint == 2 and support_bytes:
                     notes.append(f"ROLE_COST_SCHEMA_2_LEGACY {scenario_id}: "
                                  f"linked-role-support={support_bytes} is migration delta; "
-                                 "schema-2 accepted cost remains valid until schema 3 migration")
+                                 "schema-2 accepted cost remains valid until schema 4 migration")
                 measured_costs[scenario_id] = {
                     "accepted_role_entry_bytes": accepted_entry,
                     "accepted_static_route_bytes": accepted_static,
@@ -883,13 +1007,17 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     receipt = {}
                 receipt_schema = receipt.get("schema")
                 outcomes = receipt.get("outcomes", {})
-                if receipt_schema not in {2, 3} or not isinstance(outcomes, dict):
-                    errors.append("ROLE_ACCEPTANCE_SCHEMA_2_OR_3_REQUIRED")
+                if receipt_schema not in {2, 3, 4} or not isinstance(outcomes, dict):
+                    errors.append("ROLE_ACCEPTANCE_SCHEMA_2_3_OR_4_REQUIRED")
                     outcomes = {}
                 elif receipt_schema == 2:
                     notes.append("ROLE_ACCEPTANCE_SCHEMA_2_LEGACY: accepted for "
-                                 "backward compatibility; migrate to schema 3 for "
-                                 "machine-readable behavior scope")
+                                 "backward compatibility; migrate to schema 4 for "
+                                 "machine-readable behavior and sensitivity")
+                elif receipt_schema == 3:
+                    notes.append("ROLE_ACCEPTANCE_SCHEMA_3_LEGACY: execution provenance "
+                                 "is readable; migrate to schema 4 for negative-control "
+                                 "sensitivity evidence")
                 if set(outcomes) != ACCEPTANCE_OUTCOMES:
                     errors.append("role acceptance must separate STRUCTURAL_PASS, "
                                   "DISCOVERY_PASS, BEHAVIOR_PASS and OWNER_ACCEPTED")
@@ -964,7 +1092,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 cases = behavior.get("cases", {}) if isinstance(behavior, dict) else {}
                 if behavior.get("proof_mode") != "synthetic-first":
                     errors.append("BEHAVIOR_PASS: proof_mode must be synthetic-first")
-                if receipt_schema == 3:
+                if receipt_schema in {3, 4}:
                     declared_scope = acceptance.get("behavior_scope")
                     if declared_scope != "shared":
                         errors.append("acceptance.behavior_scope must be shared")
@@ -975,11 +1103,24 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     result = cases.get(case, {}) if isinstance(cases, dict) else {}
                     if result.get("result") != "PASS":
                         errors.append(f"BEHAVIOR_PASS.{case}: result must be PASS")
-                    elif receipt_schema == 3:
-                        errors.extend(behavior_run_errors(root, case, result.get("run")))
+                    elif receipt_schema in {3, 4}:
+                        errors.extend(behavior_run_errors(
+                            root, case, result.get("run"), receipt_schema))
                     else:
                         errors.extend(evidence_errors(root, result.get("evidence"),
                                                       f"BEHAVIOR_PASS.{case}"))
+                if receipt_schema == 4 and isinstance(cases, dict):
+                    controls = [
+                        cases.get(case, {}).get("run", {}).get("negative_control", {})
+                        for case in BEHAVIOURAL_COVERAGE
+                    ]
+                    ids = [item.get("id") for item in controls if isinstance(item, dict)]
+                    mutations = [json.dumps(
+                        {"target": item.get("target"), "mutation": item.get("mutation")},
+                        sort_keys=True) for item in controls if isinstance(item, dict)]
+                    if len(ids) != len(set(ids)) or len(mutations) != len(set(mutations)):
+                        errors.append("BEHAVIOR_EVIDENCE_INADEQUATE: schema-4 negative "
+                                      "controls require unique ids and target/mutation per case")
                 private = behavior.get("private_real_data", {}) \
                     if isinstance(behavior, dict) else {}
                 if private.get("authority") == "not-granted":
