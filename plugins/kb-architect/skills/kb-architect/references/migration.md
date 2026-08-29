@@ -6,7 +6,7 @@
 ## Версия состоит из двух смыслов
 
 - `kb_standard_version: 6.2` — принятая проектом **contract line**;
-- metadata `6.2.0`, `6.2.1`, `6.2.2` — точная сборка установленного инструмента.
+- metadata `6.2.0`, `6.2.1`, `6.2.2`, `6.2.3` — точная сборка установленного инструмента.
 
 Patch внутри линии обновляет tool/docs и не переоткрывает роли, owner acceptance или
 миграцию. Новый project gate появляется только у явно выпущенной contract line.
@@ -15,7 +15,11 @@ patch-релизов и не ведёт строку ledger на каждый и
 
 ## Короткий цикл
 
-1. До первой записи сохранить exact pre-change Git commit и файл, где прочитан marker.
+1. Сначала выполнить read-only `kb_skills.py <root> --prepare-candidate`: он возвращает
+   prefill из legacy/templates, список только смысловых `UNRESOLVED` и bounded
+   fresh-context prompt. Уже принятый проект получает `action: none`, поэтому patch не
+   открывает миграцию. До первой записи сохранить exact pre-change Git commit и файл,
+   где прочитан marker.
    Для tracked-only проекта этот commit уже является rollback; второй checkout не нужен.
    Если ветка продвинулась до финализации, сначала проверить промежуточные commits и
    заменить source на фактический parent candidate: старый предок остаётся session
@@ -25,8 +29,10 @@ patch-релизов и не ведёт строку ledger на каждый и
    смысла, wiring или bytes роли.
 3. Запустить только project checks, способные изменить решение. Для роли обычно это
    один `kb_skills.py --execute-project-check`: candidate передаёт `PENDING`, а runner
-   после выполнения сам записывает наблюдённый `PASS/FAIL`. Никогда не записывать успех
-   или exit `0` заранее. Затем один обычный fresh-context вопрос без имени
+   до выполнения связывает Git-tracked validator bytes, skill trees и wiring, а затем
+   сам записывает наблюдённый `PASS/FAIL`. После исправления validator вернуть check в
+   `PENDING` и выполнить ровно один новый запуск; прежний и новый input hashes должны
+   различаться. Никогда не записывать успех или exit `0` заранее. Затем один обычный fresh-context вопрос без имени
    роли, который проверяет selection, indexed recall и один stop/conflict.
 4. Показать владельцу содержательный diff, реальные `PASS/FAIL/UNKNOWN`, известные
    `OPEN` и rollback. Предметная корректность роли обсуждается столько, сколько нужно;

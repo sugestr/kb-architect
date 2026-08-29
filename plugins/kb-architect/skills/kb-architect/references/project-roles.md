@@ -45,10 +45,13 @@ version/commit → fresh-context acceptance. Community-метод принима
 
 ## Проверяемая готовность без отдельной бюрократии
 
-Новый project candidate хранит короткую приёмку прямо в `PROJECT_ROLES.json` по
-протоколу `kb-role-acceptance/v3`. Отдельные `ROLE_ACCEPTANCE.json`, пять behavior-case,
-mutation-suite и россыпь input/expected/observed receipts не требуются. Старые schema
-2–5 и accepted compact v1/v2 остаются читаемыми: patch их не переписывает.
+Начни read-only командой `kb_skills.py <root> --prepare-candidate`. Она печатает
+legacy/template/source prefill и смысловые `UNRESOLVED`, ничего не пишет, а для уже
+принятого проекта возвращает `action: none`. Смысл роли она не решает.
+
+Новый candidate хранит compact `kb-role-acceptance/v3` в `PROJECT_ROLES.json`.
+Отдельный receipt tree и mutation-suite не нужны; accepted schema 2–5, compact v1/v2
+и runner v1 остаются legacy-readable без patch-миграции.
 
 Перед `accepted` достаточно четырёх наблюдаемых результатов:
 
@@ -58,29 +61,24 @@ mutation-suite и россыпь input/expected/observed receipts не треб�
    recall и хотя бы один реальный stop/conflict;
 4. владелец видит результат и принимает его, сохраняя честные `OPEN`.
 
-Staged candidate держит check в `PENDING`. Один `kb_skills.py --execute-project-check`
-запускает command и сам пишет `PASS/FAIL`, run id и wiring hash; эти поля вручную не
-заполняют, после записи registry снова индексируют. Owner/live не входят в binding и не
-повторяют command. Fresh-context observation ссылается на native task/turn либо tracked
-evidence: checker проверяет связь, но не изображает model runner.
+Candidate передаёт `PENDING`; один `--execute-project-check` сам пишет `PASS/FAIL` и
+связывает command, project-local tracked validator, skill trees и wiring. Validator file
+должен быть назван в command; скрытый global code невоспроизводим. После его исправления
+верни `PENDING` и сделай один новый run. Owner/live не протухляют binding. Fresh-context
+observation ссылается на native task/turn либо tracked evidence.
 
-Приёмка связывает только SHA-256 текущих `SKILL.md`. Owner status живёт в manifest и
-не входит в эти hashes, поэтому переход `candidate → accepted` не протухляет
-собственный тест. Git commit уже связывает остальные bytes и даёт rollback.
+Compact acceptance отдельно связывает SHA-256 `SKILL.md`; Git commit — остальные bytes
+и rollback. Поля runner вручную не заполняют.
 
-Хотя бы один агент получает `TESTED`. Другой агент может получить `INHERITED`, если
-его discovery ведёт к тем же canonical bytes, wiring/config не менялись, а способность
-этого runtime уже доказана; либо честный `UNKNOWN` с причиной. Новый model-turn нужен
-при изменении wiring, конфигурации, видимого контента или при реальном расхождении, а
-не в каждом проекте.
+Хотя бы один агент получает `TESTED`. Другой — `INHERITED` при тех же bytes/wiring и
+доказанной способности runtime либо честный `UNKNOWN`. Новый model-turn нужен при
+изменении видимого входа или расхождении, а не в каждом проекте.
 
-Полный `kb_behavior.py`, mutation controls, per-case attribution и повтор по всем
-runtimes — maintainer/deep-audit инструменты. Проект включает их только по найденному
-риску, а не ради финализации. Core test suite выполняется при выпуске `kb-architect`;
-проект не повторяет его.
+`kb_behavior.py`, mutation controls и повтор по runtimes — только risk-driven audit.
+Core suite выполняется при выпуске `kb-architect`, не в проекте.
 
-`kb_skills.py` по-прежнему проверяет active roots и останавливается при одноимённой
-активной копии с другими bytes. Retired copy вне active roots не считается активной.
+Одноимённая active copy с другими bytes блокирует приёмку; retired copy вне active
+roots — нет.
 
 ## Стоимость
 

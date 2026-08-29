@@ -7,6 +7,8 @@ migration; they are reported as legacy, not rejected merely for being old.
 The checker reads files and Git metadata.  Only the explicit
 ``--execute-project-check`` flag runs one pending narrow check and records its
 observed result in the registry; ordinary validation never runs project code.
+``--prepare-candidate`` is deterministic and read-only: it prints a bounded
+prefill and leaves domain decisions unresolved.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from urllib.parse import unquote
 import uuid
 
 import kb_index
+import kb_apply
 import kb_paths
 
 
@@ -46,8 +49,9 @@ LIGHT_PROTOCOLS = {
     "kb-role-acceptance/v1", "kb-role-acceptance/v2", "kb-role-acceptance/v3",
 }
 CURRENT_LIGHT_PROTOCOL = "kb-role-acceptance/v3"
-PROJECT_CHECK_RUN_PROTOCOL = "kb-project-check-run/v1"
-PROJECT_CHECK_RUNNER_VERSION = "1"
+PROJECT_CHECK_RUN_PROTOCOL = "kb-project-check-run/v2"
+PROJECT_CHECK_RUNNER_VERSION = "2"
+LEGACY_PROJECT_CHECK_RUN = ("kb-project-check-run/v1", "1")
 
 # Exact public 6.1.4 runner. Schema 4 is legacy-readable only with this released
 # implementation, never with an arbitrary historical or project-provided hash.
@@ -880,7 +884,7 @@ def acceptance_schema_hint(root: Path, data: dict) -> int | None:
 
 
 def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dict],
-                            agents: list[str]) -> list[str]:
+                            agents: list[str], notes: list[str]) -> list[str]:
     """Validate one compact project acceptance record and its run locators.
 
     The manifest is not an execution engine.  Protocol v2 therefore binds PASS
@@ -948,15 +952,36 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
         else:
             expected_command = hashlib.sha256(
                 str(project_check.get("command", "")).encode("utf-8")).hexdigest()
-            expected_input = compact_project_check_input_sha256(root, data)
-            if execution.get("protocol") != PROJECT_CHECK_RUN_PROTOCOL \
-                    or execution.get("runner_version") != PROJECT_CHECK_RUNNER_VERSION:
+            run_identity = (execution.get("protocol"), execution.get("runner_version"))
+            legacy_run = run_identity == LEGACY_PROJECT_CHECK_RUN
+            current_run = run_identity == (
+                PROJECT_CHECK_RUN_PROTOCOL, PROJECT_CHECK_RUNNER_VERSION)
+            validator, validator_error = project_validator_binding(
+                root, project_check.get("command"))
+            if legacy_run and accepted:
+                expected_input = compact_project_check_input_sha256_v1(root, data)
+                notes.append("PROJECT_CHECK_RUN_V1_LEGACY_ATTESTED: accepted before "
+                             "validator-byte binding; patch builds do not reopen it")
+            elif legacy_run:
+                expected_input = None
+                errors.append("candidate project_check uses legacy runner receipt; "
+                              "reset it to PENDING and execute the current runner")
+            elif current_run:
+                expected_input = compact_project_check_input_sha256(
+                    root, data, validator)
+                if validator_error:
+                    errors.append(validator_error)
+                elif execution.get("validator_path") != validator.get("path") \
+                        or execution.get("validator_sha256") != validator.get("sha256"):
+                    errors.append("project_check execution does not match current validator bytes")
+            else:
+                expected_input = None
                 errors.append("project_check result requires the current runner protocol")
             if not execution.get("executed_at") or not execution.get("run_id"):
                 errors.append("project_check result requires runner-generated time and run_id")
             if execution.get("command_sha256") != expected_command:
                 errors.append("project_check execution does not match the declared command")
-            if execution.get("input_sha256") != expected_input:
+            if expected_input is not None and execution.get("input_sha256") != expected_input:
                 errors.append("project_check execution is stale for current role/index wiring")
             exit_code = execution.get("exit_code")
             if not isinstance(exit_code, int) or isinstance(exit_code, bool):
@@ -1009,8 +1034,8 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
     return errors
 
 
-def compact_project_check_input_sha256(root: Path, data: dict) -> str:
-    """Bind one run to role wiring while excluding mutable owner/live outcomes."""
+def compact_project_check_input_sha256_v1(root: Path, data: dict) -> str:
+    """Reproduce the released 6.2.2 binding for accepted legacy receipts."""
     acceptance = data.get("acceptance") if isinstance(data.get("acceptance"), dict) else {}
     project_check = acceptance.get("project_check") \
         if isinstance(acceptance.get("project_check"), dict) else {}
@@ -1019,6 +1044,83 @@ def compact_project_check_input_sha256(root: Path, data: dict) -> str:
         "registry": {key: value for key, value in data.items() if key != "acceptance"},
         "accepted_skill_sha256": acceptance.get("accepted_skill_sha256"),
         "project_check_command": project_check.get("command"),
+        "knowledge_index_sha256": file_sha256(index) if index.is_file() else None,
+    }
+    encoded = json.dumps(
+        binding, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def project_validator_binding(root: Path, command: object) -> tuple[dict | None, str | None]:
+    """Resolve the primary Git-tracked project file executed by one command.
+
+    The runner intentionally does not interpret shell pipelines or guess an
+    implementation hidden behind a global command.  A Python/shell script, a
+    direct executable, a pytest file, or a tracked Makefile is enough to make
+    the validator bytes explicit and recoverable.
+    """
+    root = root.resolve()
+    try:
+        argv = shlex.split(command) if isinstance(command, str) else []
+    except ValueError as exc:
+        return None, f"project_check command is not parseable: {exc}"
+    if not argv:
+        return None, "project_check command is empty"
+
+    candidates: list[Path] = []
+    for token in argv:
+        if not token or token.startswith("-"):
+            continue
+        raw = Path(token).expanduser()
+        candidate = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
+        if outside(root, candidate) or not candidate.is_file():
+            continue
+        candidates.append(candidate)
+    if Path(argv[0]).name in {"make", "gmake"}:
+        for name in ("GNUmakefile", "makefile", "Makefile"):
+            candidate = (root / name).resolve(strict=False)
+            if candidate.is_file():
+                candidates.append(candidate)
+                break
+
+    for candidate in dict.fromkeys(candidates):
+        if tracked(root, candidate):
+            return {
+                "path": candidate.relative_to(root).as_posix(),
+                "sha256": file_sha256(candidate),
+            }, None
+    return None, ("project_check command must name one Git-tracked validator file "
+                  "inside the project")
+
+
+def compact_skill_tree_bindings(root: Path, data: dict) -> dict[str, str | None]:
+    """Hash every tracked file under each declared canonical role skill."""
+    bindings: dict[str, str | None] = {}
+    for entry in data.get("skills", []):
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            continue
+        raw = Path(str(entry.get("canonical", ""))).expanduser()
+        canonical = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
+        bindings[entry["name"]] = tracked_tree_sha256(canonical)
+    return bindings
+
+
+def compact_project_check_input_sha256(
+        root: Path, data: dict, validator: dict | None = None) -> str:
+    """Bind a new run to role/index wiring, skill trees and validator bytes."""
+    acceptance = data.get("acceptance") if isinstance(data.get("acceptance"), dict) else {}
+    project_check = acceptance.get("project_check") \
+        if isinstance(acceptance.get("project_check"), dict) else {}
+    if validator is None:
+        validator, _error = project_validator_binding(root, project_check.get("command"))
+    index = root / "KNOWLEDGE_INDEX.json"
+    binding = {
+        "registry": {key: value for key, value in data.items() if key != "acceptance"},
+        "accepted_skill_sha256": acceptance.get("accepted_skill_sha256"),
+        "accepted_skill_tree_sha256": compact_skill_tree_bindings(root, data),
+        "project_check_command": project_check.get("command"),
+        "project_validator": validator,
         "knowledge_index_sha256": file_sha256(index) if index.is_file() else None,
     }
     encoded = json.dumps(
@@ -1066,14 +1168,12 @@ def execute_compact_project_check(root: Path, data: dict, registry: Path,
     if command not in declared_commands:
         errors.append("project_check must bind one declared project validator command")
         return
-    try:
-        argv = shlex.split(command) if isinstance(command, str) else []
-    except ValueError as exc:
-        errors.append(f"project_check command is not parseable: {exc}")
+    validator, validator_error = project_validator_binding(root, command)
+    if validator_error:
+        errors.append(validator_error)
         return
-    if not argv:
-        errors.append("project_check command is empty")
-        return
+    argv = shlex.split(command)
+    input_sha256 = compact_project_check_input_sha256(root, data, validator)
     failure = None
     try:
         result = subprocess.run(argv, cwd=root, timeout=timeout)
@@ -1092,7 +1192,9 @@ def execute_compact_project_check(root: Path, data: dict, registry: Path,
         "executed_at": executed_at,
         "run_id": f"kb-project-check-{uuid.uuid4().hex}",
         "command_sha256": hashlib.sha256(str(command).encode("utf-8")).hexdigest(),
-        "input_sha256": compact_project_check_input_sha256(root, data),
+        "input_sha256": input_sha256,
+        "validator_path": validator["path"],
+        "validator_sha256": validator["sha256"],
         "exit_code": exit_code,
     }
     if failure:
@@ -1391,7 +1493,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     execute_compact_project_check(
                         root, data, registry, skill_by_name,
                         project_check_timeout, errors, notes)
-            errors.extend(light_acceptance_errors(root, data, skill_by_name, agents))
+            errors.extend(light_acceptance_errors(
+                root, data, skill_by_name, agents, notes))
             if protocol == "kb-role-acceptance/v1" and accepted_mode:
                 notes.append("ROLE_ACCEPTANCE_V1_LEGACY_ATTESTED: accepted without v2 "
                              "external run locators; patch builds do not reopen it")
@@ -1707,6 +1810,187 @@ def choose_registry(root: Path, explicit: Path | None) -> Path:
     return visible
 
 
+def load_json_object(path: Path) -> dict | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def current_contract_line() -> str:
+    skill_file = Path(__file__).resolve().parent.parent / "SKILL.md"
+    version = frontmatter_value(skill_file, "version") or "6.2"
+    try:
+        return kb_apply.line_text(version)
+    except (AttributeError, ValueError):
+        return "6.2"
+
+
+def current_marker(root: Path) -> tuple[str | None, str | None]:
+    """Find one visible project contract marker without broad repository scans."""
+    for name in ("AGENTS.md", "CLAUDE.md", "PROJECT_RULES.md", "README.md"):
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            marker = kb_apply.marker_from_bytes(path.read_bytes())
+            if marker:
+                return kb_apply.line_text(marker), name
+        except (OSError, AttributeError, ValueError):
+            continue
+    return None, None
+
+
+def legacy_candidate_prefill(root: Path, legacy: dict) -> dict:
+    """Expose only facts already declared by legacy; do not synthesize roles."""
+    skills: list[dict] = []
+    selectors: list[dict] = []
+    implicit: list[dict] = []
+    for entry in legacy.get("skills", []):
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            continue
+        name = entry["name"]
+        canonical = str(entry.get("canonical") or f"skills/{name}")
+        skill_path = Path(canonical).expanduser()
+        skill_path = (skill_path if skill_path.is_absolute()
+                      else root / skill_path).resolve(strict=False)
+        validation = entry.get("validation") \
+            if isinstance(entry.get("validation"), dict) else {}
+        project_gate = validation.get("project") \
+            if isinstance(validation.get("project"), dict) else validation
+        skills.append({
+            key: value for key, value in {
+                "name": name,
+                "canonical": canonical,
+                "owner": entry.get("owner"),
+                "version": frontmatter_value(skill_path / "SKILL.md", "version")
+                    or entry.get("version"),
+                "skill_sha256": file_sha256(skill_path / "SKILL.md")
+                    if (skill_path / "SKILL.md").is_file() else None,
+                "validation": project_gate,
+                "failure_policy": entry.get("failure_policy"),
+                "recovery_cost": entry.get("recovery_cost"),
+                "discovery": entry.get("discovery"),
+            }.items() if value is not None
+        })
+        roles = entry.get("roles") if isinstance(entry.get("roles"), list) else []
+        selectors.extend({**role, "skill": name} for role in roles
+                         if isinstance(role, dict))
+        if not roles:
+            implicit.append({
+                "skill": name,
+                "purpose": entry.get("purpose") or entry.get("modality"),
+                "required_when": entry.get("required_when"),
+            })
+    policy = legacy.get("role_policy") \
+        if isinstance(legacy.get("role_policy"), dict) else None
+    return {
+        "supported_agents": [agent for agent in legacy.get("supported_agents", [])
+                             if agent in DISCOVERY],
+        "role_policy": policy,
+        "skills": skills,
+        "role_selectors": selectors,
+        "implicit_required_skills": implicit,
+    }
+
+
+def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
+    """Return a deterministic read-only preparation envelope for one migration."""
+    registry = choose_registry(root, explicit)
+    source = load_json_object(registry) if registry.is_file() else None
+    source_registry = registry.relative_to(root).as_posix() \
+        if not outside(root, registry) else str(registry)
+    if source and source.get("status") == "superseded":
+        target = (registry.parent / str(source.get("superseded_by", ""))).resolve(
+            strict=False)
+        target_data = load_json_object(target) if not outside(root, target) else None
+        if target_data:
+            source, registry = target_data, target
+            source_registry = registry.relative_to(root).as_posix()
+    if source and isinstance(source.get("acceptance"), dict) \
+            and source["acceptance"].get("status") == "accepted":
+        return {
+            "schema": 1,
+            "protocol": "kb-candidate-preparation/v1",
+            "read_only": True,
+            "action": "none",
+            "reason": ("An accepted PROJECT_ROLES.json already exists; a patch build "
+                       "does not reopen project migration"),
+            "project_root": str(root),
+            "source_registry": source_registry,
+            "templates": {},
+            "unresolved": [],
+        }
+
+    template_root = Path(__file__).resolve().parent.parent / "assets" / "templates"
+    project_template = load_json_object(template_root / "project-roles.json") or {}
+    index_template = load_json_object(template_root / "knowledge-index.json") or {}
+    application_template = load_json_object(
+        template_root / "release-application.json") or {}
+    legacy = source if source and source.get("schema") in (1, 2) \
+        and isinstance(source.get("skills"), list) else None
+    prefill = legacy_candidate_prefill(root, legacy) if legacy else {
+        "supported_agents": [], "role_policy": None, "skills": [],
+        "role_selectors": [], "implicit_required_skills": [],
+    }
+
+    existing_index = load_json_object(root / "KNOWLEDGE_INDEX.json")
+    marker, marker_source = current_marker(root)
+    head = git(root, "rev-parse", "HEAD")
+    source_commit = head.stdout.strip() if head.returncode == 0 else None
+    application = application_template.get("application", {})
+    application.update({
+        "from_line": marker,
+        "to_line": current_contract_line(),
+        "status": "candidate",
+        "source": {
+            "commit": source_commit,
+            "version_source": marker_source or
+                "UNRESOLVED: project-relative rules file containing the marker",
+        },
+        "owner": {"accepted_by": None, "accepted_at": None},
+        "finalized_at": None,
+        "open": [],
+    })
+    application_template["application"] = application
+    return {
+        "schema": 1,
+        "protocol": "kb-candidate-preparation/v1",
+        "read_only": True,
+        "action": "review-then-write",
+        "project_root": str(root),
+        "source_registry": source_registry if source else None,
+        "source_commit": source_commit,
+        "templates_are_unapplied": True,
+        "legacy_prefill": prefill,
+        "suggested_project_check": next((
+            item.get("validation", {}).get("command")
+            for item in prefill["skills"]
+            if isinstance(item.get("validation"), dict)
+            and item["validation"].get("command")), None),
+        "templates": {
+            "PROJECT_ROLES.json": project_template,
+            "KNOWLEDGE_INDEX.json": existing_index or index_template,
+            "KB_RELEASE_APPLICATION.json": application_template,
+        },
+        "unresolved": [
+            "Confirm role meaning, triggers and any split of professional owners",
+            "Assign only existing knowledge route IDs; do not move facts into a role",
+            "Resolve quality owner and method versus project/tool knowledge boundary",
+            "Confirm one tracked narrow validator and its actual coverage",
+            "Measure one ordinary routed scenario with headroom",
+            "Run one ordinary fresh-context question, then obtain owner acceptance",
+        ],
+        "fresh_context_prompt": (
+            "Answer one ordinary project question without naming a role in the question. "
+            "In the answer record selected role IDs, used knowledge route IDs, and one "
+            "real stop or source conflict. After the substantive answer, stop: do not run "
+            "audits, tests, Git commands, or make file changes."
+        ),
+    }
+
+
 def validate(root: Path, registry: Path, runtime_roots: list[Path] | None = None,
              execute_project_check: bool = False,
              project_check_timeout: int = 300,
@@ -1748,14 +2032,23 @@ def main() -> int:
     parser.add_argument("--registry", type=Path)
     parser.add_argument("--runtime-root", action="append", default=[], type=Path,
                         help="additional active skill root to inventory for collisions")
-    parser.add_argument(
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument(
         "--execute-project-check", action="store_true",
         help="execute one pending v3 validator and record its observed PASS/FAIL")
+    actions.add_argument(
+        "--prepare-candidate", action="store_true",
+        help="print a deterministic read-only candidate prefill; write nothing")
     parser.add_argument(
         "--project-check-timeout", type=int, default=300,
         help="seconds allowed for --execute-project-check (default: 300)")
     args = parser.parse_args()
     root = Path(args.root).resolve()
+    if args.prepare_candidate:
+        print(json.dumps(
+            prepare_candidate(root, args.registry), ensure_ascii=False,
+            indent=2, sort_keys=True))
+        return 0
     registry = choose_registry(root, args.registry)
     runtime_roots = default_runtime_roots()
     runtime_roots.extend(path.expanduser().resolve() for path in args.runtime_root)
