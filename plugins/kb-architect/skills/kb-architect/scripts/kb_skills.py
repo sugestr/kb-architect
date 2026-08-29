@@ -63,6 +63,10 @@ LEGACY_BEHAVIOR_RUNNER_HASHES = {
 PORTABLE_TOP_LEVEL = {
     "name", "description", "license", "allowed-tools", "metadata", "compatibility",
 }
+LEGACY_VERSION_PREFIX = re.compile(
+    r"^\s*[vV]?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?"
+    r"(?:\+[0-9A-Za-z.-]+)?)(?=$|[\s;,(])"
+)
 
 
 def git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -163,6 +167,20 @@ def frontmatter_value(skill_md: Path, key: str) -> Optional[str]:
     if key == "version":
         return metadata.get("version")
     return top.get(key)
+
+
+def normalized_legacy_version(value: object) -> Optional[str]:
+    """Extract only an explicit leading release token from legacy prose.
+
+    Older project registries sometimes used a human note such as
+    ``1.0.0; Git commit is the delivery pin``.  The strict registry requires
+    the exact portable ``metadata.version`` value, so copying the prose creates
+    a deterministic late preflight failure.  No token means no guess.
+    """
+    if not isinstance(value, str):
+        return None
+    match = LEGACY_VERSION_PREFIX.match(value)
+    return match.group(1) if match else None
 
 
 def portable_frontmatter_errors(skill_md: Path, name: str,
@@ -1847,6 +1865,7 @@ def legacy_candidate_prefill(root: Path, legacy: dict) -> dict:
     skills: list[dict] = []
     selectors: list[dict] = []
     implicit: list[dict] = []
+    preflight_actions: list[dict] = []
     for entry in legacy.get("skills", []):
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             continue
@@ -1855,6 +1874,19 @@ def legacy_candidate_prefill(root: Path, legacy: dict) -> dict:
         skill_path = Path(canonical).expanduser()
         skill_path = (skill_path if skill_path.is_absolute()
                       else root / skill_path).resolve(strict=False)
+        skill_md = skill_path / "SKILL.md"
+        frontmatter_version = frontmatter_value(skill_md, "version")
+        legacy_version = entry.get("version")
+        candidate_version = frontmatter_version or normalized_legacy_version(
+            legacy_version)
+        if frontmatter_version:
+            version_source = "skill-frontmatter"
+        elif candidate_version and str(legacy_version).strip() == candidate_version:
+            version_source = "legacy-registry"
+        elif candidate_version:
+            version_source = "normalized-leading-version-from-legacy"
+        else:
+            version_source = "unresolved"
         validation = entry.get("validation") \
             if isinstance(entry.get("validation"), dict) else {}
         project_gate = validation.get("project") \
@@ -1864,16 +1896,53 @@ def legacy_candidate_prefill(root: Path, legacy: dict) -> dict:
                 "name": name,
                 "canonical": canonical,
                 "owner": entry.get("owner"),
-                "version": frontmatter_value(skill_path / "SKILL.md", "version")
-                    or entry.get("version"),
-                "skill_sha256": file_sha256(skill_path / "SKILL.md")
-                    if (skill_path / "SKILL.md").is_file() else None,
+                "version": candidate_version,
+                "skill_sha256": file_sha256(skill_md)
+                    if skill_md.is_file() else None,
                 "validation": project_gate,
                 "failure_policy": entry.get("failure_policy"),
                 "recovery_cost": entry.get("recovery_cost"),
                 "discovery": entry.get("discovery"),
             }.items() if value is not None
         })
+        if skill_md.is_file():
+            runner_errors = portable_frontmatter_errors(
+                skill_md, name, candidate_version)
+            if runner_errors:
+                try:
+                    skill_locator = skill_md.relative_to(root).as_posix()
+                except ValueError:
+                    skill_locator = str(skill_md)
+                if not frontmatter_version and candidate_version:
+                    instruction = (
+                        f"Add metadata.version {candidate_version!r} to {skill_locator}; "
+                        "keep PROJECT_ROLES.json version exactly equal")
+                elif not frontmatter_version:
+                    instruction = (
+                        f"Resolve and add metadata.version in {skill_locator}; do not "
+                        "copy descriptive legacy prose into the strict version field")
+                else:
+                    instruction = f"Repair portable frontmatter in {skill_locator}"
+                action = {
+                    "skill": name,
+                    "skill_md": skill_locator,
+                    "required_metadata_version": candidate_version,
+                    "version_source": version_source,
+                    "runner_errors": runner_errors,
+                    "instruction": instruction,
+                }
+                if candidate_version and legacy_version != candidate_version:
+                    action["normalized_from"] = legacy_version
+                preflight_actions.append(action)
+        else:
+            preflight_actions.append({
+                "skill": name,
+                "skill_md": str(skill_md),
+                "required_metadata_version": candidate_version,
+                "version_source": version_source,
+                "runner_errors": [f"{name}: canonical SKILL.md is missing"],
+                "instruction": "Restore the declared canonical skill before migration",
+            })
         roles = entry.get("roles") if isinstance(entry.get("roles"), list) else []
         selectors.extend({**role, "skill": name} for role in roles
                          if isinstance(role, dict))
@@ -1892,6 +1961,10 @@ def legacy_candidate_prefill(root: Path, legacy: dict) -> dict:
         "skills": skills,
         "role_selectors": selectors,
         "implicit_required_skills": implicit,
+        "mechanical_preflight": {
+            "status": "needs-action" if preflight_actions else "ready",
+            "actions": preflight_actions,
+        },
     }
 
 
@@ -1933,7 +2006,9 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
     prefill = legacy_candidate_prefill(root, legacy) if legacy else {
         "supported_agents": [], "role_policy": None, "skills": [],
         "role_selectors": [], "implicit_required_skills": [],
+        "mechanical_preflight": {"status": "ready", "actions": []},
     }
+    mechanical_preflight = prefill.pop("mechanical_preflight")
 
     existing_index = load_json_object(root / "KNOWLEDGE_INDEX.json")
     marker, marker_source = current_marker(root)
@@ -1964,6 +2039,7 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
         "source_commit": source_commit,
         "templates_are_unapplied": True,
         "legacy_prefill": prefill,
+        "mechanical_preflight": mechanical_preflight,
         "suggested_project_check": next((
             item.get("validation", {}).get("command")
             for item in prefill["skills"]

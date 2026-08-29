@@ -33,7 +33,7 @@ stop; совпавшие required-selector-ы загружаются все, к�
 Разделяй method skill, если расходятся полномочия, source ladder, stops, quality owner
 или общий entry заставляет обычную узкую задачу постоянно грузить ненужный метод.
 Один skill допустим для selector-ов с общими инвариантами и подтверждённым route-cost.
-Лимитируется стоимость сценария, а не число selector-ов.
+Лимит — стоимость сценария, не число selector-ов.
 
 Цикл: реальные задачи → опись → минимальный candidate → tests → quality review →
 version/commit → fresh-context acceptance. Community-метод принимают, адаптируют или
@@ -45,9 +45,10 @@ version/commit → fresh-context acceptance. Community-метод принима
 
 ## Проверяемая готовность без отдельной бюрократии
 
-Начни read-only командой `kb_skills.py <root> --prepare-candidate`. Она печатает
-legacy/template/source prefill и смысловые `UNRESOLVED`, ничего не пишет, а для уже
-принятого проекта возвращает `action: none`. Смысл роли она не решает.
+`kb_skills.py <root> --prepare-candidate` даёт read-only legacy/template/source prefill,
+`UNRESOLVED` и `mechanical_preflight`; принятый — `action: none`. Preflight
+отделяет `1.0.0` от legacy prose, называет exact `metadata.version`, без token не
+угадывает. Роль решает человек.
 
 Новый candidate хранит compact `kb-role-acceptance/v3` в `PROJECT_ROLES.json`.
 Отдельный receipt tree и mutation-suite не нужны; accepted schema 2–5, compact v1/v2

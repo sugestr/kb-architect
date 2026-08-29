@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.2.4"
+          and data.get("baseline_version") == "6.2.5"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -4749,6 +4749,59 @@ def t_623_prepare_candidate_is_deterministic_read_only_and_preserves_legacy():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_625_prepare_candidate_surfaces_and_normalizes_legacy_version_preflight():
+    """The short path must not feed descriptive legacy prose to the strict runner."""
+    import json
+    d = base({
+        "AGENTS.md": "# fixture\n\nkb_standard_version: 5.14\n",
+        "skills/family-role/SKILL.md": (
+            "---\nname: family-role\ndescription: Fixture family role\n---\nbody\n"),
+    })
+    legacy = skill_registry(
+        "family-role", "skills/family-role",
+        ".agents/skills/family-role", ".claude/skills/family-role")
+    legacy["skills"][0]["version"] = "1.0.0; Git commit is the delivery pin"
+    with open(os.path.join(d, ".kb-skills.json"), "w", encoding="utf-8") as f:
+        json.dump(legacy, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "AGENTS.md", ".kb-skills.json",
+                    "skills/family-role/SKILL.md"], check=True)
+    subprocess.run(["git", "-C", d, "-c", "user.name=Fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "before"],
+                   check=True)
+    before = subprocess.run(
+        ["git", "-C", d, "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True, text=True, check=True).stdout
+    result = run_candidate_preparation(d)
+    after = subprocess.run(
+        ["git", "-C", d, "status", "--porcelain", "--untracked-files=all"],
+        capture_output=True, text=True, check=True).stdout
+    try:
+        prepared = json.loads(result)
+    except (TypeError, ValueError):
+        prepared = {}
+    skills = prepared.get("legacy_prefill", {}).get("skills", [])
+    preflight = prepared.get("mechanical_preflight", {})
+    actions = preflight.get("actions", [])
+    action = actions[0] if actions else {}
+    out = Vyvod(result, result.code)
+    check("prepare-candidate normalizes legacy version before strict runner",
+          result.code == 0 and before == after == ""
+          and len(skills) == 1 and skills[0].get("version") == "1.0.0"
+          and preflight.get("status") == "needs-action"
+          and action.get("required_metadata_version") == "1.0.0"
+          and action.get("version_source") ==
+              "normalized-leading-version-from-legacy"
+          and action.get("normalized_from") ==
+              "1.0.0; Git commit is the delivery pin"
+          and any("requires metadata.version" in error
+                  for error in action.get("runner_errors", []))
+          and "keep PROJECT_ROLES.json version exactly equal" in
+              action.get("instruction", ""),
+          out, "one read-only preflight names both exact edits before execution")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def t_623_prepare_candidate_does_not_invent_a_domain_role():
     """A project without legacy role evidence gets unresolved empty posture."""
     import json
@@ -4794,7 +4847,7 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
 
 
 def t_620_compact_application_uses_contract_line_not_patch_build():
-    """A 6.2 project stays accepted when the installed exact build is 6.2.4."""
+    """A 6.2 project stays accepted when the installed exact build is 6.2.5."""
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
@@ -4824,7 +4877,7 @@ def t_620_compact_application_uses_contract_line_not_patch_build():
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("contract line 6.2 accepts exact installed build 6.2.4 without remigration",
+    check("contract line 6.2 accepts exact installed build 6.2.5 without remigration",
           p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
           and "PROJECT_LINE_OK" in p.stdout,
           out, "patch build is delivery, not a new project migration")

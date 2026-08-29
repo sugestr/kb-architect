@@ -3,7 +3,7 @@ name: kb-architect
 description: "Durable AI knowledge-base router: start, audit, update, restructure or move a KB; coordinate Claude/Codex; manage project roles, runtimes, credentials, cloud/MCP and multi-agent work; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.2.4"
+  version: "6.2.5"
   author: "sugestr"
 ---
 
