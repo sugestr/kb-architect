@@ -46,23 +46,23 @@ version/commit → fresh-context acceptance. Community-метод принима
 ## Проверяемая готовность без отдельной бюрократии
 
 Новый project candidate хранит короткую приёмку прямо в `PROJECT_ROLES.json` по
-протоколу `kb-role-acceptance/v2`. Отдельные `ROLE_ACCEPTANCE.json`, пять behavior-case,
+протоколу `kb-role-acceptance/v3`. Отдельные `ROLE_ACCEPTANCE.json`, пять behavior-case,
 mutation-suite и россыпь input/expected/observed receipts не требуются. Старые schema
-2–5 и accepted compact v1 остаются читаемыми: patch их не переписывает.
+2–5 и accepted compact v1/v2 остаются читаемыми: patch их не переписывает.
 
 Перед `accepted` достаточно четырёх наблюдаемых результатов:
 
 1. `kb_skills.py` видит один Git-канон роли, knowledge routes и бюджет;
 2. один узкий project validator проходит;
-3. один обычный fresh-context вопрос без имени роли доказывает selection, indexed
+3. один fresh-context вопрос без имени роли доказывает selection, indexed
    recall и хотя бы один реальный stop/conflict;
 4. владелец видит результат и принимает его, сохраняя честные `OPEN`.
 
-Строка `PASS` не исполняет проверку. Новый candidate один раз запускает
-`kb_skills.py --execute-project-check`; без флага изменённый manifest остаётся
-`PROJECT_CHECK_EXECUTION_REQUIRED`. Compact record хранит время, exit code и внешний
-run id. Fresh-context observation ссылается на native task/turn либо tracked evidence:
-checker проверяет связь, но не изображает model runner.
+Staged candidate держит check в `PENDING`. Один `kb_skills.py --execute-project-check`
+запускает command и сам пишет `PASS/FAIL`, run id и wiring hash; эти поля вручную не
+заполняют, после записи registry снова индексируют. Owner/live не входят в binding и не
+повторяют command. Fresh-context observation ссылается на native task/turn либо tracked
+evidence: checker проверяет связь, но не изображает model runner.
 
 Приёмка связывает только SHA-256 текущих `SKILL.md`. Owner status живёт в manifest и
 не входит в эти hashes, поэтому переход `candidate → accepted` не протухляет
@@ -116,7 +116,7 @@ pin + recovery, а изменения возвращает owner; knowledge rout
 живой вопрос → решение владельца → marker последним. Применение patch-сборки внутри
 той же contract line не является новой миграцией. Короткая запись описана в
 `references/migration.md`.
-Индекс и его recovery pointers должны быть Git-tracked.
+Индекс и recovery pointers должны быть tracked.
 
 Успех измеряется не красотой схемы: агент быстрее выбирает роль, без подсказки находит
 существующее знание, меньше грузит лишнего, останавливается на недоказанном и

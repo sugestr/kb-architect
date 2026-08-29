@@ -73,18 +73,14 @@
   },
   "acceptance": {
     "status": "candidate",
-    "protocol": "kb-role-acceptance/v2",
+    "protocol": "kb-role-acceptance/v3",
     "accepted_skill_sha256": {
       "research-adviser": "replace-after-the-live-test"
     },
     "project_check": {
       "status": "PENDING",
       "command": "python3 skills/research-adviser/tests/run.py",
-      "execution": {
-        "executed_at": null,
-        "exit_code": null,
-        "run_id": null
-      }
+      "execution": null
     },
     "live_test": {
       "status": "PENDING",
