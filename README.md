@@ -94,8 +94,9 @@ in the indexed knowledge base, not in the role.
 Role readiness has four separate receipts: structural validity, unforced fresh-session
 runtime discovery, synthetic-first behavioural cases, and post-results owner
 acceptance. It is also bound to a named quality review, exact role tree, manifest,
-knowledge-index hashes and split static cost budgets. A shadow candidate does not
-replace the old role early. Same-name active runtime copies are inventoried; shared
+knowledge-index hashes and split static cost budgets. An unaccepted candidate does not
+replace the old role early; the pre-change Git commit is rollback without a duplicate
+checkout. Same-name active runtime copies are inventoried; shared
 roles run from an exact pin; an all-roles scenario keeps combined cost visible.
 
 The concise [project-role guide](plugins/kb-architect/skills/kb-architect/references/project-roles.md)

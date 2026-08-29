@@ -64,7 +64,7 @@ repo-relative boot canon, recoverable project skills и `kb_environments.py` д�
 ### Короткая команда владельца
 
 **«Обнови скилл базы знаний»** — action-first: доставить stable, проверить project
-delta и сразу продолжить обратимый shadow, tests и точечные local commits. Валидные
+delta и сразу продолжить обратимые candidate changes, tests и точечные local commits. Валидные
 snapshot/ledger/results переиспользуй по commit/hash. Preflight и diff — evidence, не
 остановка для нового «сделай»; длинный protocol prompt владельцу не нужен.
 
@@ -140,8 +140,9 @@ python3 <установленный-скилл>/scripts/kb_apply.py <корен�
   `отклонено` или `отложено`.
 
 Если код ненулевой, продолжить по `references/migration.md`: **до первой записи**
-сохранить exact source commit/hash и открыть release-wide ledger; применить изменения в
-shadow; показать владельцу diff, tests, `PASS/FAIL/UNKNOWN`, cost и rollback. Только после
+сохранить exact source commit/hash и открыть release-wide ledger; применить candidate;
+показать владельцу diff, tests, `PASS/FAIL/UNKNOWN`, cost и rollback. Tracked-only
+rollback — pre-change Git commit без второй копии; внешнее состояние проходит staged cutover. Только после
 post-results acceptance финализировать tracked `KB_RELEASE_APPLICATION.json` и поднять
 `kb_standard_version`. Просто заменить номер значит скрыть неприменённое обновление;
 начальное разрешение на миграцию не является приёмкой результата.

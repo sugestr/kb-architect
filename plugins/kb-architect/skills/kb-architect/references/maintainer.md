@@ -99,5 +99,5 @@ cost gate, portable validator, двух одинаковых builds, allowlist/l
 exact public diff, tag/asset push, private receipt и повторной drift-проверки.
 
 Проект не мигрирует автоматически от установки новых файлов. Он сохраняет pre-change
-source, полный release ledger, shadow/rollback, фактические `PASS / FAIL / UNKNOWN` и
+source, полный release ledger, candidate/rollback, фактические `PASS / FAIL / UNKNOWN` и
 post-results решение владельца. Только после этого меняется marker.

@@ -10,7 +10,7 @@
 - **«Обнови скилл базы знаний»** — action-first: после `kb_apply.py` выполняй
   обратимые локальные шаги и commits ниже до owner gate. `Проверь`/`аудит`/
   `read-only`/`только отчёт` — диагностика без записи.
-- Переиспользуй валидные snapshot, ledger, shadow, tests и receipts: сверь
+- Переиспользуй валидные snapshot, ledger, candidate changes, tests и receipts: сверь
   commit/hash и продолжи с первого незакрытого шага без широкого повторного аудита.
 - Явный `to_version` владельца/receipt ограничивает цикл: новая installed version
   его не расширяет. Проверяй цель через
@@ -28,10 +28,14 @@
 - полный диапазон выпусков `(from_version, to_version]`, который показал `kb_apply.py`;
 - текущие проверки, незакоммиченные изменения и authority задачи.
 
-Создай shadow `KB_RELEASE_APPLICATION.json` из
+Создай незавершённый `KB_RELEASE_APPLICATION.json` из
 `assets/templates/release-application.json`, но не ставь `finalized` и не повышай marker.
 Source commit должен оставаться доступным предком итогового checkout. Если marker раньше
 не было, сначала восстанови его по истории; не назначай прошлую версию на глаз.
+
+Tracked-only candidate живёт в текущем checkout: exact pre-change commit уже rollback,
+поэтому второй каталог/ветка не нужны. Worktree нужен для реальной параллельной записи;
+Keychain, MCP, AWS и другое состояние вне Git — для отдельного staged cutover.
 
 Для нового проекта допустим первый элемент `kind: initial-adoption`,
 `from_version: null`: source snapshot доказывает отсутствие marker, а ledger содержит
@@ -51,7 +55,7 @@ Source commit должен оставаться доступным предко�
 Marker одной поздней версии не закрывает промежуточные строки. Evidence — адреса
 проверяемых project receipts, diff или test output, а не фраза «сделано».
 
-## 3. Shadow, результаты, владелец
+## 3. Candidate, результаты, владелец
 
 Сначала внеси обратимый candidate и прогони применимые project tests. Покажи владельцу:
 

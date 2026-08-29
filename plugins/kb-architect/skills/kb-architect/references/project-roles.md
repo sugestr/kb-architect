@@ -115,8 +115,10 @@ python3 <kb-architect>/scripts/kb_skills.py <project>
 
 ## Миграция и редкое заимствование
 
-До приёмки shadow legacy остаётся authoritative; candidate проверяют через
-`--registry <project>/PROJECT_ROLES.json`. После переключения `.kb-skills.json`
+До приёмки legacy остаётся authoritative; candidate проверяют через
+`--registry <project>/PROJECT_ROLES.json`. Это разделение старого канона и candidate,
+не дубль checkout: source commit даёт rollback, worktree нужен лишь параллельному writer.
+После переключения `.kb-skills.json`
 становится navigation tombstone к новому канону.
 
 По умолчанию роль локальна. Для редкого заимствования owner выпускает version, а
@@ -124,7 +126,7 @@ python3 <kb-architect>/scripts/kb_skills.py <project>
 Изменения возвращаются owner; knowledge routes остаются локальными. Центральный
 репозиторий ролей не нужен без повторяемого спроса.
 
-Проекты мигрируют по одному: source snapshot → shadow → четыре исхода → post-results
+Проекты мигрируют по одному: source snapshot → candidate → четыре исхода → post-results
 решение владельца → marker последним. Полный ledger описан в `references/migration.md`.
 Индекс и его recovery pointers должны быть Git-tracked.
 

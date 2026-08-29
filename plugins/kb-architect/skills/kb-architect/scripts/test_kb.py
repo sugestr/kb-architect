@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.1"
+          and data.get("baseline_version") == "6.1.1"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -2838,6 +2838,29 @@ def t_601_marker_without_release_ledger_is_unproven():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_611_git_only_candidate_uses_commit_without_second_shadow():
+    """29.08: two 6.1 agents built a second rollback ritual over an exact Git commit."""
+    migration = skill_text("references/migration.md")
+    service = skill_text("references/service-layer.md")
+    roles = skill_text("references/project-roles.md")
+    project = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 5.16\n"})
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_apply.py"), project],
+        capture_output=True, text=True, timeout=30)
+    text = migration + "\n" + service + "\n" + roles + "\n" + p.stdout
+    out = Vyvod(text + p.stderr, p.returncode)
+    check("Git-only migration uses one candidate and the existing commit rollback",
+          "exact pre-change commit уже rollback" in migration
+          and "второй каталог/ветка не нужны" in migration
+          and "внешнее состояние проходит staged cutover" in service
+          and "source commit даёт rollback" in roles
+          and "без второй копии дерева" in p.stdout
+          and "post-results acceptance" in migration
+          and "не повышай marker" in migration,
+          out, "remove duplicate shadow mechanics without weakening marker-last acceptance")
+    shutil.rmtree(project, ignore_errors=True)
+
+
 def t_601_release_application_binds_source_and_exact_ledger():
     """The migration receipt binds the immutable source before project writes."""
     import json
@@ -2855,11 +2878,11 @@ def t_601_release_application_binds_source_and_exact_ledger():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.1\n")
+        f.write("# rules\n\nkb_standard_version: 6.1.1\n")
     receipt = {
         "schema": 1,
         "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.1",
+            "kind": "migration", "from_version": "6.0", "to_version": "6.1.1",
             "status": "finalized",
             "source_snapshot": {
                 "ref": source, "commit": source, "version_source": "CLAUDE.md",
@@ -2871,6 +2894,8 @@ def t_601_release_application_binds_source_and_exact_ledger():
                 {"version": "6.0.2", "decision": "tool-inherited",
                  "evidence": ["tests/migration.txt"]},
                 {"version": "6.1", "decision": "applied",
+                 "evidence": ["tests/migration.txt"]},
+                {"version": "6.1.1", "decision": "tool-inherited",
                  "evidence": ["tests/migration.txt"]},
             ],
             "owner_acceptance": {"accepted_by": "fixture owner",
@@ -2975,14 +3000,14 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.1\n")
+        f.write("\nkb_standard_version: 6.1.1\n")
     receipt = {"schema": 1, "applications": [{
-        "kind": "initial-adoption", "from_version": None, "to_version": "6.1",
+        "kind": "initial-adoption", "from_version": None, "to_version": "6.1.1",
         "status": "finalized",
         "source_snapshot": {"ref": source, "commit": source,
                             "version_source": "CLAUDE.md",
                             "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.1", "decision": "applied",
+        "release_ledger": [{"version": "6.1.1", "decision": "applied",
                             "evidence": ["tests/proof.txt"]}],
         "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
                              "evidence": ["tests/proof.txt"]},
