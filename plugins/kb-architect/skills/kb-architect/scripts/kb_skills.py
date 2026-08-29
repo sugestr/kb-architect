@@ -323,23 +323,77 @@ def behavior_run_errors(root: Path, case: str, value: object) -> list[str]:
     label = f"BEHAVIOR_PASS.{case}"
     if not isinstance(value, dict):
         return [f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: run receipt is required"]
-    required = ("run_id", "executed_at", "runtime", "harness")
+    required = ("run_id", "executed_at", "runtime")
     if any(not isinstance(value.get(field), str) or not value[field].strip()
            for field in required):
         return [f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
-                "run_id/executed_at/runtime/harness are required"]
+                "run_id/executed_at/runtime are required"]
     if value.get("case") != case or value.get("result") != "PASS":
         return [f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: case/result do not bind PASS"]
     errors: list[str] = []
-    paths = []
+    paths: list[str] = []
+    artifact_hashes: dict[str, str] = {}
     for field in ("input", "expected", "observed"):
         item = value.get(field)
         errors.extend(evidence_errors(root, [item], f"{label}.run.{field}"))
-        if isinstance(item, dict) and isinstance(item.get("path"), str):
+        if isinstance(item, dict) and isinstance(item.get("path"), str) \
+                and isinstance(item.get("sha256"), str):
             paths.append(item["path"])
+            artifact_hashes[item["path"]] = item["sha256"]
     if len(paths) != 3 or len(set(paths)) != 3:
         errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                       "input/expected/observed artifacts must be distinct")
+
+    harness = value.get("harness")
+    if not isinstance(harness, dict):
+        errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                      "structured tracked harness is required")
+    else:
+        errors.extend(evidence_errors(root, [harness], f"{label}.run.harness"))
+        argv = harness.get("argv")
+        if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "harness.argv must be a string array")
+
+    execution = value.get("execution_receipt")
+    before_execution = len(errors)
+    errors.extend(evidence_errors(root, [execution], f"{label}.run.execution_receipt"))
+    if len(errors) == before_execution and isinstance(execution, dict):
+        receipt_path = (root / str(execution["path"])).resolve(strict=False)
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          f"execution receipt unreadable: {exc}")
+            receipt = {}
+        if receipt.get("schema") != 1 \
+                or receipt.get("protocol") != "kb-behavior-run/v1" \
+                or receipt.get("runner_version") != "1":
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "canonical behavior-run receipt is required")
+        runner_hash = receipt.get("runner_sha256")
+        if not isinstance(runner_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", runner_hash):
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "runner_sha256 is invalid")
+        if receipt.get("exit_code") != 0:
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "recorded harness exit must be zero")
+        if not receipt.get("started_at") or receipt.get("finished_at") != value.get("executed_at"):
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "run time must bind the recorded execution")
+        if receipt.get("harness") != harness:
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "execution receipt does not bind the harness")
+        run_ids = receipt.get("case_run_ids", {})
+        if not isinstance(run_ids, dict) or run_ids.get(case) != value.get("run_id"):
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "execution receipt does not bind case run_id")
+        recorded_artifacts = receipt.get("artifacts", {})
+        if not isinstance(recorded_artifacts, dict) or any(
+                recorded_artifacts.get(path) != digest
+                for path, digest in artifact_hashes.items()):
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "execution receipt does not bind behavior artifacts")
     return errors
 
 
@@ -384,6 +438,18 @@ def quality_review(root: Path, entry: dict, errors: list[str]) -> str | None:
     if not isinstance(review, dict) or review.get("status") not in allowed \
             or not review.get("rationale"):
         errors.append(f"{name}: external practice review needs status and rationale")
+    boundary = data.get("role_knowledge_boundary")
+    if boundary is not None:
+        outcomes = {"method-only", "extraction-applied", "deferred", "declined"}
+        if not isinstance(boundary, dict) or boundary.get("outcome") not in outcomes:
+            errors.append(f"{name}: role_knowledge_boundary has an unknown outcome")
+        elif not boundary.get("reason") or not boundary.get("safe_current_mode"):
+            errors.append(f"{name}: role_knowledge_boundary needs reason and safe_current_mode")
+        elif boundary["outcome"] == "deferred" and not boundary.get("return_condition"):
+            errors.append(f"{name}: deferred role boundary needs return_condition")
+        elif boundary["outcome"] == "extraction-applied" \
+                and not isinstance(boundary.get("extracted_to"), list):
+            errors.append(f"{name}: applied extraction needs extracted_to array")
     errors.extend(evidence_errors(review_repo, data.get("evidence"),
                                   f"{name}.ROLE_QUALITY_REVIEW"))
     return file_sha256(path)

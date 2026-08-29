@@ -47,12 +47,11 @@ community-роль можно принять, адаптировать или с
 Пропорциональный внешний обзор получает `done`, `deferred` или `not-applicable` с
 причиной; полный мировой поиск не обязателен на каждую правку.
 
-`quality_owner` отвечает за профессиональный метод и domain regressions;
-`kb-architect` — за gate/receipt/rollback; владелец проекта — за acceptance и внешнюю
-authority. `ROLE_QUALITY_REVIEW.json` не хранит факты и не доказывает предметную
-правильность сам по себе. `review_scope` явно различает `packaging-only`,
-`internal-method`, `external-benchmark` и `licensed-review`; структурная перекладка
-не получает профессиональный `PASS`.
+`quality_owner` отвечает за метод; `kb-architect` — за gate/receipt/rollback;
+владелец — за acceptance и внешнюю authority. `ROLE_QUALITY_REVIEW.json` сам не
+доказывает предметную правильность. `review_scope`: `packaging-only`,
+`internal-method`, `external-benchmark` или `licensed-review`; перекладка не получает
+профессиональный `PASS`.
 
 ## Проверяемая готовность
 
@@ -74,10 +73,12 @@ Schema 3 `ROLE_ACCEPTANCE.json` разделяет четыре исхода:
 среды переоткрывает acceptance как defect/`UNKNOWN`, а не заводит второй постоянный
 набор правил. Schema 2 читается как legacy до project migration.
 
-Для каждого зелёного schema-3 behavior case обязательна квитанция **выполненного**
-run: разные tracked+hashed input, expected и observed artifacts, `run_id`, время,
-runtime и точный harness/protocol. Таблица ожидаемого поведения или один статический
-Markdown — structure, не behavior, и даёт `BEHAVIOR_EVIDENCE_UNEXECUTED`.
+Schema-3 behavior case получает PASS только с разными tracked+hashed
+input/expected/observed и одним structured tracked harness. Явный
+`kb_behavior.py <root> --execute` записывает exit/time/case ids/hashes;
+`kb_skills.py` project code не запускает, а сверяет receipt. Ручной JSON или
+несуществующий harness дают `BEHAVIOR_EVIDENCE_UNEXECUTED`. Это защита от случайного
+самоудостоверения, не криптографическая аттестация; discovery/owner gates отдельны.
 
 Ссылка, symlink или список test names доказывают только structure. Метод, trigger,
 wiring, quality review, дерево роли или budget change протухляют acceptance. Команды
@@ -105,7 +106,8 @@ schema-2 linked bytes остаются migration delta. Tree hash доказыв
 route/aliases → связать роль → доказать fresh-context recall → удалить копию.
 При legacy-миграции для каждой роли запиши один честный исход boundary review:
 `method-only`, extraction применён, `deferred` с условием возврата или `declined`.
-Автоматический semantic classifier не заменяет это решение.
+Поле — `ROLE_QUALITY_REVIEW.role_knowledge_boundary`; `deferred` требует
+`return_condition` и safe mode. Semantic classifier это решение не заменяет.
 
 Шаблоны лежат в `assets/templates/`; канонические проверки — `kb_index.py` и
 `kb_skills.py`.

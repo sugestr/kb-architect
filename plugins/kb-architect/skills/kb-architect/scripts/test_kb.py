@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.1.2"
+          and data.get("baseline_version") == "6.1.3"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -476,6 +476,11 @@ def write_role_acceptance(root, registry):
                 "external_practice_review": {
                     "status": "not-applicable", "rationale": "fixture",
                 },
+                "role_knowledge_boundary": {
+                    "outcome": "method-only",
+                    "reason": "fixture role contains only method",
+                    "safe_current_mode": "keep project facts in indexed knowledge",
+                },
                 "evidence": [{"path": evidence_relative, "sha256": evidence_sha}],
             }, f)
         tree = hashlib.sha256()
@@ -520,6 +525,16 @@ def write_role_acceptance(root, registry):
     cases = {}
     behavior_folder = os.path.join(root, "role-acceptance")
     os.makedirs(behavior_folder, exist_ok=True)
+    harness_path = os.path.join(behavior_folder, "fixture_behavior.py")
+    with open(harness_path, "w", encoding="utf-8") as f:
+        f.write("#!/usr/bin/env python3\nraise SystemExit(0)\n")
+    harness = {
+        "path": os.path.relpath(harness_path, root).replace(os.sep, "/"),
+        "sha256": hashlib.sha256(open(harness_path, "rb").read()).hexdigest(),
+        "argv": [],
+    }
+    recorded_artifacts = {}
+    case_run_ids = {}
     for case in ("role-selection", "knowledge-recall", "authority-stop",
                  "source-conflict", "context-cost"):
         artifacts = {}
@@ -535,6 +550,8 @@ def write_role_acceptance(root, registry):
                 "path": relative,
                 "sha256": hashlib.sha256(open(path, "rb").read()).hexdigest(),
             }
+            recorded_artifacts[relative] = artifacts[kind]["sha256"]
+        case_run_ids[case] = "fixture-" + case
         cases[case] = {
             "result": "PASS",
             "evidence": [common_evidence],
@@ -543,11 +560,33 @@ def write_role_acceptance(root, registry):
                 "case": case,
                 "executed_at": "2026-08-28T00:00:00Z",
                 "runtime": "shared synthetic fixture",
-                "harness": "python3 tests.py --case " + case,
+                "harness": harness,
                 "result": "PASS",
                 **artifacts,
             },
         }
+    execution_path = os.path.join(behavior_folder, "behavior-execution.json")
+    with open(execution_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "schema": 1,
+            "protocol": "kb-behavior-run/v1",
+            "runner_version": "1",
+            "runner_sha256": "0" * 64,
+            "started_at": "2026-08-28T00:00:00Z",
+            "finished_at": "2026-08-28T00:00:00Z",
+            "exit_code": 0,
+            "harness": harness,
+            "case_run_ids": case_run_ids,
+            "artifacts": recorded_artifacts,
+            "stdout_tail": "fixture PASS",
+            "stderr_tail": "",
+        }, f)
+    execution_evidence = {
+        "path": os.path.relpath(execution_path, root).replace(os.sep, "/"),
+        "sha256": hashlib.sha256(open(execution_path, "rb").read()).hexdigest(),
+    }
+    for result in cases.values():
+        result["run"]["execution_receipt"] = execution_evidence
     receipt = {
         "schema": 3,
         "outcomes": {
@@ -3006,11 +3045,11 @@ def t_601_release_application_binds_source_and_exact_ledger():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.1.2\n")
+        f.write("# rules\n\nkb_standard_version: 6.1.3\n")
     receipt = {
         "schema": 1,
         "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.1.2",
+            "kind": "migration", "from_version": "6.0", "to_version": "6.1.3",
             "status": "finalized",
             "source_snapshot": {
                 "ref": source, "commit": source, "version_source": "CLAUDE.md",
@@ -3026,6 +3065,8 @@ def t_601_release_application_binds_source_and_exact_ledger():
                 {"version": "6.1.1", "decision": "tool-inherited",
                  "evidence": ["tests/migration.txt"]},
                 {"version": "6.1.2", "decision": "applied",
+                 "evidence": ["tests/migration.txt"]},
+                {"version": "6.1.3", "decision": "applied",
                  "evidence": ["tests/migration.txt"]},
             ],
             "owner_acceptance": {"accepted_by": "fixture owner",
@@ -3064,11 +3105,11 @@ def t_612_release_application_follows_safe_boot_symlink():
                             capture_output=True, text=True, check=True).stdout.strip()
     source_bytes = open(os.path.join(d, "CLAUDE.md"), "rb").read()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.1.2\n")
+        f.write("# rules\n\nkb_standard_version: 6.1.3\n")
     receipt = {
         "schema": 1,
         "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.1.2",
+            "kind": "migration", "from_version": "6.0", "to_version": "6.1.3",
             "status": "finalized",
             "source_snapshot": {
                 "ref": source, "commit": source, "version_source": "AGENTS.md",
@@ -3077,7 +3118,7 @@ def t_612_release_application_follows_safe_boot_symlink():
             "release_ledger": [
                 {"version": version, "decision": "applied",
                  "evidence": ["tests/migration.txt"]}
-                for version in ("6.0.1", "6.0.2", "6.1", "6.1.1", "6.1.2")
+                for version in ("6.0.1", "6.0.2", "6.1", "6.1.1", "6.1.2", "6.1.3")
             ],
             "owner_acceptance": {"accepted_by": "fixture owner",
                                  "accepted_at": "2026-08-29",
@@ -3145,7 +3186,7 @@ def t_610_scoped_migration_target_survives_newer_installed_skill():
           and scoped.code == 0
           and "APPLICATION_RECEIPT_OK" in scoped
           and "TARGET_APPLICATION_OK" in scoped
-          and "NEWER_INSTALLED_OUT_OF_SCOPE: 6.1.2" in scoped,
+          and "NEWER_INSTALLED_OUT_OF_SCOPE: 6.1.3" in scoped,
           combined, "default still reports latest delta; scoped acceptance closes 6.0.1")
     shutil.rmtree(d, ignore_errors=True)
 
@@ -3180,14 +3221,14 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.1.2\n")
+        f.write("\nkb_standard_version: 6.1.3\n")
     receipt = {"schema": 1, "applications": [{
-        "kind": "initial-adoption", "from_version": None, "to_version": "6.1.2",
+        "kind": "initial-adoption", "from_version": None, "to_version": "6.1.3",
         "status": "finalized",
         "source_snapshot": {"ref": source, "commit": source,
                             "version_source": "CLAUDE.md",
                             "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.1.2", "decision": "applied",
+        "release_ledger": [{"version": "6.1.3", "decision": "applied",
                             "evidence": ["tests/proof.txt"]}],
         "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
                              "evidence": ["tests/proof.txt"]},
@@ -3277,6 +3318,57 @@ def t_612_static_behavior_assertion_is_not_an_executed_run():
     check("static behavior assertions cannot masquerade as executed acceptance",
           out.code == 1 and "BEHAVIOR_EVIDENCE_UNEXECUTED" in out,
           out, "schema 3 binds input, expected, observed and run identity")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_613_nonexistent_harness_cannot_pass_recorded_behavior():
+    """Foxio 6.1.2: a hand-written receipt named a harness that did not exist."""
+    import json
+    d, _registry = accepted_role_fixture()
+    path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(path, encoding="utf-8"))
+    for result in receipt["outcomes"]["BEHAVIOR_PASS"]["cases"].values():
+        result["run"]["harness"] = {
+            "path": "role-acceptance/missing.py",
+            "sha256": "0" * 64,
+            "argv": [],
+        }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    out = run_skills(d)
+    check("nonexistent behavior harness cannot receive schema-3 PASS",
+          out.code == 1 and "BEHAVIOR_EVIDENCE_UNEXECUTED" in out
+          and "harness" in out,
+          out, "a formatted receipt is not execution evidence when its harness is absent")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_613_canonical_behavior_runner_records_bound_execution():
+    """The explicit runner binds one real process to every declared case artifact."""
+    import json
+    d, _registry = accepted_role_fixture()
+    run = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_behavior.py"), d,
+         "--execute", "--replace"],
+        capture_output=True, text=True, timeout=30)
+    execution_path = os.path.join(d, "role-acceptance", "behavior-execution.json")
+    execution = json.load(open(execution_path, encoding="utf-8"))
+    execution_sha = hashlib.sha256(open(execution_path, "rb").read()).hexdigest()
+    acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(acceptance_path, encoding="utf-8"))
+    for result in receipt["outcomes"]["BEHAVIOR_PASS"]["cases"].values():
+        result["run"]["executed_at"] = execution["finished_at"]
+        result["run"]["execution_receipt"]["sha256"] = execution_sha
+    with open(acceptance_path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "ROLE_ACCEPTANCE.json",
+                    "role-acceptance/behavior-execution.json"], check=True)
+    out = run_skills(d)
+    combined = Vyvod(run.stdout + run.stderr + str(out), out.code)
+    check("canonical behavior runner records a bound execution receipt",
+          run.returncode == 0 and "BEHAVIOR_EXECUTION_RECORDED" in run.stdout
+          and out.code == 0,
+          combined, "the checker validates tracked harness, process exit and all case artifacts")
     shutil.rmtree(d, ignore_errors=True)
 
 

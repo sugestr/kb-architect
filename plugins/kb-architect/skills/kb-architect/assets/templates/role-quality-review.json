@@ -12,6 +12,13 @@
     "rationale": "Proportional review of relevant professional/community practice",
     "sources": ["record provenance and licence where material was adopted"]
   },
+  "role_knowledge_boundary": {
+    "outcome": "method-only",
+    "reason": "State why the role contains method rather than project facts or tool recipes",
+    "safe_current_mode": "State how the project works safely before any deferred extraction",
+    "return_condition": null,
+    "extracted_to": []
+  },
   "evidence": [
     {"path": "skills/research-adviser/tests/quality-review.txt", "sha256": "replace"}
   ]
