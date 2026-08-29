@@ -50,7 +50,9 @@ community-роль можно принять, адаптировать или с
 `quality_owner` отвечает за профессиональный метод и domain regressions;
 `kb-architect` — за gate/receipt/rollback; владелец проекта — за acceptance и внешнюю
 authority. `ROLE_QUALITY_REVIEW.json` не хранит факты и не доказывает предметную
-правильность сам по себе.
+правильность сам по себе. `review_scope` явно различает `packaging-only`,
+`internal-method`, `external-benchmark` и `licensed-review`; структурная перекладка
+не получает профессиональный `PASS`.
 
 ## Проверяемая готовность
 
@@ -72,8 +74,10 @@ Schema 3 `ROLE_ACCEPTANCE.json` разделяет четыре исхода:
 среды переоткрывает acceptance как defect/`UNKNOWN`, а не заводит второй постоянный
 набор правил. Schema 2 читается как legacy до project migration.
 
-Codex local/cloud/AWS используют одну Codex discovery-точку роли. Checkout, provider,
-identity, scope и capabilities проверяет существующий runtime registry.
+Для каждого зелёного schema-3 behavior case обязательна квитанция **выполненного**
+run: разные tracked+hashed input, expected и observed artifacts, `run_id`, время,
+runtime и точный harness/protocol. Таблица ожидаемого поведения или один статический
+Markdown — structure, не behavior, и даёт `BEHAVIOR_EVIDENCE_UNEXECUTED`.
 
 Ссылка, symlink или список test names доказывают только structure. Метод, trigger,
 wiring, quality review, дерево роли или budget change протухляют acceptance. Команды
@@ -91,27 +95,20 @@ validator имеют один канон в `PROJECT_ROLES.json`; boot указ�
   прямо ссылается `SKILL.md`, и объявленные knowledge `route_files`;
 - actual receipt — input/cached-input/output/orchestration tokens либо `UNKNOWN`.
 
-Фактические tokens не являются статическим hard limit. Обязателен
-`all_roles_scenario`; 8 КиБ — review threshold, не максимум. `accepted_*_bytes` —
-обоснованные потолки с headroom, а не exact snapshots. Append-only знание не должно
-краснеть после каждой строки; его либо покрывает budget, либо оно не входит в обычный
-autoload route. Рост сверх бюджета даёт `OPTIMIZATION_REQUIRED`; экономия с потерей
-recall/stop отклоняется.
-
-Checker считает inline/reference Markdown-ссылки из `SKILL.md`, включая
-`<path with spaces>`; inline-code игнорируется. В принятой schema 2 linked bytes —
-migration delta; budget включается после schema 3. Tree hash
-проверяет integrity, но не означает автозагрузку тестов/evidence.
+Обязателен `all_roles_scenario`; 8 КиБ — review threshold, не максимум, а
+`accepted_*` — budget с headroom. Рост даёт `OPTIMIZATION_REQUIRED`; экономия с
+потерей recall/stop отклоняется. Checker включает routed files и Markdown-ссылки роли;
+schema-2 linked bytes остаются migration delta. Tree hash доказывает integrity, не
+автозагрузку tests/evidence.
 
 Вынос знания из толстой роли атомарен: создать knowledge canon → добавить
 route/aliases → связать роль → доказать fresh-context recall → удалить копию.
+При legacy-миграции для каждой роли запиши один честный исход boundary review:
+`method-only`, extraction применён, `deferred` с условием возврата или `declined`.
+Автоматический semantic classifier не заменяет это решение.
 
-Шаблоны лежат в `assets/templates/`. Канонические проверки:
-
-```bash
-python3 <kb-architect>/scripts/kb_index.py <project>
-python3 <kb-architect>/scripts/kb_skills.py <project>
-```
+Шаблоны лежат в `assets/templates/`; канонические проверки — `kb_index.py` и
+`kb_skills.py`.
 
 ## Миграция и редкое заимствование
 

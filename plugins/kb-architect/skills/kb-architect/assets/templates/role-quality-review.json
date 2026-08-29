@@ -4,6 +4,7 @@
   "quality_owner": "named domain-role maintainer",
   "reviewed_at": "YYYY-MM-DD",
   "result": "PASS",
+  "review_scope": "internal-method",
   "professional_method": "Describe what was checked in the role's method and source ladder",
   "domain_regressions": ["name the domain-specific regressions that passed"],
   "external_practice_review": {

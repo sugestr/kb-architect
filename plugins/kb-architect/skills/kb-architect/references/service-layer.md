@@ -170,6 +170,8 @@ python3 <skill>/scripts/kb_report.py --project <root> --report <file> --do
 писать: исход `BLOCKED_LOCAL` и **никакого** GitHub fallback. Только проект с явно
 удалённым маршрутом может отправить обезличенный GitHub issue, и команда требует
 отдельный `--public-safe`. `PREPARED` не является `DELIVERED`.
+В linked worktree local auto-route восстанавливает sibling private lab через Git
+common-dir; временный runtime-каталог не превращает локальный проект во внешний beta.
 
 Если доставка недоступна, отчёт остаётся файлом проекта, а маршрутизатор печатает
 точный target. Дополнение передаётся `--amends <id|filename>`, замена —

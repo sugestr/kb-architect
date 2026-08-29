@@ -33,6 +33,8 @@ import sys
 import tempfile
 import time
 
+import kb_paths
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_REPOSITORY = "https://github.com/sugestr/kb-architect.git"
 DEFAULT_TTL_HOURS = 24  # legacy CLI compatibility; never suppresses remote proof
@@ -208,7 +210,7 @@ def git(d, *args, timeout=60):
     if r.returncode != 0:
         return None, (r.stderr.strip().splitlines() or
                       [f"код {r.returncode}"])[0]
-    return r.stdout.strip(), None
+    return kb_paths.git_record(r.stdout), None
 
 
 def resolve_source(raw):

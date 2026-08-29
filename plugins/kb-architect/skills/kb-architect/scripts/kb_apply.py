@@ -32,6 +32,7 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -94,6 +95,46 @@ def marker_from_bytes(data):
     if not match:
         return None
     return match.group(1).strip().strip("`*_ ").strip()
+
+
+def source_bytes_at_commit(root, commit, source):
+    """Read the runtime source at a commit, following safe in-repo symlinks.
+
+    Git stores a symlink as a blob containing its target.  A migration records
+    the file through which the marker was actually read, so a recommended
+    ``AGENTS.md -> CLAUDE.md`` canon must be verified against the target bytes,
+    not against the link text.  Resolution remains inside the same commit and
+    project root; absolute, escaping, looping and over-deep links fail closed.
+    """
+    current = source.replace("\\", "/")
+    seen = set()
+    for _ in range(16):
+        if current in seen:
+            return None, "version_source symlink loop"
+        seen.add(current)
+        listing = git(root, "ls-tree", "-z", commit, "--", current, binary=True)
+        if listing.returncode or not listing.stdout:
+            return None, "version_source is absent at source commit"
+        record = listing.stdout.split(b"\0", 1)[0]
+        header, separator, _name = record.partition(b"\t")
+        fields = header.split()
+        if not separator or len(fields) < 3:
+            return None, "version_source tree record is unreadable"
+        shown = git(root, "show", f"{commit}:{current}", binary=True)
+        if shown.returncode:
+            return None, "version_source is absent at source commit"
+        if fields[0] != b"120000":
+            return shown.stdout, None
+        try:
+            target = shown.stdout.decode("utf-8")
+        except UnicodeDecodeError:
+            return None, "version_source symlink target is not UTF-8"
+        if not target or posixpath.isabs(target):
+            return None, "version_source symlink leaves project root"
+        current = posixpath.normpath(posixpath.join(posixpath.dirname(current), target))
+        if current == ".." or current.startswith("../"):
+            return None, "version_source symlink leaves project root"
+    return None, "version_source symlink chain is too deep"
 
 
 def _evidence_errors(root, value, label):
@@ -191,13 +232,13 @@ def application_receipt_errors(root, marker):
                 elif ancestor.returncode:
                     errors.append(f"{label} source commit is not an ancestor of HEAD")
                 else:
-                    shown = git(root, "show", f"{commit}:{source}", binary=True)
-                    if shown.returncode:
-                        errors.append(f"{label} version_source is absent at source commit")
+                    shown, source_error = source_bytes_at_commit(root, commit, source)
+                    if source_error:
+                        errors.append(f"{label} {source_error}")
                     else:
-                        if sha256(shown.stdout) != expected_sha:
+                        if sha256(shown) != expected_sha:
                             errors.append(f"{label} version_source hash does not match snapshot")
-                        source_marker = marker_from_bytes(shown.stdout)
+                        source_marker = marker_from_bytes(shown)
                         if kind == "migration" and source_marker != from_version:
                             errors.append(f"{label} source marker does not match from_version")
                         if kind == "initial-adoption" and source_marker is not None:

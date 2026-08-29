@@ -39,7 +39,7 @@ def git(root: Path, *args: str) -> str | None:
             timeout=30)
     except Exception:
         return None
-    return result.stdout.strip() if result.returncode == 0 else None
+    return kb_paths.git_record(result.stdout) if result.returncode == 0 else None
 
 
 def declared_inbox(root: Path) -> Path | None:
@@ -57,12 +57,32 @@ def private_lab_inbox(root: Path) -> Path | None:
         return Path(os.path.expanduser(override)).resolve()
     top_raw = git(root, "rev-parse", "--show-toplevel")
     top = Path(top_raw) if top_raw else root
-    candidate = top.parent / "kb-architect"
-    remote = git(candidate, "remote", "get-url", "origin")
-    inbox = candidate / "inbox"
-    if (remote and remote.rstrip("/").removesuffix(".git").endswith(
-            "sugestr/kb-architect-lab") and inbox.is_dir()):
-        return inbox.resolve()
+    candidates = [top.parent / "kb-architect"]
+
+    # A Codex worktree lives under its runtime directory, not beside the
+    # owner's canonical projects.  Ask Git for the shared metadata directory
+    # and recover the source checkout's sibling lab without scanning the disk.
+    common_raw = git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if common_raw:
+        common = Path(common_raw)
+        if common.name == ".git":
+            candidates.append(common.parent.parent / "kb-architect")
+
+    # Bounded owner-machine convention.  External beta testers without the
+    # private laboratory simply do not match its exact private remote.
+    candidates.append(Path.home() / "Documents" / "Projects" / "kb-architect")
+
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        remote = git(candidate, "remote", "get-url", "origin")
+        inbox = candidate / "inbox"
+        if (remote and remote.rstrip("/").removesuffix(".git").endswith(
+                "sugestr/kb-architect-lab") and inbox.is_dir()):
+            return inbox.resolve()
     return None
 
 

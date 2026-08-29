@@ -72,6 +72,11 @@ KINDS = {
 }
 
 
+def git_record(raw):
+    """Remove only Git's record terminator, never meaningful path whitespace."""
+    return raw.rstrip("\r\n")
+
+
 def read(path):
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -393,7 +398,7 @@ def find_git(start):
         return None
     if probe.returncode != 0:
         return None
-    top = probe.stdout.strip()
+    top = git_record(probe.stdout)
     return os.path.abspath(top) if top and os.path.isdir(top) else None
 
 

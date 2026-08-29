@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.1.1"
+          and data.get("baseline_version") == "6.1.2"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -470,6 +470,7 @@ def write_role_acceptance(root, registry):
                 "quality_owner": entry["quality_owner"],
                 "reviewed_at": "2026-08-28",
                 "result": "PASS",
+                "review_scope": "internal-method",
                 "professional_method": "fixture",
                 "domain_regressions": ["fixture"],
                 "external_practice_review": {
@@ -516,11 +517,37 @@ def write_role_acceptance(root, registry):
             "inventory": inventory,
             "selected": list(inventory),
         }
-    cases = {
-        case: {"result": "PASS", "evidence": [common_evidence]}
-        for case in ("role-selection", "knowledge-recall", "authority-stop",
-                     "source-conflict", "context-cost")
-    }
+    cases = {}
+    behavior_folder = os.path.join(root, "role-acceptance")
+    os.makedirs(behavior_folder, exist_ok=True)
+    for case in ("role-selection", "knowledge-recall", "authority-stop",
+                 "source-conflict", "context-cost"):
+        artifacts = {}
+        for kind, content in (
+                ("input", {"case": case, "prompt": "synthetic fixture input"}),
+                ("expected", {"case": case, "expected": "fixture PASS"}),
+                ("observed", {"case": case, "observed": "fixture PASS"})):
+            path = os.path.join(behavior_folder, f"{case}-{kind}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(content, f)
+            relative = os.path.relpath(path, root).replace(os.sep, "/")
+            artifacts[kind] = {
+                "path": relative,
+                "sha256": hashlib.sha256(open(path, "rb").read()).hexdigest(),
+            }
+        cases[case] = {
+            "result": "PASS",
+            "evidence": [common_evidence],
+            "run": {
+                "run_id": "fixture-" + case,
+                "case": case,
+                "executed_at": "2026-08-28T00:00:00Z",
+                "runtime": "shared synthetic fixture",
+                "harness": "python3 tests.py --case " + case,
+                "result": "PASS",
+                **artifacts,
+            },
+        }
     receipt = {
         "schema": 3,
         "outcomes": {
@@ -594,7 +621,7 @@ def accepted_role_fixture(skill_body=None):
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
                     "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
-                    "skills", ".agents", ".claude"], check=True)
+                    "skills", "role-acceptance", ".agents", ".claude"], check=True)
     return d, registry
 
 
@@ -826,7 +853,7 @@ def t_broken_project_skill_discovery_is_visible():
     with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
         json.dump(registry, f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
-    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json", "role-acceptance",
                     "KNOWLEDGE_INDEX.json", "knowledge", "skills",
                     ".agents", ".claude"], check=True)
     out = run_skills(d)
@@ -859,7 +886,7 @@ def t_role_registry_version_must_match_loaded_skill():
     with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
         json.dump(registry, f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
-    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json", "role-acceptance",
                     "KNOWLEDGE_INDEX.json", "knowledge", "skills",
                     ".agents", ".claude"], check=True)
     out = run_skills(d)
@@ -899,7 +926,7 @@ def t_large_composite_role_emits_cost_signal():
     with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
         json.dump(registry, f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
-    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json", "role-acceptance",
                     "KNOWLEDGE_INDEX.json", "knowledge", "skills",
                     ".agents", ".claude"], check=True)
     out = run_skills(d)
@@ -1033,7 +1060,7 @@ def t_600_role_must_resolve_project_knowledge_route():
     with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
         json.dump({"schema": 1, "routes": []}, f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
-    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json", "role-acceptance",
                     "KNOWLEDGE_INDEX.json", "skills", ".agents", ".claude"], check=True)
     out = run_skills(d)
     check("неизвестный knowledge route блокирует предметную готовность",
@@ -1065,7 +1092,7 @@ def t_600_unaccepted_role_route_growth_fails_closed():
     with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
         json.dump(knowledge_index(), f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
-    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json",
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json", "role-acceptance",
                     "KNOWLEDGE_INDEX.json", "knowledge", "skills",
                     ".agents", ".claude"], check=True)
     out = run_skills(d)
@@ -1103,7 +1130,7 @@ def t_600_role_acceptance_is_bound_to_loaded_bytes():
         json.dump(knowledge_index(), f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
-                    "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
+                    "ROLE_ACCEPTANCE.json", "role-acceptance", "KNOWLEDGE_INDEX.json", "knowledge",
                     "skills", ".agents", ".claude"], check=True)
     out = run_skills(d)
     check("role acceptance привязана ко всему дереву роли",
@@ -1142,7 +1169,7 @@ def t_600_cost_has_an_all_roles_upper_bound():
         json.dump(knowledge_index(), f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
-                    "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
+                    "ROLE_ACCEPTANCE.json", "role-acceptance", "KNOWLEDGE_INDEX.json", "knowledge",
                     "skills", ".agents", ".claude"], check=True)
     out = run_skills(d)
     check("cost scenarios содержат верхнюю границу совместной загрузки ролей",
@@ -1178,7 +1205,7 @@ def t_600_acceptance_binds_selection_and_knowledge_wiring():
         json.dump(changed_index, f)
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
-                    "ROLE_ACCEPTANCE.json", "KNOWLEDGE_INDEX.json", "knowledge",
+                    "ROLE_ACCEPTANCE.json", "role-acceptance", "KNOWLEDGE_INDEX.json", "knowledge",
                     "skills", ".agents", ".claude"], check=True)
     out = run_skills(d)
     check("role acceptance привязана к selection и knowledge wiring",
@@ -2568,6 +2595,7 @@ def t_update_nazyvaet_otstavshie_kopii():
     scripts = os.path.join(skill, "scripts")
     os.makedirs(scripts)
     shutil.copy2(os.path.join(HERE, "kb_update.py"), scripts)
+    shutil.copy2(os.path.join(HERE, "kb_paths.py"), scripts)
     shutil.copy2(os.path.join(SKILL_ROOT, "SKILL.md"), skill)
     with open(os.path.join(scripts, "test_kb.py"), "w", encoding="utf-8") as f:
         f.write("import sys\nprint('fixture ok')\nsys.exit(0)\n")
@@ -2796,6 +2824,47 @@ def t_602_private_family_report_defaults_to_detailed_local_route():
           out, "trusted local delivery preserves diagnostics; public delivery is anonymised")
 
 
+def t_612_linked_worktree_finds_canonical_private_report_inbox():
+    """29.08 Foxio: isolated worktree guessed GitHub although owner lab was local."""
+    parent = tempfile.mkdtemp(prefix="kbtest-report-owner-")
+    projects = os.path.join(parent, "Documents", "Projects")
+    source = os.path.join(projects, "subject")
+    lab = os.path.join(projects, "kb-architect")
+    worktrees = os.path.join(parent, "runtime-worktrees")
+    linked = os.path.join(worktrees, "subject")
+    os.makedirs(source)
+    os.makedirs(os.path.join(lab, "inbox"))
+    os.makedirs(worktrees)
+    with open(os.path.join(source, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write("# local owner project\n")
+    subprocess.run(["git", "-C", source, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", source, "config", "user.email",
+                    "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", source, "config", "user.name", "Fixture"], check=True)
+    subprocess.run(["git", "-C", source, "add", "CLAUDE.md"], check=True)
+    subprocess.run(["git", "-C", source, "commit", "-qm", "fixture"], check=True)
+    subprocess.run(["git", "-C", source, "worktree", "add", "--detach", linked,
+                    "HEAD"], capture_output=True, text=True, check=True)
+    subprocess.run(["git", "-C", lab, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", lab, "remote", "add", "origin",
+                    "git@github.com:sugestr/kb-architect-lab.git"], check=True)
+    report = os.path.join(linked, "report.md")
+    with open(report, "w", encoding="utf-8") as f:
+        f.write("# private report\n\nрежим подробности: детальный\n")
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_report.py"), "--project", linked,
+         "--report", report], capture_output=True, text=True, timeout=30)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    expected = os.path.join(lab, "inbox", "report.md")
+    check("linked worktree auto-routes to the canonical private lab inbox",
+          p.returncode == 1 and "PREPARED local" in p.stdout and expected in p.stdout
+          and "github" not in p.stdout.lower(),
+          out, "git-common-dir recovers the source checkout's sibling lab")
+    subprocess.run(["git", "-C", source, "worktree", "remove", "--force", linked],
+                   capture_output=True, text=True)
+    shutil.rmtree(parent, ignore_errors=True)
+
+
 def t_516_broad_evidence_query_refuses_context_overrun():
     """27.08 audit: evidence mode printed and required an unbounded candidate set."""
     files = {f"sources/f{i:03}.md": "shared support and shared challenge " + "x" * 180
@@ -2861,6 +2930,65 @@ def t_611_git_only_candidate_uses_commit_without_second_shadow():
     shutil.rmtree(project, ignore_errors=True)
 
 
+def t_612_git_root_trailing_space_preserves_tracking():
+    """29.08 Foxio: .strip() changed a valid Git root and invented untracked roles."""
+    import kb_paths
+
+    details = []
+    passed = True
+    ordinary, _registry = accepted_role_fixture()
+    ordinary_with_space = ordinary + " "
+    os.rename(ordinary, ordinary_with_space)
+    subprocess.run(["git", "-C", ordinary_with_space, "config", "user.email",
+                    "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", ordinary_with_space, "config", "user.name",
+                    "Fixture"], check=True)
+    subprocess.run(["git", "-C", ordinary_with_space, "commit", "-qm", "fixture"],
+                   check=True)
+    ordinary_home = tempfile.mkdtemp(prefix="kbtest-role-home-")
+    ordinary_out = run_skills(ordinary_with_space, ordinary_home)
+    ordinary_passed = (
+        ordinary_out.code == 0
+        and os.path.samefile(kb_paths.find_git(ordinary_with_space),
+                             ordinary_with_space)
+        and "not Git-tracked" not in ordinary_out
+    )
+    passed = passed and ordinary_passed
+    details.append("ordinary checkout:\n" + str(ordinary_out))
+
+    source, _registry = accepted_role_fixture()
+    subprocess.run(["git", "-C", source, "config", "user.email",
+                    "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", source, "config", "user.name", "Fixture"],
+                   check=True)
+    subprocess.run(["git", "-C", source, "commit", "-qm", "fixture"], check=True)
+    worktree_parent = tempfile.mkdtemp(prefix="kbtest-worktree-parent-")
+    linked = os.path.join(worktree_parent, "linked ")
+    subprocess.run(["git", "-C", source, "worktree", "add", "--detach", linked,
+                    "HEAD"], capture_output=True, text=True, check=True)
+    linked_home = tempfile.mkdtemp(prefix="kbtest-role-home-")
+    linked_out = run_skills(linked, linked_home)
+    linked_passed = (
+        linked_out.code == 0
+        and os.path.samefile(kb_paths.find_git(linked), linked)
+        and "not Git-tracked" not in linked_out
+    )
+    passed = passed and linked_passed
+    details.append("linked worktree:\n" + str(linked_out))
+
+    out = Vyvod("\n".join(details), 0 if passed else 1)
+    check("Git root ending in a space remains the exact tracked repository",
+          passed, out,
+          "ordinary checkout and linked worktree preserve path whitespace")
+    subprocess.run(["git", "-C", source, "worktree", "remove", "--force", linked],
+                   capture_output=True, text=True)
+    shutil.rmtree(ordinary_with_space, ignore_errors=True)
+    shutil.rmtree(ordinary_home, ignore_errors=True)
+    shutil.rmtree(source, ignore_errors=True)
+    shutil.rmtree(linked_home, ignore_errors=True)
+    shutil.rmtree(worktree_parent, ignore_errors=True)
+
+
 def t_601_release_application_binds_source_and_exact_ledger():
     """The migration receipt binds the immutable source before project writes."""
     import json
@@ -2878,11 +3006,11 @@ def t_601_release_application_binds_source_and_exact_ledger():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.1.1\n")
+        f.write("# rules\n\nkb_standard_version: 6.1.2\n")
     receipt = {
         "schema": 1,
         "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.1.1",
+            "kind": "migration", "from_version": "6.0", "to_version": "6.1.2",
             "status": "finalized",
             "source_snapshot": {
                 "ref": source, "commit": source, "version_source": "CLAUDE.md",
@@ -2896,6 +3024,8 @@ def t_601_release_application_binds_source_and_exact_ledger():
                 {"version": "6.1", "decision": "applied",
                  "evidence": ["tests/migration.txt"]},
                 {"version": "6.1.1", "decision": "tool-inherited",
+                 "evidence": ["tests/migration.txt"]},
+                {"version": "6.1.2", "decision": "applied",
                  "evidence": ["tests/migration.txt"]},
             ],
             "owner_acceptance": {"accepted_by": "fixture owner",
@@ -2914,6 +3044,56 @@ def t_601_release_application_binds_source_and_exact_ledger():
           out.code == 0 and "APPLICATION_RECEIPT_OK" in out
           and "применять нечего" in out,
           out, "source commit, old marker, release row and post-results owner receipt are bound")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_612_release_application_follows_safe_boot_symlink():
+    """29.08 Foxio: recommended AGENTS.md -> CLAUDE.md failed source receipt."""
+    import json
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.0\n",
+              "tests/migration.txt": "migration checks passed\n",
+              "tests/owner.txt": "owner accepted shown results\n"})
+    os.symlink("CLAUDE.md", os.path.join(d, "AGENTS.md"))
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.email",
+                    "fixture@example.invalid"], check=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "Fixture"], check=True)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md", "AGENTS.md"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "source"], check=True)
+    source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    source_bytes = open(os.path.join(d, "CLAUDE.md"), "rb").read()
+    with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
+        f.write("# rules\n\nkb_standard_version: 6.1.2\n")
+    receipt = {
+        "schema": 1,
+        "applications": [{
+            "kind": "migration", "from_version": "6.0", "to_version": "6.1.2",
+            "status": "finalized",
+            "source_snapshot": {
+                "ref": source, "commit": source, "version_source": "AGENTS.md",
+                "version_source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+            },
+            "release_ledger": [
+                {"version": version, "decision": "applied",
+                 "evidence": ["tests/migration.txt"]}
+                for version in ("6.0.1", "6.0.2", "6.1", "6.1.1", "6.1.2")
+            ],
+            "owner_acceptance": {"accepted_by": "fixture owner",
+                                 "accepted_at": "2026-08-29",
+                                 "evidence": ["tests/owner.txt"]},
+            "finalized_at": "2026-08-29",
+        }],
+    }
+    with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w",
+              encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "CLAUDE.md",
+                    "KB_RELEASE_APPLICATION.json", "tests"], check=True)
+    out = run("kb_apply.py", d)
+    check("source receipt follows the safe in-repo boot-canon symlink",
+          out.code == 0 and "APPLICATION_RECEIPT_OK" in out,
+          out, "AGENTS.md locator resolves to CLAUDE.md bytes at the source commit")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -2965,7 +3145,7 @@ def t_610_scoped_migration_target_survives_newer_installed_skill():
           and scoped.code == 0
           and "APPLICATION_RECEIPT_OK" in scoped
           and "TARGET_APPLICATION_OK" in scoped
-          and "NEWER_INSTALLED_OUT_OF_SCOPE: 6.1" in scoped,
+          and "NEWER_INSTALLED_OUT_OF_SCOPE: 6.1.2" in scoped,
           combined, "default still reports latest delta; scoped acceptance closes 6.0.1")
     shutil.rmtree(d, ignore_errors=True)
 
@@ -3000,14 +3180,14 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.1.1\n")
+        f.write("\nkb_standard_version: 6.1.2\n")
     receipt = {"schema": 1, "applications": [{
-        "kind": "initial-adoption", "from_version": None, "to_version": "6.1.1",
+        "kind": "initial-adoption", "from_version": None, "to_version": "6.1.2",
         "status": "finalized",
         "source_snapshot": {"ref": source, "commit": source,
                             "version_source": "CLAUDE.md",
                             "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.1.1", "decision": "applied",
+        "release_ledger": [{"version": "6.1.2", "decision": "applied",
                             "evidence": ["tests/proof.txt"]}],
         "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
                              "evidence": ["tests/proof.txt"]},
@@ -3080,6 +3260,40 @@ def t_601_acceptance_gates_cannot_collapse_into_owner_claim():
           and "DISCOVERY_PASS: status must be PASS" in out
           and "BEHAVIOR_PASS: status must be PASS" in out,
           out, "an owner declaration cannot self-prove runtime or behavior")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_612_static_behavior_assertion_is_not_an_executed_run():
+    """Foxio recurrence: five static PASS rows passed without observed behavior."""
+    import json
+    d, _registry = accepted_role_fixture()
+    path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(path, encoding="utf-8"))
+    for result in receipt["outcomes"]["BEHAVIOR_PASS"]["cases"].values():
+        result.pop("run")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    out = run_skills(d)
+    check("static behavior assertions cannot masquerade as executed acceptance",
+          out.code == 1 and "BEHAVIOR_EVIDENCE_UNEXECUTED" in out,
+          out, "schema 3 binds input, expected, observed and run identity")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_612_packaging_review_cannot_claim_professional_method_pass():
+    """Foxio review moved files but was reported as professional role quality PASS."""
+    import json
+    d, _registry = accepted_role_fixture()
+    review = os.path.join(d, "skills", "domain-auditor", "ROLE_QUALITY_REVIEW.json")
+    data = json.load(open(review, encoding="utf-8"))
+    data["review_scope"] = "packaging-only"
+    with open(review, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    out = run_skills(d)
+    check("packaging-only role review is not professional-method acceptance",
+          out.code == 1
+          and "packaging-only review cannot be professional-method PASS" in out,
+          out, "review_scope keeps structural cleanup narrower than method quality")
     shutil.rmtree(d, ignore_errors=True)
 
 

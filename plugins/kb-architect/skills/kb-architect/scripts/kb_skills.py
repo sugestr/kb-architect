@@ -21,6 +21,7 @@ from typing import Optional
 from urllib.parse import unquote
 
 import kb_index
+import kb_paths
 
 
 DISCOVERY = {"codex": ".agents/skills", "claude": ".claude/skills"}
@@ -76,7 +77,7 @@ def tracked_tree_sha256(folder: Path) -> str | None:
     probe = git(folder, "rev-parse", "--show-toplevel")
     if probe.returncode:
         return None
-    repo = Path(probe.stdout.strip())
+    repo = Path(kb_paths.git_record(probe.stdout))
     try:
         relative = folder.relative_to(repo).as_posix()
     except ValueError:
@@ -188,7 +189,7 @@ def check_external(path: Path, dependency: object,
     if probe.returncode:
         errors.append(f"{name}: external canonical is not in a Git checkout")
         return
-    repo = Path(probe.stdout.strip())
+    repo = Path(kb_paths.git_record(probe.stdout))
     remotes = git(repo, "remote", "-v").stdout
     if str(dependency["repository"]) not in remotes:
         errors.append(f"{name}: dependency repository does not match local remote")
@@ -312,6 +313,36 @@ def evidence_errors(root: Path, value: object, label: str) -> list[str]:
     return errors
 
 
+def behavior_run_errors(root: Path, case: str, value: object) -> list[str]:
+    """Bind a green behavior case to an executed, inspectable run.
+
+    A tracked Markdown assertion can describe the expected behavior without
+    proving that anything ran.  Schema 3 therefore records distinct input,
+    expected and observed artifacts plus run identity and protocol.
+    """
+    label = f"BEHAVIOR_PASS.{case}"
+    if not isinstance(value, dict):
+        return [f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: run receipt is required"]
+    required = ("run_id", "executed_at", "runtime", "harness")
+    if any(not isinstance(value.get(field), str) or not value[field].strip()
+           for field in required):
+        return [f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                "run_id/executed_at/runtime/harness are required"]
+    if value.get("case") != case or value.get("result") != "PASS":
+        return [f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: case/result do not bind PASS"]
+    errors: list[str] = []
+    paths = []
+    for field in ("input", "expected", "observed"):
+        item = value.get(field)
+        errors.extend(evidence_errors(root, [item], f"{label}.run.{field}"))
+        if isinstance(item, dict) and isinstance(item.get("path"), str):
+            paths.append(item["path"])
+    if len(paths) != 3 or len(set(paths)) != 3:
+        errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                      "input/expected/observed artifacts must be distinct")
+    return errors
+
+
 def quality_review(root: Path, entry: dict, errors: list[str]) -> str | None:
     name = str(entry.get("name", "<unknown>"))
     canonical_raw = Path(str(entry.get("canonical", ""))).expanduser()
@@ -325,7 +356,8 @@ def quality_review(root: Path, entry: dict, errors: list[str]) -> str | None:
         errors.append(f"{name}: quality review must be inside the canonical role tree")
         return None
     repo_probe = git(path.parent, "rev-parse", "--show-toplevel")
-    review_repo = Path(repo_probe.stdout.strip()).resolve() if not repo_probe.returncode else root
+    review_repo = (Path(kb_paths.git_record(repo_probe.stdout)).resolve()
+                   if not repo_probe.returncode else root)
     if not path.is_file() or not tracked(review_repo, path):
         errors.append(f"{name}: quality review is missing or not Git-tracked")
         return None
@@ -340,6 +372,13 @@ def quality_review(root: Path, entry: dict, errors: list[str]) -> str | None:
         errors.append(f"{name}: quality review identity/owner mismatch")
     if not data.get("reviewed_at"):
         errors.append(f"{name}: quality review has no reviewed_at")
+    review_scope = data.get("review_scope")
+    allowed_scopes = {"packaging-only", "internal-method", "external-benchmark",
+                      "licensed-review"}
+    if review_scope not in allowed_scopes:
+        errors.append(f"{name}: ROLE_QUALITY_REVIEW needs explicit review_scope")
+    elif review_scope == "packaging-only":
+        errors.append(f"{name}: packaging-only review cannot be professional-method PASS")
     review = data.get("external_practice_review")
     allowed = {"performed", "deferred", "not-applicable"}
     if not isinstance(review, dict) or review.get("status") not in allowed \
@@ -522,7 +561,8 @@ def role_linked_files(canonical: Path, name: str,
         if outside(canonical, path) or not path.is_file() or path == skill_md:
             continue
         probe = git(path.parent, "rev-parse", "--show-toplevel")
-        repo = Path(probe.stdout.strip()).resolve() if not probe.returncode else canonical
+        repo = (Path(kb_paths.git_record(probe.stdout)).resolve()
+                if not probe.returncode else canonical)
         if not tracked(repo, path):
             errors.append(f"{name}: linked role support file is not Git-tracked: {value}")
             continue
@@ -869,6 +909,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     result = cases.get(case, {}) if isinstance(cases, dict) else {}
                     if result.get("result") != "PASS":
                         errors.append(f"BEHAVIOR_PASS.{case}: result must be PASS")
+                    elif receipt_schema == 3:
+                        errors.extend(behavior_run_errors(root, case, result.get("run")))
                     else:
                         errors.extend(evidence_errors(root, result.get("evidence"),
                                                       f"BEHAVIOR_PASS.{case}"))

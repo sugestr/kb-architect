@@ -32,6 +32,9 @@
 `assets/templates/release-application.json`, но не ставь `finalized` и не повышай marker.
 Source commit должен оставаться доступным предком итогового checkout. Если marker раньше
 не было, сначала восстанови его по истории; не назначай прошлую версию на глаз.
+Если locator — tracked относительный symlink вроде `AGENTS.md -> CLAUDE.md`, записывай
+именно locator и hash прочитанных target bytes: checker безопасно разыменует его внутри
+того же source commit и запретит absolute/escaping/looping target.
 
 Tracked-only candidate живёт в текущем checkout: exact pre-change commit уже rollback,
 поэтому второй каталог/ветка не нужны. Worktree нужен для реальной параллельной записи;
