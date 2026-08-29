@@ -63,6 +63,8 @@
         ],
         "accepted_role_entry_bytes": 2048,
         "accepted_static_route_bytes": 12288,
+        "accepted_control_plane_bytes": 16384,
+        "accepted_end_to_end_bytes": 28672,
         "accepted_reason": "Budget with explicit headroom for normal routed-knowledge growth"
       }
     ]

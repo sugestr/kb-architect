@@ -19,11 +19,10 @@ Agent Skill о том, **как агент обращается со знани�
 ## Один канон и выбор
 
 `PROJECT_ROLES.json` хранит posture, selector-ы и budgets; `KNOWLEDGE_INDEX.json` —
-адреса знаний; `skills/<name>/SKILL.md` — метод. `.agents/skills` и `.claude/skills`
-ссылаются на тот же Git-канон. Connectors и secrets принимаются по средам отдельно.
-Posture: `required`, `transitioning` или `not-applicable` с причиной. Непокрытый
-существенный вывод — stop; все совпавшие required-selector-ы загружаются, конфликт
-сохраняется.
+адреса знаний; `skills/<name>/SKILL.md` — метод. Discovery обоих агентов ведёт к
+одному Git-канону; connectors/secrets принимаются отдельно. Posture: `required`,
+`transitioning` или `not-applicable` с причиной. Непокрытый существенный вывод —
+stop; совпавшие required-selector-ы загружаются все, конфликт сохраняется.
 
 ## Как растить и разделять
 
@@ -36,17 +35,17 @@ Posture: `required`, `transitioning` или `not-applicable` с причиной
 Один skill допустим для selector-ов с общими инвариантами и подтверждённым route-cost.
 Лимитируется стоимость сценария, а не число selector-ов.
 
-Цикл: реальные задачи → read-only опись → минимальный candidate → tests → quality
-review → version/commit → fresh-context acceptance. Community-метод можно принять,
-адаптировать или смешать с provenance/licence; внешний обзор имеет исход `done`,
-`deferred` или `not-applicable`, а не запускается полностью на каждую правку.
+Цикл: реальные задачи → опись → минимальный candidate → tests → quality review →
+version/commit → fresh-context acceptance. Community-метод принимают, адаптируют или
+смешивают с provenance/licence; внешний обзор — `done`, `deferred` или
+`not-applicable`, а не обязательный повтор на каждую правку.
 
 `quality_owner` отвечает за метод; `kb-architect` — gate/receipt/rollback; владелец —
 за acceptance/authority. `packaging-only` review не получает профессиональный `PASS`.
 
 ## Проверяемая готовность
 
-Schema 4 `ROLE_ACCEPTANCE.json` разделяет четыре исхода; schema 2/3 читаются как
+Schema 5 `ROLE_ACCEPTANCE.json` разделяет четыре исхода; schema 2/3/4 читаются как
 legacy до следующей project migration:
 
 1. `STRUCTURAL_PASS` — tracked canon, portable frontmatter, общий Agent Skills и
@@ -62,19 +61,19 @@ legacy до следующей project migration:
 suite; расхождение среды переоткрывает acceptance как `UNKNOWN`, а не создаёт второй
 набор правил.
 
-Schema-4 behavior case получает PASS только с разными tracked+hashed
-input/expected/observed и одним structured tracked harness. Явный
-`kb_behavior.py <root> --execute` записывает exit/time/case ids/hashes;
-`kb_skills.py` project code не запускает, а сверяет receipt. Ручной JSON или
-несуществующий harness дают `BEHAVIOR_EVIDENCE_UNEXECUTED`. Это защита от случайного
-самоудостоверения. Для каждого case schema 4 также требует named negative control.
-Runner сам создаёт временную копию всех tracked-файлов, проверяет hash цели, выполняет
-вредное точное `replace-text`, а затем запускает тот же harness с теми же argv.
-Изменённый проект обязан дать код `10`; parser error и timeout не подходят. Целью не
-может быть сам harness. Отдельная безвредная правка той же цели обязана остаться
-зелёной: детектор любого изменения также не проходит. Иначе результат
-`BEHAVIOR_EVIDENCE_INADEQUATE`. Это проверяет чувствительность, но не заменяет
-inspection; discovery/owner gates отдельны.
+Schema-5 case получает PASS только с разными tracked+hashed input/expected/observed и
+одним tracked harness. `kb_behavior.py <root> --execute` записывает
+exit/time/case ids/hashes; `kb_skills.py` код проекта не запускает, а сверяет receipt.
+Ручной JSON или отсутствующий harness дают `BEHAVIOR_EVIDENCE_UNEXECUTED`.
+
+Каждый case объявляет harmful и neutral `replace-text` одной hash-bound цели. Runner
+проверяет их во временной копии тем же harness/argv. Harmful обязан дать exit `10` и
+structured results, где красный только этот case; neutral — exit `0` и все зелёные.
+Parser error, timeout, self-mutation, общий red и детектор любого изменения не
+подходят: `BEHAVIOR_EVIDENCE_INADEQUATE`. Inspection и остальные gates отдельны.
+
+Schema 5 запрещает host-absolute `harness.argv`: project paths относительны, locator
+установленного ядра runner передаёт как `KB_ARCHITECT_SCRIPTS`.
 
 Ссылка, symlink или список test names доказывают только structure. Метод, trigger,
 wiring, quality review, дерево роли или budget change протухляют acceptance. Команды
@@ -90,6 +89,8 @@ validator имеют один канон в `PROJECT_ROLES.json`; boot указ�
 - `accepted_role_entry_bytes` — обязательный вход роли;
 - `accepted_static_route_bytes` — entry, существующие supporting-файлы, на которые
   прямо ссылается `SKILL.md`, и объявленные knowledge `route_files`;
+- `accepted_control_plane_bytes` — `PROJECT_ROLES.json` и `KNOWLEDGE_INDEX.json`;
+- `accepted_end_to_end_bytes` — сумма static route и control plane;
 - actual receipt — input/cached-input/output/orchestration tokens либо `UNKNOWN`.
 
 Обязателен `all_roles_scenario`; 8 КиБ — review threshold, `accepted_*` — budget с

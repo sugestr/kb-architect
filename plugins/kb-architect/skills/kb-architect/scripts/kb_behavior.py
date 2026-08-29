@@ -4,8 +4,8 @@
 The ordinary role checker never executes project code.  This command is the
 separate, explicit execution boundary: it runs one tracked Python harness
 without a shell, with a reduced environment, and writes a receipt binding the
-harness and every input/expected/observed artifact declared by schema 3/4. Schema 4
-also records one declared failing negative control per semantic case.
+harness and every input/expected/observed artifact declared by schema 3/4/5. Schema 4
+adds mutations; schema 5 also attributes failure to the declared semantic case.
 """
 
 from __future__ import annotations
@@ -16,14 +16,16 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 
 
-PROTOCOL = "kb-behavior-run/v2"
-RUNNER_VERSION = "2"
+PROTOCOL = "kb-behavior-run/v3"
+RUNNER_VERSION = "3"
+RESULT_PROTOCOL = "kb-behavior-result/v1"
 OUTPUT_LIMIT = 32_768
 NEGATIVE_CONTROL_EXIT = 10
 
@@ -34,6 +36,32 @@ def sha256(path: Path) -> str:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def reported_results(stdout: str, cases: set[str]) -> dict[str, str] | None:
+    """Read the final structured case report without trusting free-form text."""
+    prefix = "KB_BEHAVIOR_RESULT "
+    lines = [line[len(prefix):] for line in stdout.splitlines()
+             if line.startswith(prefix)]
+    if len(lines) != 1:
+        return None
+    try:
+        value = json.loads(lines[0])
+    except json.JSONDecodeError:
+        return None
+    results = value.get("results") if isinstance(value, dict) \
+        and value.get("protocol") == RESULT_PROTOCOL else None
+    if not isinstance(results, dict) or set(results) != cases \
+            or any(result not in {"PASS", "FAIL"} for result in results.values()):
+        return None
+    return results
+
+
+def host_absolute_arg(value: str) -> bool:
+    """Reject POSIX, home, Windows drive/UNC and file-URI host locators."""
+    return value.startswith(("/", "~", "\\")) \
+        or re.match(r"^[A-Za-z]:[\\/]", value) is not None \
+        or re.search(r"(^|=)(?:[/\\]|file:/)", value, re.IGNORECASE) is not None
 
 
 def inside(root: Path, raw: object, label: str) -> Path:
@@ -73,7 +101,7 @@ def mutation_spec(case: str, label: str, value: object) -> dict:
 
 def control_spec(root: Path, case: str, control: object) -> tuple[Path, dict, dict]:
     if not isinstance(control, dict):
-        raise ValueError(f"{case}: negative_control is required by schema 4")
+        raise ValueError(f"{case}: negative_control is required by schema 4/5")
     control_id = control.get("id")
     if not isinstance(control_id, str) or not control_id.strip():
         raise ValueError(f"{case}: negative_control.id is required")
@@ -158,8 +186,8 @@ def load_plan(root: Path, acceptance_path: Path
     behavior = data.get("outcomes", {}).get("BEHAVIOR_PASS", {})
     cases = behavior.get("cases", {}) if isinstance(behavior, dict) else {}
     schema = data.get("schema")
-    if schema not in {3, 4} or not isinstance(cases, dict) or not cases:
-        raise ValueError("schema-3/4 BEHAVIOR_PASS.cases are required")
+    if schema not in {3, 4, 5} or not isinstance(cases, dict) or not cases:
+        raise ValueError("schema-3/4/5 BEHAVIOR_PASS.cases are required")
 
     harnesses: list[dict] = []
     case_run_ids: dict[str, str] = {}
@@ -181,7 +209,7 @@ def load_plan(root: Path, acceptance_path: Path
                 raise ValueError(f"{case}.{field}: artifact is required")
             path = inside(root, item.get("path"), f"{case}.{field}")
             artifacts[path.relative_to(root).as_posix()] = str(item.get("sha256", ""))
-        if schema == 4:
+        if schema in {4, 5}:
             control = run.get("negative_control")
             control_spec(root, str(case), control)
             controls[str(case)] = control
@@ -189,14 +217,14 @@ def load_plan(root: Path, acceptance_path: Path
     harness = harnesses[0]
     if any(item != harness for item in harnesses[1:]):
         raise ValueError("all shared behavior cases must bind one identical harness")
-    if schema == 4:
+    if schema in {4, 5}:
         ids = [control["id"] for control in controls.values()]
         mutations = [json.dumps(
             {"target": control["target"], "mutation": control["mutation"]},
             sort_keys=True) for control in controls.values()]
         if len(ids) != len(set(ids)) or len(mutations) != len(set(mutations)):
             raise ValueError(
-                "schema-4 negative controls require unique ids and target/mutation per case")
+                "schema-4/5 negative controls require unique ids and target/mutation per case")
         harness_path = inside(root, harness.get("path"), "harness")
         for case, control in controls.items():
             target_path, _harmful, _harmless = control_spec(root, case, control)
@@ -241,6 +269,8 @@ def main() -> int:
         if not isinstance(harness_argv, list) or not all(
                 isinstance(item, str) for item in harness_argv):
             raise ValueError("harness.argv must be a string array")
+        if schema == 5 and any(host_absolute_arg(item) for item in harness_argv):
+            raise ValueError("schema-5 harness.argv cannot contain host-absolute paths")
         if receipt.exists() and not args.replace:
             raise ValueError("receipt already exists; use --replace for a new run")
     except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -251,6 +281,7 @@ def main() -> int:
         key: value for key, value in os.environ.items()
         if key in {"PATH", "LANG", "LC_ALL", "PYTHONIOENCODING", "TMPDIR"}
     }
+    safe_env["KB_ARCHITECT_SCRIPTS"] = str(Path(__file__).resolve().parent)
     started = utc_now()
     try:
         result = subprocess.run(
@@ -264,9 +295,15 @@ def main() -> int:
         exit_code = 124
         stdout = (exc.stdout or "")[-OUTPUT_LIMIT:]
         stderr = ((exc.stderr or "") + "\nTIMEOUT")[-OUTPUT_LIMIT:]
+    normal_report = reported_results(stdout, set(case_run_ids)) if schema == 5 else None
+    if schema == 5 and (exit_code != 0 or normal_report != {
+            case: "PASS" for case in case_run_ids}):
+        exit_code = exit_code or 5
+        stderr = (stderr + "\nCASE_ATTRIBUTION_INVALID: normal run must report all PASS")[
+            -OUTPUT_LIMIT:]
     negative_results: dict[str, dict] = {}
     neutral_results: dict[str, dict] = {}
-    if exit_code == 0 and schema == 4:
+    if exit_code == 0 and schema in {4, 5}:
         for case, control in controls.items():
             control_record: dict = {}
             try:
@@ -282,22 +319,30 @@ def main() -> int:
                     actual_exit = negative.returncode
                     negative_stdout = negative.stdout[-OUTPUT_LIMIT:]
                     negative_stderr = negative.stderr[-OUTPUT_LIMIT:]
+                    negative_report = reported_results(
+                        negative.stdout, set(case_run_ids)) if schema == 5 else None
             except subprocess.TimeoutExpired as exc:
                 actual_exit = 124
                 negative_stdout = (exc.stdout or "")[-OUTPUT_LIMIT:]
                 negative_stderr = ((exc.stderr or "") + "\nTIMEOUT")[-OUTPUT_LIMIT:]
+                negative_report = None
             except (OSError, ValueError, subprocess.CalledProcessError) as exc:
                 actual_exit = 125
                 negative_stdout = ""
                 negative_stderr = f"NEGATIVE_CONTROL_SETUP_FAILED: {exc}"
+                negative_report = None
             expected_exit = control["expected_exit"]
             negative_results[case] = {
                 **control_record,
                 "actual_exit": actual_exit,
                 "stdout_tail": negative_stdout,
                 "stderr_tail": negative_stderr,
+                "reported_results": negative_report,
             }
-            if actual_exit != expected_exit:
+            attributed = negative_report == {
+                name: ("FAIL" if name == case else "PASS")
+                for name in case_run_ids} if schema == 5 else True
+            if actual_exit != expected_exit or not attributed:
                 exit_code = exit_code or 4
             neutral_record: dict = {}
             try:
@@ -314,21 +359,28 @@ def main() -> int:
                     neutral_exit = neutral_run.returncode
                     neutral_stdout = neutral_run.stdout[-OUTPUT_LIMIT:]
                     neutral_stderr = neutral_run.stderr[-OUTPUT_LIMIT:]
+                    neutral_report = reported_results(
+                        neutral_run.stdout, set(case_run_ids)) if schema == 5 else None
             except subprocess.TimeoutExpired as exc:
                 neutral_exit = 124
                 neutral_stdout = (exc.stdout or "")[-OUTPUT_LIMIT:]
                 neutral_stderr = ((exc.stderr or "") + "\nTIMEOUT")[-OUTPUT_LIMIT:]
+                neutral_report = None
             except (OSError, ValueError, subprocess.CalledProcessError) as exc:
                 neutral_exit = 125
                 neutral_stdout = ""
                 neutral_stderr = f"NEUTRAL_CONTROL_SETUP_FAILED: {exc}"
+                neutral_report = None
             neutral_results[case] = {
                 **neutral_record,
                 "actual_exit": neutral_exit,
                 "stdout_tail": neutral_stdout,
                 "stderr_tail": neutral_stderr,
+                "reported_results": neutral_report,
             }
-            if neutral_exit != 0:
+            neutral_attributed = neutral_report == {
+                name: "PASS" for name in case_run_ids} if schema == 5 else True
+            if neutral_exit != 0 or not neutral_attributed:
                 exit_code = exit_code or 4
     finished = utc_now()
 
@@ -360,6 +412,7 @@ def main() -> int:
             "argv": harness_argv,
         },
         "case_run_ids": case_run_ids,
+        "reported_results": normal_report,
         "negative_controls": negative_results,
         "neutral_controls": neutral_results,
         "artifacts": actual_artifacts,

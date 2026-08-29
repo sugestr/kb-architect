@@ -34,6 +34,14 @@ BEHAVIOURAL_COVERAGE = {
 ACCEPTANCE_OUTCOMES = {
     "STRUCTURAL_PASS", "DISCOVERY_PASS", "BEHAVIOR_PASS", "OWNER_ACCEPTED",
 }
+
+# Exact public 6.1.4 runner. Schema 4 is legacy-readable only with this released
+# implementation, never with an arbitrary historical or project-provided hash.
+LEGACY_BEHAVIOR_RUNNER_HASHES = {
+    ("kb-behavior-run/v2", "2"): {
+        "07e880689a46ec742d935375a697ee9f0d0fb7e89a2da6e592c5ace7a9e935f9",
+    },
+}
 PORTABLE_TOP_LEVEL = {
     "name", "description", "license", "allowed-tools", "metadata", "compatibility",
 }
@@ -319,7 +327,8 @@ def behavior_run_errors(root: Path, case: str, value: object,
 
     A tracked Markdown assertion can describe the expected behavior without
     proving that anything ran. Schema 3 records distinct artifacts and execution;
-    schema 4 additionally requires mutation sensitivity.
+    Schema 4 additionally requires mutation sensitivity; schema 5 binds the
+    failure to exactly one declared case.
     """
     label = f"BEHAVIOR_PASS.{case}"
     if not isinstance(value, dict):
@@ -355,6 +364,13 @@ def behavior_run_errors(root: Path, case: str, value: object,
         if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "harness.argv must be a string array")
+        elif receipt_schema == 5 and any(
+                item.startswith(("/", "~", "\\"))
+                or re.match(r"^[A-Za-z]:[\\/]", item)
+                or re.search(r"(^|=)(?:[/\\]|file:/)", item, re.IGNORECASE)
+                for item in argv):
+            errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                          "schema-5 harness.argv cannot contain host-absolute paths")
 
     execution = value.get("execution_receipt")
     before_execution = len(errors)
@@ -369,20 +385,28 @@ def behavior_run_errors(root: Path, case: str, value: object,
             receipt = {}
         protocol = (receipt.get("protocol"), receipt.get("runner_version"))
         allowed_protocols = {("kb-behavior-run/v1", "1"),
-                             ("kb-behavior-run/v2", "2")}
+                             ("kb-behavior-run/v2", "2"),
+                             ("kb-behavior-run/v3", "3")}
         if receipt.get("schema") != 1 or protocol not in allowed_protocols:
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "canonical behavior-run receipt is required")
         if receipt_schema == 4 and protocol != ("kb-behavior-run/v2", "2"):
+            if protocol != ("kb-behavior-run/v3", "3"):
+                errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                              "schema 4 requires behavior-run v2+ sensitivity evidence")
+        if receipt_schema == 5 and protocol != ("kb-behavior-run/v3", "3"):
             errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
-                          "schema 4 requires behavior-run v2 sensitivity evidence")
+                          "schema 5 requires behavior-run v3 case attribution")
         runner_hash = receipt.get("runner_sha256")
         if not isinstance(runner_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", runner_hash):
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "runner_sha256 is invalid")
-        elif receipt_schema == 4:
+        elif receipt_schema in {4, 5}:
             runner_path = Path(__file__).with_name("kb_behavior.py")
-            if not runner_path.is_file() or runner_hash != file_sha256(runner_path):
+            current_hash = file_sha256(runner_path) if runner_path.is_file() else None
+            allowed_hashes = {current_hash} if protocol == ("kb-behavior-run/v3", "3") \
+                else LEGACY_BEHAVIOR_RUNNER_HASHES.get(protocol, set())
+            if runner_hash not in allowed_hashes:
                 errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
                               "execution receipt does not bind the installed runner")
         if receipt.get("exit_code") != 0:
@@ -404,7 +428,7 @@ def behavior_run_errors(root: Path, case: str, value: object,
                 for path, digest in artifact_hashes.items()):
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "execution receipt does not bind behavior artifacts")
-        if receipt_schema == 4:
+        if receipt_schema in {4, 5}:
             control = value.get("negative_control")
             if not isinstance(control, dict):
                 errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
@@ -518,6 +542,17 @@ def behavior_run_errors(root: Path, case: str, value: object,
                         or neutral_observed.get("actual_exit") != 0:
                     errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
                                   "runner-owned neutral mutation did not stay green")
+                if receipt_schema == 5:
+                    all_cases = set(receipt.get("case_run_ids", {}))
+                    normal_expected = {name: "PASS" for name in all_cases}
+                    harmful_expected = {
+                        name: ("FAIL" if name == case else "PASS")
+                        for name in all_cases}
+                    if receipt.get("reported_results") != normal_expected \
+                            or observed.get("reported_results") != harmful_expected \
+                            or neutral_observed.get("reported_results") != normal_expected:
+                        errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
+                                      "receipt does not attribute failure to this case only")
     return errors
 
 
@@ -896,6 +931,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
 
     scenario_by_id: dict[str, dict] = {}
     measured_costs: dict[str, dict] = {}
+    control_plane_bytes = registry.stat().st_size + (
+        index_path.stat().st_size if index_path.is_file() else 0)
     if status in {"required", "transitioning"}:
         cost = data.get("cost_policy")
         covered_roles: set[str] = set()
@@ -948,6 +985,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                          for value in dict.fromkeys(declared_files)]
                 routed_bytes = sum(path.stat().st_size for path in paths if path)
                 static_bytes = entry_bytes + support_bytes + routed_bytes
+                end_to_end_bytes = static_bytes + control_plane_bytes
                 accepted_semantics_bytes = (entry_bytes + routed_bytes
                                             if receipt_schema_hint == 2 else static_bytes)
                 accepted_entry = scenario.get("accepted_role_entry_bytes")
@@ -961,11 +999,26 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     elif actual > accepted:
                         errors.append(f"OPTIMIZATION_REQUIRED {scenario_id}: {label} grew "
                                       f"{accepted} -> {actual} bytes")
-                if accepted_semantics_bytes > threshold and not scenario.get("accepted_reason"):
-                    errors.append(f"{scenario_id}: {accepted_semantics_bytes} bytes exceeds review threshold "
+                accepted_control = scenario.get("accepted_control_plane_bytes")
+                accepted_end_to_end = scenario.get("accepted_end_to_end_bytes")
+                if receipt_schema_hint == 5:
+                    for label, accepted, actual in (
+                            ("accepted_control_plane_bytes", accepted_control,
+                             control_plane_bytes),
+                            ("accepted_end_to_end_bytes", accepted_end_to_end,
+                             end_to_end_bytes)):
+                        if not isinstance(accepted, int) or accepted < 0:
+                            errors.append(f"{scenario_id}: {label} must be a non-negative integer")
+                        elif actual > accepted:
+                            errors.append(f"OPTIMIZATION_REQUIRED {scenario_id}: {label} grew "
+                                          f"{accepted} -> {actual} bytes")
+                review_bytes = end_to_end_bytes if receipt_schema_hint == 5 \
+                    else accepted_semantics_bytes
+                if review_bytes > threshold and not scenario.get("accepted_reason"):
+                    errors.append(f"{scenario_id}: {review_bytes} bytes exceeds review threshold "
                                   "without accepted_reason")
-                elif accepted_semantics_bytes > threshold:
-                    notes.append(f"COST_SIGNAL {scenario_id}: {accepted_semantics_bytes} static bytes; "
+                elif review_bytes > threshold:
+                    notes.append(f"COST_SIGNAL {scenario_id}: {review_bytes} static bytes; "
                                  f"accepted because {scenario['accepted_reason']}")
                 if receipt_schema_hint == 2 and support_bytes:
                     notes.append(f"ROLE_COST_SCHEMA_2_LEGACY {scenario_id}: "
@@ -976,9 +1029,16 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     "accepted_static_route_bytes": accepted_static,
                     "route_files": declared_files,
                 }
+                if receipt_schema_hint == 5:
+                    measured_costs[scenario_id].update({
+                        "accepted_control_plane_bytes": accepted_control,
+                        "accepted_end_to_end_bytes": accepted_end_to_end,
+                    })
                 notes.append(f"route-cost {scenario_id}: role-entry={entry_bytes}; "
                              f"linked-role-support={support_bytes}; "
-                             f"static-end-to-end={static_bytes}; actual-usage=receipt")
+                             f"static-route={static_bytes}; "
+                             f"control-plane={control_plane_bytes}; "
+                             f"static-end-to-end={end_to_end_bytes}")
             missing = sorted(set(role_by_id) - covered_roles)
             if missing:
                 errors.append("roles absent from cost scenarios: " + ", ".join(missing))
@@ -1007,8 +1067,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     receipt = {}
                 receipt_schema = receipt.get("schema")
                 outcomes = receipt.get("outcomes", {})
-                if receipt_schema not in {2, 3, 4} or not isinstance(outcomes, dict):
-                    errors.append("ROLE_ACCEPTANCE_SCHEMA_2_3_OR_4_REQUIRED")
+                if receipt_schema not in {2, 3, 4, 5} or not isinstance(outcomes, dict):
+                    errors.append("ROLE_ACCEPTANCE_SCHEMA_2_3_4_OR_5_REQUIRED")
                     outcomes = {}
                 elif receipt_schema == 2:
                     notes.append("ROLE_ACCEPTANCE_SCHEMA_2_LEGACY: accepted for "
@@ -1018,6 +1078,10 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     notes.append("ROLE_ACCEPTANCE_SCHEMA_3_LEGACY: execution provenance "
                                  "is readable; migrate to schema 4 for negative-control "
                                  "sensitivity evidence")
+                elif receipt_schema == 4:
+                    notes.append("ROLE_ACCEPTANCE_SCHEMA_4_LEGACY: mutation sensitivity "
+                                 "is readable; migrate to schema 5 for per-case attribution "
+                                 "and portable cost evidence")
                 if set(outcomes) != ACCEPTANCE_OUTCOMES:
                     errors.append("role acceptance must separate STRUCTURAL_PASS, "
                                   "DISCOVERY_PASS, BEHAVIOR_PASS and OWNER_ACCEPTED")
@@ -1092,7 +1156,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 cases = behavior.get("cases", {}) if isinstance(behavior, dict) else {}
                 if behavior.get("proof_mode") != "synthetic-first":
                     errors.append("BEHAVIOR_PASS: proof_mode must be synthetic-first")
-                if receipt_schema in {3, 4}:
+                if receipt_schema in {3, 4, 5}:
                     declared_scope = acceptance.get("behavior_scope")
                     if declared_scope != "shared":
                         errors.append("acceptance.behavior_scope must be shared")
@@ -1103,13 +1167,13 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     result = cases.get(case, {}) if isinstance(cases, dict) else {}
                     if result.get("result") != "PASS":
                         errors.append(f"BEHAVIOR_PASS.{case}: result must be PASS")
-                    elif receipt_schema in {3, 4}:
+                    elif receipt_schema in {3, 4, 5}:
                         errors.extend(behavior_run_errors(
                             root, case, result.get("run"), receipt_schema))
                     else:
                         errors.extend(evidence_errors(root, result.get("evidence"),
                                                       f"BEHAVIOR_PASS.{case}"))
-                if receipt_schema == 4 and isinstance(cases, dict):
+                if receipt_schema in {4, 5} and isinstance(cases, dict):
                     controls = [
                         cases.get(case, {}).get("run", {}).get("negative_control", {})
                         for case in BEHAVIOURAL_COVERAGE
@@ -1119,7 +1183,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                         {"target": item.get("target"), "mutation": item.get("mutation")},
                         sort_keys=True) for item in controls if isinstance(item, dict)]
                     if len(ids) != len(set(ids)) or len(mutations) != len(set(mutations)):
-                        errors.append("BEHAVIOR_EVIDENCE_INADEQUATE: schema-4 negative "
+                        errors.append("BEHAVIOR_EVIDENCE_INADEQUATE: schema-4/5 negative "
                                       "controls require unique ids and target/mutation per case")
                 private = behavior.get("private_real_data", {}) \
                     if isinstance(behavior, dict) else {}
@@ -1173,6 +1237,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
                             else:
                                 errors.extend(evidence_errors(root, run.get("evidence"),
                                                               f"actual_usage.runs[{index}]"))
+                if isinstance(usage, dict) and usage.get("status") in {"PASS", "UNKNOWN"}:
+                    notes.append(f"actual-usage={usage['status']}")
                 if receipt.get("project_roles_sha256") != file_sha256(registry):
                     errors.append("role acceptance receipt does not match PROJECT_ROLES.json")
                 if not index_path.is_file() or receipt.get("knowledge_index_sha256") != file_sha256(index_path):
