@@ -303,18 +303,23 @@ def apply_project(skill, project, action_mode=False):
 
 
 def safe_replace(source, destination, old_version):
-    """Staging + тест + recoverable rename вместо rmtree рабочей копии."""
+    """Install one byte-identical copy after the source suite passed once.
+
+    Re-running the same full suite on staged and installed copies proves no new
+    behavior when their managed-tree fingerprints are identical.  Parity before
+    and after the recoverable rename is the narrower copy-integrity gate.
+    """
     parent = os.path.dirname(destination)
     os.makedirs(parent, exist_ok=True)
     stage_root = tempfile.mkdtemp(prefix=".kb-architect-stage-", dir=parent)
     staged = os.path.join(stage_root, "kb-architect")
     backup = None
+    expected_fingerprint = fingerprint(source)
     try:
         shutil.copytree(source, staged,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
-        ok, why = test_skill(staged)
-        if not ok:
-            return None, None, why
+        if fingerprint(staged) != expected_fingerprint:
+            return None, None, "staged copy differs from the tested source bytes"
 
         backup_root = os.path.join(parent, ".backups")
         os.makedirs(backup_root, exist_ok=True)
@@ -333,12 +338,16 @@ def safe_replace(source, destination, old_version):
             os.rename(backup, destination)
             raise
 
-        ok, why = test_skill(destination)
-        if not ok:
+        try:
+            installed_matches = fingerprint(destination) == expected_fingerprint
+        except OSError:
+            installed_matches = False
+        if not installed_matches:
             failed = backup + ".failed-new"
             os.rename(destination, failed)
             os.rename(backup, destination)
-            return None, failed, "после установки тесты не прошли, восстановлен backup: " + why
+            return None, failed, ("installed copy differs from the tested source bytes; "
+                                  "backup restored")
         return versiya(destination), backup, ""
     finally:
         shutil.rmtree(stage_root, ignore_errors=True)

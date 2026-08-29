@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.2.3"
+          and data.get("baseline_version") == "6.2.4"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -2852,11 +2852,16 @@ def t_update_nazyvaet_otstavshie_kopii():
 
 
 def t_update_safe_replace_keeps_backup():
-    """Владелец: обновлять и same-version drift, обратимо и с тестами."""
+    """One tested source can be copied twice by parity without five full suites."""
     home = tempfile.mkdtemp(prefix="kbtest-update-home-")
+    counter = os.path.join(home, "suite-runs.txt")
     source = base({
         "SKILL.md": "---\nname: kb-architect\nmetadata:\n  version: \"9.9\"\n---\n",
-        "scripts/test_kb.py": "import sys\nprint('fixture ok')\nsys.exit(0)\n",
+        "scripts/test_kb.py": (
+            "import os, sys\n"
+            "with open(os.environ['KB_UPDATE_TEST_COUNTER'], 'a') as stream:\n"
+            "    stream.write('run\\n')\n"
+            "print('fixture ok')\nsys.exit(0)\n"),
     })
     destination = os.path.join(home, ".codex", "skills", "kb-architect")
     os.makedirs(destination)
@@ -2868,6 +2873,7 @@ def t_update_safe_replace_keeps_backup():
     os.symlink(source, claude_destination)
     env = dict(os.environ)
     env["HOME"] = home
+    env["KB_UPDATE_TEST_COUNTER"] = counter
     p = subprocess.run(
         [sys.executable, os.path.join(HERE, "kb_update.py"),
          "--source", source, "--do"],
@@ -2883,11 +2889,12 @@ def t_update_safe_replace_keeps_backup():
           and os.path.isdir(claude_backups)
           and len(os.listdir(claude_backups)) == 1
           and not os.path.islink(claude_destination)
+          and open(counter, encoding="utf-8").read().splitlines() == ["run"]
           and "9.9" in open(os.path.join(destination, "SKILL.md"),
                             encoding="utf-8").read()
           and "legacy" not in open(os.path.join(destination, "SKILL.md"),
                                    encoding="utf-8").read(),
-          out, "same version still requires tree parity before skipping")
+          out, "one source suite plus staged/installed tree parity is sufficient")
     shutil.rmtree(home, ignore_errors=True)
     shutil.rmtree(source, ignore_errors=True)
 
@@ -4787,7 +4794,7 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
 
 
 def t_620_compact_application_uses_contract_line_not_patch_build():
-    """A 6.2 project stays accepted when the installed exact build is 6.2.3."""
+    """A 6.2 project stays accepted when the installed exact build is 6.2.4."""
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
@@ -4817,7 +4824,7 @@ def t_620_compact_application_uses_contract_line_not_patch_build():
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("contract line 6.2 accepts exact installed build 6.2.3 without remigration",
+    check("contract line 6.2 accepts exact installed build 6.2.4 without remigration",
           p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
           and "PROJECT_LINE_OK" in p.stdout,
           out, "patch build is delivery, not a new project migration")
