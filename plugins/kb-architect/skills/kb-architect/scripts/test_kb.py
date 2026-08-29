@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.1.5"
+          and data.get("baseline_version") == "6.1.6"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -3170,11 +3170,11 @@ def t_601_release_application_binds_source_and_exact_ledger():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.1.5\n")
+        f.write("# rules\n\nkb_standard_version: 6.1.6\n")
     receipt = {
         "schema": 1,
         "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.1.5",
+            "kind": "migration", "from_version": "6.0", "to_version": "6.1.6",
             "status": "finalized",
             "source_snapshot": {
                 "ref": source, "commit": source, "version_source": "CLAUDE.md",
@@ -3196,6 +3196,8 @@ def t_601_release_application_binds_source_and_exact_ledger():
                 {"version": "6.1.4", "decision": "applied",
                  "evidence": ["tests/migration.txt"]},
                 {"version": "6.1.5", "decision": "applied",
+                 "evidence": ["tests/migration.txt"]},
+                {"version": "6.1.6", "decision": "applied",
                  "evidence": ["tests/migration.txt"]},
             ],
             "owner_acceptance": {"accepted_by": "fixture owner",
@@ -3234,11 +3236,11 @@ def t_612_release_application_follows_safe_boot_symlink():
                             capture_output=True, text=True, check=True).stdout.strip()
     source_bytes = open(os.path.join(d, "CLAUDE.md"), "rb").read()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.1.5\n")
+        f.write("# rules\n\nkb_standard_version: 6.1.6\n")
     receipt = {
         "schema": 1,
         "applications": [{
-            "kind": "migration", "from_version": "6.0", "to_version": "6.1.5",
+            "kind": "migration", "from_version": "6.0", "to_version": "6.1.6",
             "status": "finalized",
             "source_snapshot": {
                 "ref": source, "commit": source, "version_source": "AGENTS.md",
@@ -3248,7 +3250,7 @@ def t_612_release_application_follows_safe_boot_symlink():
                 {"version": version, "decision": "applied",
                  "evidence": ["tests/migration.txt"]}
                 for version in ("6.0.1", "6.0.2", "6.1", "6.1.1", "6.1.2",
-                                "6.1.3", "6.1.4", "6.1.5")
+                                "6.1.3", "6.1.4", "6.1.5", "6.1.6")
             ],
             "owner_acceptance": {"accepted_by": "fixture owner",
                                  "accepted_at": "2026-08-29",
@@ -3316,7 +3318,7 @@ def t_610_scoped_migration_target_survives_newer_installed_skill():
           and scoped.code == 0
           and "APPLICATION_RECEIPT_OK" in scoped
           and "TARGET_APPLICATION_OK" in scoped
-          and "NEWER_INSTALLED_OUT_OF_SCOPE: 6.1.5" in scoped,
+          and "NEWER_INSTALLED_OUT_OF_SCOPE: 6.1.6" in scoped,
           combined, "default still reports latest delta; scoped acceptance closes 6.0.1")
     shutil.rmtree(d, ignore_errors=True)
 
@@ -3351,14 +3353,14 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.1.5\n")
+        f.write("\nkb_standard_version: 6.1.6\n")
     receipt = {"schema": 1, "applications": [{
-        "kind": "initial-adoption", "from_version": None, "to_version": "6.1.5",
+        "kind": "initial-adoption", "from_version": None, "to_version": "6.1.6",
         "status": "finalized",
         "source_snapshot": {"ref": source, "commit": source,
                             "version_source": "CLAUDE.md",
                             "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.1.5", "decision": "applied",
+        "release_ledger": [{"version": "6.1.6", "decision": "applied",
                             "evidence": ["tests/proof.txt"]}],
         "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
                              "evidence": ["tests/proof.txt"]},
@@ -3556,7 +3558,7 @@ def t_614_canonical_runner_records_negative_control_failures():
 
 
 def t_615_released_schema4_runner_remains_exactly_readable():
-    """The 6.1.5 checker must not retroactively invalidate accepted 6.1.4 evidence."""
+    """The 6.1.6 checker must not retroactively invalidate accepted 6.1.4 evidence."""
     import json
     d, _registry = accepted_role_fixture()
     upgrade_fixture_to_schema4(d)
@@ -3850,6 +3852,337 @@ def t_615_control_plane_and_end_to_end_budgets_fail_closed():
           and "accepted_end_to_end_bytes grew 1 ->" in out,
           out, "a complete cost field must constrain growth, not merely describe it")
     shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_candidate_receipt_is_validated_before_owner_acceptance():
+    """UK-property: the owner cannot accept evidence the stock checker never read."""
+    import json
+    d, _registry = accepted_role_fixture()
+    upgrade_fixture_to_schema5(d)
+    run, _execution = execute_and_bind_behavior(d)
+    registry_path = os.path.join(d, "PROJECT_ROLES.json")
+    registry = json.load(open(registry_path, encoding="utf-8"))
+    registry["acceptance"]["status"] = "candidate"
+    with open(registry_path, "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(acceptance_path, encoding="utf-8"))
+    receipt["project_roles_sha256"] = hashlib.sha256(
+        open(registry_path, "rb").read()).hexdigest()
+    with open(acceptance_path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                    "ROLE_ACCEPTANCE.json"], check=True)
+    valid = run_skills(d)
+
+    receipt["project_roles_sha256"] = "0" * 64
+    with open(acceptance_path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "ROLE_ACCEPTANCE.json"], check=True)
+    corrupt = run_skills(d)
+    check("valid candidate evidence is checked independently of owner gate",
+          run.returncode == 0 and valid.code == 1 and "errors=1" in valid
+          and "ROLE_ACCEPTANCE_REQUIRED" in valid
+          and "pre-owner receipt checked independently" in valid,
+          valid, "owner acceptance stays red while prior evidence is mechanically checked")
+    check("corrupt candidate receipt is diagnosed before owner acceptance",
+          corrupt.code == 1 and "errors=2" in corrupt
+          and "ROLE_ACCEPTANCE_REQUIRED" in corrupt
+          and "does not match PROJECT_ROLES.json" in corrupt,
+          corrupt, "candidate status cannot hide a damaged receipt")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_new_candidate_cannot_downgrade_to_legacy_schema():
+    """Accepted legacy stays readable; new evidence cannot opt out of current gates."""
+    import json
+    d, _registry = accepted_role_fixture()
+    registry_path = os.path.join(d, "PROJECT_ROLES.json")
+    registry = json.load(open(registry_path, encoding="utf-8"))
+    registry["acceptance"]["status"] = "candidate"
+    with open(registry_path, "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(acceptance_path, encoding="utf-8"))
+    receipt["schema"] = 2
+    for result in receipt["outcomes"]["BEHAVIOR_PASS"]["cases"].values():
+        result.pop("run", None)
+    receipt["project_roles_sha256"] = hashlib.sha256(
+        open(registry_path, "rb").read()).hexdigest()
+    with open(acceptance_path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                    "ROLE_ACCEPTANCE.json"], check=True)
+    out = run_skills(d)
+    check("new candidate cannot downgrade to schema-2 evidence",
+          out.code == 1
+          and "ROLE_ACCEPTANCE_CANDIDATE_SCHEMA_5_REQUIRED" in out
+          and "accepted_control_plane_bytes must be" in out
+          and "accepted_end_to_end_bytes must be" in out,
+          out, "legacy compatibility is not an opt-out for new candidate work")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_candidate_pending_and_unknown_outcomes_are_visible():
+    """Unchecked gates must not disappear behind a generic validated note."""
+    import json
+    d, _registry = accepted_role_fixture()
+    upgrade_fixture_to_schema5(d)
+    run, _execution = execute_and_bind_behavior(d)
+    registry_path = os.path.join(d, "PROJECT_ROLES.json")
+    registry = json.load(open(registry_path, encoding="utf-8"))
+    registry["acceptance"]["status"] = "candidate"
+    with open(registry_path, "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(acceptance_path, encoding="utf-8"))
+    receipt["outcomes"]["DISCOVERY_PASS"]["status"] = "UNKNOWN"
+    receipt["outcomes"]["OWNER_ACCEPTED"]["status"] = "PENDING"
+    receipt["project_roles_sha256"] = hashlib.sha256(
+        open(registry_path, "rb").read()).hexdigest()
+    with open(acceptance_path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                    "ROLE_ACCEPTANCE.json"], check=True)
+    out = run_skills(d)
+    check("candidate PENDING and UNKNOWN outcomes stay visible",
+          run.returncode == 0 and out.code == 1 and "errors=1" in out
+          and "candidate outcome DISCOVERY_PASS=UNKNOWN" in out
+          and "candidate outcome OWNER_ACCEPTED=PENDING" in out,
+          out, "checked PASS evidence does not imply every candidate outcome passed")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_invalid_manifest_status_cannot_hide_corrupt_receipt():
+    """Typos and draft labels must neither look valid nor suppress receipt checks."""
+    import json
+    for status in ("PENDING", "UNKNOWN", "candidate ", "draft", [], {}):
+        d, _registry = accepted_role_fixture()
+        upgrade_fixture_to_schema5(d)
+        run, _execution = execute_and_bind_behavior(d)
+        registry_path = os.path.join(d, "PROJECT_ROLES.json")
+        registry = json.load(open(registry_path, encoding="utf-8"))
+        registry["acceptance"]["status"] = status
+        with open(registry_path, "w", encoding="utf-8") as f:
+            json.dump(registry, f)
+        acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+        receipt = json.load(open(acceptance_path, encoding="utf-8"))
+        receipt["project_roles_sha256"] = "0" * 64
+        receipt["outcomes"]["STRUCTURAL_PASS"]["validators"] = {}
+        with open(acceptance_path, "w", encoding="utf-8") as f:
+            json.dump(receipt, f)
+        subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                        "ROLE_ACCEPTANCE.json"], check=True)
+        out = run_skills(d)
+        check(f"invalid acceptance status {status!r} cannot hide corrupt receipt",
+              run.returncode == 0 and out.code == 1
+              and "ROLE_ACCEPTANCE_REQUIRED" in out
+              and "ROLE_ACCEPTANCE_STATUS_INVALID" in out
+              and "does not match PROJECT_ROLES.json" in out
+              and "STRUCTURAL_PASS." in out,
+              out, "invalid manifest state remains visible and its supplied receipt is checked")
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_non_object_candidate_receipt_fails_closed_without_traceback():
+    """Valid JSON of the wrong shape is a diagnostic, not an agent crash."""
+    import json
+    for payload in ([], None, "not-an-object"):
+        d, _registry = accepted_role_fixture()
+        registry_path = os.path.join(d, "PROJECT_ROLES.json")
+        registry = json.load(open(registry_path, encoding="utf-8"))
+        registry["acceptance"]["status"] = "candidate"
+        with open(registry_path, "w", encoding="utf-8") as f:
+            json.dump(registry, f)
+        acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+        with open(acceptance_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                        "ROLE_ACCEPTANCE.json"], check=True)
+        out = run_skills(d)
+        check(f"non-object candidate receipt {payload!r} fails closed",
+              out.code == 1 and "ROLE_ACCEPTANCE_REQUIRED" in out
+              and "role acceptance receipt must be an object" in out
+              and "ROLE_ACCEPTANCE_SCHEMA_2_3_4_OR_5_REQUIRED" in out
+              and "Traceback" not in out,
+              out, "malformed receipt shape is reported without crashing the agent")
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_non_object_accepted_receipt_fails_closed_without_traceback():
+    """Compatibility schema probing must not crash before the main diagnostic."""
+    import json
+    for payload in ([], None, "not-an-object"):
+        d, _registry = accepted_role_fixture()
+        acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+        with open(acceptance_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        subprocess.run(["git", "-C", d, "add", "ROLE_ACCEPTANCE.json"], check=True)
+        out = run_skills(d)
+        check(f"non-object accepted receipt {payload!r} fails closed",
+              out.code == 1 and "ROLE_ACCEPTANCE_REQUIRED" not in out
+              and "role acceptance receipt must be an object" in out
+              and "ROLE_ACCEPTANCE_SCHEMA_2_3_4_OR_5_REQUIRED" in out
+              and "Traceback" not in out,
+              out, "schema hint cannot pre-empt the stable receipt diagnostic")
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_non_object_skill_binding_fails_closed_without_traceback():
+    """A malformed nested skill binding is rejected without agent failure."""
+    import json
+    d, _registry = accepted_role_fixture()
+    acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+    receipt = json.load(open(acceptance_path, encoding="utf-8"))
+    receipt["skills"]["domain-auditor"] = []
+    with open(acceptance_path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+    subprocess.run(["git", "-C", d, "add", "ROLE_ACCEPTANCE.json"], check=True)
+    out = run_skills(d)
+    check("non-object accepted skill binding fails closed",
+          out.code == 1 and "accepted skill binding must be an object" in out
+          and "Traceback" not in out,
+          out, "nested receipt corruption remains a normal validation error")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_non_object_nested_candidate_fields_fail_closed():
+    """Malformed nested candidate evidence never crashes stock validation."""
+    import json
+
+    def discovery_agent(receipt):
+        receipt["outcomes"]["DISCOVERY_PASS"]["agents"]["codex"] = []
+
+    def behavior_case(receipt):
+        receipt["outcomes"]["BEHAVIOR_PASS"]["cases"]["role-selection"] = []
+
+    def private_proof(receipt):
+        receipt["outcomes"]["BEHAVIOR_PASS"]["private_real_data"] = []
+
+    def behavior_run(receipt):
+        receipt["outcomes"]["BEHAVIOR_PASS"]["cases"]["role-selection"]["run"] = []
+
+    def receipt_schema(receipt):
+        receipt["schema"] = []
+
+    def gate_status(receipt):
+        receipt["outcomes"]["DISCOVERY_PASS"]["status"] = []
+
+    def usage_status(receipt):
+        receipt["actual_usage"]["status"] = []
+
+    def control_id(receipt):
+        receipt["outcomes"]["BEHAVIOR_PASS"]["cases"]["role-selection"]["run"][
+            "negative_control"]["id"] = []
+
+    probes = (
+        ("discovery agent", discovery_agent, "agent result must be an object"),
+        ("behavior case", behavior_case, "case must be an object"),
+        ("private proof", private_proof, "private_real_data must be an object"),
+        ("behavior run", behavior_run, "BEHAVIOR_EVIDENCE_UNEXECUTED"),
+        ("receipt schema", receipt_schema, "ROLE_ACCEPTANCE_SCHEMA_2_3_4_OR_5_REQUIRED"),
+        ("gate status", gate_status, "candidate status must be PASS"),
+        ("usage status", usage_status, "actual_usage must be separate PASS or UNKNOWN"),
+        ("negative control id", control_id, "negative_control.id is required"),
+    )
+    for label, mutate, expected in probes:
+        d, _registry = accepted_role_fixture()
+        upgrade_fixture_to_schema5(d)
+        run, _execution = execute_and_bind_behavior(d)
+        registry_path = os.path.join(d, "PROJECT_ROLES.json")
+        registry = json.load(open(registry_path, encoding="utf-8"))
+        registry["acceptance"]["status"] = "candidate"
+        with open(registry_path, "w", encoding="utf-8") as f:
+            json.dump(registry, f)
+        acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+        receipt = json.load(open(acceptance_path, encoding="utf-8"))
+        receipt["project_roles_sha256"] = hashlib.sha256(
+            open(registry_path, "rb").read()).hexdigest()
+        mutate(receipt)
+        with open(acceptance_path, "w", encoding="utf-8") as f:
+            json.dump(receipt, f)
+        subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                        "ROLE_ACCEPTANCE.json"], check=True)
+        out = run_skills(d)
+        check(f"non-object nested candidate {label} fails closed",
+              run.returncode == 0 and out.code == 1 and expected in out
+              and "Traceback" not in out,
+              out, "nested malformed evidence remains a validation result")
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_non_string_role_posture_status_fails_closed():
+    """The outer role registry has the same no-traceback status invariant."""
+    import json
+    for status in ([], {}):
+        d, _registry = accepted_role_fixture()
+        registry_path = os.path.join(d, "PROJECT_ROLES.json")
+        registry = json.load(open(registry_path, encoding="utf-8"))
+        registry["role_posture"]["status"] = status
+        with open(registry_path, "w", encoding="utf-8") as f:
+            json.dump(registry, f)
+        subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json"], check=True)
+        out = run_skills(d)
+        check(f"non-string role posture {status!r} fails closed",
+              out.code == 1 and "role_posture.status must be" in out
+              and "Traceback" not in out,
+              out, "malformed outer status is a normal validation result")
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def t_616_malformed_execution_receipt_fields_fail_closed():
+    """Unhashable protocol and run-id fields stay inside normal diagnostics."""
+    import json
+
+    def protocol(execution):
+        execution["protocol"] = []
+
+    def runner_version(execution):
+        execution["runner_version"] = {}
+
+    def case_run_ids_list(execution):
+        execution["case_run_ids"] = [[]]
+
+    def case_run_ids_null(execution):
+        execution["case_run_ids"] = None
+
+    probes = (
+        ("protocol", protocol, "canonical behavior-run receipt is required"),
+        ("runner version", runner_version, "canonical behavior-run receipt is required"),
+        ("case ids list", case_run_ids_list, "does not bind case run_id"),
+        ("case ids null", case_run_ids_null, "does not bind case run_id"),
+    )
+    for label, mutate, expected in probes:
+        d, _registry = accepted_role_fixture()
+        upgrade_fixture_to_schema5(d)
+        run, execution = execute_and_bind_behavior(d)
+        execution_path = os.path.join(d, "role-acceptance", "behavior-execution.json")
+        mutate(execution)
+        with open(execution_path, "w", encoding="utf-8") as f:
+            json.dump(execution, f)
+        execution_sha = hashlib.sha256(open(execution_path, "rb").read()).hexdigest()
+        registry_path = os.path.join(d, "PROJECT_ROLES.json")
+        registry = json.load(open(registry_path, encoding="utf-8"))
+        registry["acceptance"]["status"] = "candidate"
+        with open(registry_path, "w", encoding="utf-8") as f:
+            json.dump(registry, f)
+        acceptance_path = os.path.join(d, "ROLE_ACCEPTANCE.json")
+        receipt = json.load(open(acceptance_path, encoding="utf-8"))
+        receipt["project_roles_sha256"] = hashlib.sha256(
+            open(registry_path, "rb").read()).hexdigest()
+        for result in receipt["outcomes"]["BEHAVIOR_PASS"]["cases"].values():
+            result["run"]["execution_receipt"]["sha256"] = execution_sha
+        with open(acceptance_path, "w", encoding="utf-8") as f:
+            json.dump(receipt, f)
+        subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json",
+                        "ROLE_ACCEPTANCE.json", "role-acceptance/behavior-execution.json"],
+                       check=True)
+        out = run_skills(d)
+        check(f"malformed execution receipt {label} fails closed",
+              run.returncode == 0 and out.code == 1 and expected in out
+              and "Traceback" not in out,
+              out, "execution receipt shape cannot crash candidate validation")
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def t_612_packaging_review_cannot_claim_professional_method_pass():

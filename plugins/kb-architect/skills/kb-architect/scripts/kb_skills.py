@@ -383,10 +383,16 @@ def behavior_run_errors(root: Path, case: str, value: object,
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           f"execution receipt unreadable: {exc}")
             receipt = {}
-        protocol = (receipt.get("protocol"), receipt.get("runner_version"))
-        allowed_protocols = {("kb-behavior-run/v1", "1"),
+        if not isinstance(receipt, dict):
+            errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
+                          "execution receipt must be an object")
+            receipt = {}
+        raw_protocol = (receipt.get("protocol"), receipt.get("runner_version"))
+        protocol = raw_protocol if all(isinstance(item, str) for item in raw_protocol) \
+            else (None, None)
+        allowed_protocols = (("kb-behavior-run/v1", "1"),
                              ("kb-behavior-run/v2", "2"),
-                             ("kb-behavior-run/v3", "3")}
+                             ("kb-behavior-run/v3", "3"))
         if receipt.get("schema") != 1 or protocol not in allowed_protocols:
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "canonical behavior-run receipt is required")
@@ -401,7 +407,7 @@ def behavior_run_errors(root: Path, case: str, value: object,
         if not isinstance(runner_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", runner_hash):
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "runner_sha256 is invalid")
-        elif receipt_schema in {4, 5}:
+        elif receipt_schema in (4, 5):
             runner_path = Path(__file__).with_name("kb_behavior.py")
             current_hash = file_sha256(runner_path) if runner_path.is_file() else None
             allowed_hashes = {current_hash} if protocol == ("kb-behavior-run/v3", "3") \
@@ -428,7 +434,7 @@ def behavior_run_errors(root: Path, case: str, value: object,
                 for path, digest in artifact_hashes.items()):
             errors.append(f"BEHAVIOR_EVIDENCE_UNEXECUTED {label}: "
                           "execution receipt does not bind behavior artifacts")
-        if receipt_schema in {4, 5}:
+        if receipt_schema in (4, 5):
             control = value.get("negative_control")
             if not isinstance(control, dict):
                 errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
@@ -543,7 +549,7 @@ def behavior_run_errors(root: Path, case: str, value: object,
                     errors.append(f"BEHAVIOR_EVIDENCE_INADEQUATE {label}: "
                                   "runner-owned neutral mutation did not stay green")
                 if receipt_schema == 5:
-                    all_cases = set(receipt.get("case_run_ids", {}))
+                    all_cases = set(run_ids) if isinstance(run_ids, dict) else set()
                     normal_expected = {name: "PASS" for name in all_cases}
                     harmful_expected = {
                         name: ("FAIL" if name == case else "PASS")
@@ -579,6 +585,9 @@ def quality_review(root: Path, entry: dict, errors: list[str]) -> str | None:
     except (OSError, json.JSONDecodeError) as exc:
         errors.append(f"{name}: quality review unreadable: {exc}")
         return None
+    if not isinstance(data, dict):
+        errors.append(f"{name}: quality review must be an object")
+        return file_sha256(path)
     if data.get("schema") != 1 or data.get("result") != "PASS":
         errors.append(f"{name}: ROLE_QUALITY_REVIEW is not PASS")
     if data.get("skill") != name or data.get("quality_owner") != entry.get("quality_owner"):
@@ -796,17 +805,27 @@ def role_linked_files(canonical: Path, name: str,
 
 
 def acceptance_schema_hint(root: Path, data: dict) -> int | None:
-    """Read only the accepted receipt schema needed for compatibility costing."""
+    """Read candidate/accepted schema needed for compatibility costing."""
     acceptance = data.get("acceptance")
-    if not isinstance(acceptance, dict) or acceptance.get("status") != "accepted":
+    if not isinstance(acceptance, dict):
         return None
+    status = acceptance.get("status")
     raw = acceptance.get("receipt")
+    if status != "accepted" and raw:
+        # New work cannot opt out of current cost gates by downgrading its
+        # receipt or misspelling its status. Legacy schemas remain readable
+        # only after prior acceptance.
+        return 5
+    if status != "accepted":
+        return None
     path = (root / str(raw or "")).resolve(strict=False)
     if not raw or outside(root, path) or not path.is_file():
         return None
     try:
         receipt = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(receipt, dict):
         return None
     return receipt.get("schema") if isinstance(receipt.get("schema"), int) else None
 
@@ -828,11 +847,11 @@ def validate_visible(root: Path, data: dict, registry: Path,
     if not isinstance(policy, dict):
         return ["PROJECT_ROLES.json requires role_posture"], notes, 0
     status = policy.get("status")
-    if status not in {"required", "transitioning", "not-applicable"}:
+    if status not in ("required", "transitioning", "not-applicable"):
         errors.append("role_posture.status must be required, transitioning or not-applicable")
     if not policy.get("rationale"):
         errors.append("role_posture requires rationale")
-    if status in {"required", "transitioning"}:
+    if status in ("required", "transitioning"):
         expected = {"unmatched_material_work": "stop", "multiple_matches": "load-all",
                     "conflict": "preserve-and-escalate"}
         for key, value in expected.items():
@@ -933,7 +952,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
     measured_costs: dict[str, dict] = {}
     control_plane_bytes = registry.stat().st_size + (
         index_path.stat().st_size if index_path.is_file() else 0)
-    if status in {"required", "transitioning"}:
+    if status in ("required", "transitioning"):
         cost = data.get("cost_policy")
         covered_roles: set[str] = set()
         if not isinstance(cost, dict) or not isinstance(cost.get("scenarios"), list):
@@ -1049,9 +1068,19 @@ def validate_visible(root: Path, data: dict, registry: Path,
                               "containing every declared role")
 
         acceptance = data.get("acceptance")
-        if not isinstance(acceptance, dict) or acceptance.get("status") != "accepted":
+        acceptance_status = acceptance.get("status") \
+            if isinstance(acceptance, dict) else None
+        accepted_mode = acceptance_status == "accepted"
+        candidate_mode = acceptance_status == "candidate"
+        invalid_status = not isinstance(acceptance_status, str) \
+            or acceptance_status not in ("candidate", "accepted")
+        receipt_supplied = isinstance(acceptance, dict) and bool(acceptance.get("receipt"))
+        pre_owner_mode = candidate_mode or (invalid_status and receipt_supplied)
+        if not accepted_mode:
             errors.append("ROLE_ACCEPTANCE_REQUIRED: role manifest is not owner-accepted")
-        else:
+        if invalid_status:
+            errors.append("ROLE_ACCEPTANCE_STATUS_INVALID: status must be candidate or accepted")
+        if accepted_mode or pre_owner_mode:
             receipt_raw = acceptance.get("receipt")
             receipt_path = (root / str(receipt_raw or "")).resolve(strict=False)
             if not receipt_raw or outside(root, receipt_path):
@@ -1065,11 +1094,16 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 except (OSError, json.JSONDecodeError) as exc:
                     errors.append(f"role acceptance receipt unreadable: {exc}")
                     receipt = {}
+                if not isinstance(receipt, dict):
+                    errors.append("role acceptance receipt must be an object")
+                    receipt = {}
                 receipt_schema = receipt.get("schema")
                 outcomes = receipt.get("outcomes", {})
-                if receipt_schema not in {2, 3, 4, 5} or not isinstance(outcomes, dict):
+                if receipt_schema not in (2, 3, 4, 5) or not isinstance(outcomes, dict):
                     errors.append("ROLE_ACCEPTANCE_SCHEMA_2_3_4_OR_5_REQUIRED")
                     outcomes = {}
+                elif pre_owner_mode and receipt_schema != 5:
+                    errors.append("ROLE_ACCEPTANCE_CANDIDATE_SCHEMA_5_REQUIRED")
                 elif receipt_schema == 2:
                     notes.append("ROLE_ACCEPTANCE_SCHEMA_2_LEGACY: accepted for "
                                  "backward compatibility; migrate to schema 4 for "
@@ -1087,15 +1121,24 @@ def validate_visible(root: Path, data: dict, registry: Path,
                                   "DISCOVERY_PASS, BEHAVIOR_PASS and OWNER_ACCEPTED")
                 for outcome in ACCEPTANCE_OUTCOMES:
                     gate = outcomes.get(outcome, {})
-                    if not isinstance(gate, dict) or gate.get("status") != "PASS":
+                    if not isinstance(gate, dict):
+                        errors.append(f"{outcome}: gate must be an object")
+                        continue
+                    gate_status = gate.get("status")
+                    if accepted_mode and gate_status != "PASS":
                         errors.append(f"{outcome}: status must be PASS")
-                    else:
+                    elif pre_owner_mode and gate_status not in ("PASS", "PENDING", "UNKNOWN"):
+                        errors.append(f"{outcome}: candidate status must be PASS, PENDING or UNKNOWN")
+                    elif pre_owner_mode and gate_status in ("PENDING", "UNKNOWN"):
+                        notes.append(f"candidate outcome {outcome}={gate_status}")
+                    if gate_status == "PASS":
                         errors.extend(evidence_errors(root, gate.get("evidence"), outcome))
 
                 structural = outcomes.get("STRUCTURAL_PASS", {})
-                validators = structural.get("validators", {}) \
-                    if isinstance(structural, dict) else {}
-                for name, entry in skill_by_name.items():
+                structural_pass = isinstance(structural, dict) \
+                    and structural.get("status") == "PASS"
+                validators = structural.get("validators", {}) if structural_pass else {}
+                for name, entry in skill_by_name.items() if structural_pass else ():
                     skill_validators = validators.get(name, {}) \
                         if isinstance(validators, dict) else {}
                     declarations = entry.get("validation", {})
@@ -1114,12 +1157,17 @@ def validate_visible(root: Path, data: dict, registry: Path,
                                 f"STRUCTURAL_PASS.{name}.{gate_name}"))
 
                 discovery_gate = outcomes.get("DISCOVERY_PASS", {})
+                discovery_pass = isinstance(discovery_gate, dict) \
+                    and discovery_gate.get("status") == "PASS"
                 discovered_agents = discovery_gate.get("agents", {}) \
-                    if isinstance(discovery_gate, dict) else {}
-                for agent in agents:
+                    if discovery_pass else {}
+                for agent in agents if discovery_pass else ():
                     result = discovered_agents.get(agent, {}) \
                         if isinstance(discovered_agents, dict) else {}
                     label = f"DISCOVERY_PASS.{agent}"
+                    if not isinstance(result, dict):
+                        errors.append(f"{label}: agent result must be an object")
+                        continue
                     if result.get("fresh_context") is not True or result.get("unforced") is not True:
                         errors.append(f"{label}: fresh_context and unforced are required")
                     if result.get("new_session_required") is not True \
@@ -1153,32 +1201,43 @@ def validate_visible(root: Path, data: dict, registry: Path,
                                           f"match {name} id/path/hash/version")
 
                 behavior = outcomes.get("BEHAVIOR_PASS", {})
-                cases = behavior.get("cases", {}) if isinstance(behavior, dict) else {}
-                if behavior.get("proof_mode") != "synthetic-first":
+                behavior_pass = isinstance(behavior, dict) \
+                    and behavior.get("status") == "PASS"
+                cases = behavior.get("cases", {}) if behavior_pass else {}
+                if behavior_pass and not isinstance(cases, dict):
+                    errors.append("BEHAVIOR_PASS.cases must be an object")
+                    cases = {}
+                if behavior_pass and behavior.get("proof_mode") != "synthetic-first":
                     errors.append("BEHAVIOR_PASS: proof_mode must be synthetic-first")
-                if receipt_schema in {3, 4, 5}:
+                if behavior_pass and receipt_schema in (3, 4, 5):
                     declared_scope = acceptance.get("behavior_scope")
                     if declared_scope != "shared":
                         errors.append("acceptance.behavior_scope must be shared")
                     if behavior.get("runtime_scope") != declared_scope:
                         errors.append("BEHAVIOR_PASS.runtime_scope must match "
                                       "acceptance.behavior_scope")
-                for case in BEHAVIOURAL_COVERAGE:
-                    result = cases.get(case, {}) if isinstance(cases, dict) else {}
+                for case in BEHAVIOURAL_COVERAGE if behavior_pass else ():
+                    result = cases.get(case, {})
+                    if not isinstance(result, dict):
+                        errors.append(f"BEHAVIOR_PASS.{case}: case must be an object")
+                        continue
                     if result.get("result") != "PASS":
                         errors.append(f"BEHAVIOR_PASS.{case}: result must be PASS")
-                    elif receipt_schema in {3, 4, 5}:
+                    elif receipt_schema in (3, 4, 5):
                         errors.extend(behavior_run_errors(
                             root, case, result.get("run"), receipt_schema))
                     else:
                         errors.extend(evidence_errors(root, result.get("evidence"),
                                                       f"BEHAVIOR_PASS.{case}"))
-                if receipt_schema in {4, 5} and isinstance(cases, dict):
-                    controls = [
-                        cases.get(case, {}).get("run", {}).get("negative_control", {})
-                        for case in BEHAVIOURAL_COVERAGE
-                    ]
-                    ids = [item.get("id") for item in controls if isinstance(item, dict)]
+                if behavior_pass and receipt_schema in (4, 5) and isinstance(cases, dict):
+                    controls = []
+                    for case in BEHAVIOURAL_COVERAGE:
+                        result = cases.get(case, {})
+                        run = result.get("run", {}) if isinstance(result, dict) else {}
+                        controls.append(run.get("negative_control", {})
+                                        if isinstance(run, dict) else {})
+                    ids = [item.get("id") for item in controls
+                           if isinstance(item, dict) and isinstance(item.get("id"), str)]
                     mutations = [json.dumps(
                         {"target": item.get("target"), "mutation": item.get("mutation")},
                         sort_keys=True) for item in controls if isinstance(item, dict)]
@@ -1186,15 +1245,19 @@ def validate_visible(root: Path, data: dict, registry: Path,
                         errors.append("BEHAVIOR_EVIDENCE_INADEQUATE: schema-4/5 negative "
                                       "controls require unique ids and target/mutation per case")
                 private = behavior.get("private_real_data", {}) \
-                    if isinstance(behavior, dict) else {}
-                if private.get("authority") == "not-granted":
+                    if behavior_pass else {}
+                if behavior_pass and not isinstance(private, dict):
+                    errors.append("BEHAVIOR_PASS.private_real_data must be an object")
+                    private = {}
+                if behavior_pass and private.get("authority") == "not-granted":
                     if private.get("result") != "UNKNOWN" or not private.get("reason"):
                         errors.append("private real-data proof without authority must remain UNKNOWN")
-                elif private.get("authority") != "granted":
+                elif behavior_pass and private.get("authority") != "granted":
                     errors.append("private_real_data authority must be granted or not-granted")
 
                 owner = outcomes.get("OWNER_ACCEPTED", {})
-                if not owner.get("accepted_by") or not owner.get("accepted_at"):
+                if isinstance(owner, dict) and owner.get("status") == "PASS" \
+                        and (not owner.get("accepted_by") or not owner.get("accepted_at")):
                     errors.append("OWNER_ACCEPTED lacks accepted_by/accepted_at")
                 accepted_skills = receipt.get("skills", {})
                 if not isinstance(accepted_skills, dict):
@@ -1202,6 +1265,9 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     accepted_skills = {}
                 for name, entry in skill_by_name.items():
                     accepted = accepted_skills.get(name, {})
+                    if not isinstance(accepted, dict):
+                        errors.append(f"{name}: accepted skill binding must be an object")
+                        accepted = {}
                     raw = Path(str(entry.get("canonical", ""))).expanduser()
                     canonical = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
                     skill_file = canonical / "SKILL.md"
@@ -1215,7 +1281,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 if receipt.get("scenario_baselines") != measured_costs:
                     errors.append("role acceptance receipt does not match split cost baselines")
                 usage = receipt.get("actual_usage")
-                if not isinstance(usage, dict) or usage.get("status") not in {"PASS", "UNKNOWN"}:
+                if not isinstance(usage, dict) or usage.get("status") not in ("PASS", "UNKNOWN"):
                     errors.append("actual_usage must be separate PASS or UNKNOWN evidence")
                 elif usage.get("status") == "UNKNOWN":
                     if not usage.get("reason"):
@@ -1237,15 +1303,19 @@ def validate_visible(root: Path, data: dict, registry: Path,
                             else:
                                 errors.extend(evidence_errors(root, run.get("evidence"),
                                                               f"actual_usage.runs[{index}]"))
-                if isinstance(usage, dict) and usage.get("status") in {"PASS", "UNKNOWN"}:
+                if isinstance(usage, dict) and usage.get("status") in ("PASS", "UNKNOWN"):
                     notes.append(f"actual-usage={usage['status']}")
                 if receipt.get("project_roles_sha256") != file_sha256(registry):
                     errors.append("role acceptance receipt does not match PROJECT_ROLES.json")
                 if not index_path.is_file() or receipt.get("knowledge_index_sha256") != file_sha256(index_path):
                     errors.append("role acceptance receipt does not match KNOWLEDGE_INDEX.json")
                 if len(errors) == before_receipt:
-                    notes.append(f"role acceptance: {receipt_path.relative_to(root)}; "
-                                 f"accepted_by={owner.get('accepted_by')}")
+                    if accepted_mode:
+                        notes.append(f"role acceptance: {receipt_path.relative_to(root)}; "
+                                     f"accepted_by={owner.get('accepted_by')}")
+                    else:
+                        notes.append(f"pre-owner receipt checked independently: "
+                                     f"{receipt_path.relative_to(root)}")
     notes.append(f"role posture: {status}; registry={registry.name}")
     return errors, notes, len(role_by_id)
 
@@ -1273,7 +1343,7 @@ def validate_legacy(root: Path, data: dict,
         notes.append("SHADOW_ROLE_REGISTRY: PROJECT_ROLES.json exists, but the "
                      "legacy registry remains authoritative until owner acceptance "
                      "replaces it with a superseded pointer")
-    if data.get("schema") not in {1, 2} or not isinstance(data.get("skills"), list):
+    if data.get("schema") not in (1, 2) or not isinstance(data.get("skills"), list):
         return ["legacy registry requires schema 1 or 2 and a skills array"], notes, 0
     agents = data.get("supported_agents", [])
     if not agents or any(agent not in DISCOVERY for agent in agents):

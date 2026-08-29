@@ -61,6 +61,11 @@ legacy до следующей project migration:
 suite; расхождение среды переоткрывает acceptance как `UNKNOWN`, а не создаёт второй
 набор правил.
 
+До owner gate checker проверяет candidate receipt: `PASS` проходит gate,
+`PENDING/UNKNOWN` видим, `ROLE_ACCEPTANCE_REQUIRED` блокирует финал. Новый candidate
+требует schema 5. Только `candidate`/`accepted`; иной статус диагностируется и не
+скрывает receipt.
+
 Schema-5 case получает PASS только с разными tracked+hashed input/expected/observed и
 одним tracked harness. `kb_behavior.py <root> --execute` записывает
 exit/time/case ids/hashes; `kb_skills.py` код проекта не запускает, а сверяет receipt.
