@@ -3,7 +3,8 @@ name: kb-architect
 description: "Durable AI knowledge-base router: start, audit, update, restructure or move a KB; coordinate Claude/Codex; manage project roles, runtimes, credentials, cloud/MCP and multi-agent work; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.2.6"
+  version: "6.3.0"
+  contract_line: "6.2"
   author: "sugestr"
 ---
 
@@ -59,8 +60,8 @@ metadata:
   `supported|qualified` это draft/`UNKNOWN`. Domain skill задаёт темы, core — гейт.
 - Update — не report-only: installed entry ведёт обратимые local changes до owner gate;
   public — только freshness/delivery.
-- Marker хранит contract line; compact receipt — source/owner. Patch build
-  не переоткрывает migration.
+- Project marker = `metadata.contract_line`; build = `metadata.version`. Только
+  смена line открывает migration.
 - Рост released route блокирует `kb_cost.py --check` как `OPTIMIZATION_REQUIRED`;
   число модулей не заменяет бюджет реально загружаемого маршрута.
 - Не перечитывай неизменный reference в одной логической задаче. Новый выпуск,
@@ -73,12 +74,15 @@ metadata:
 
 До вызова инструментов выбери критический путь:
 
-- **только ответ:** current → точечный lookup → ответ; полный audit/inbox/Git не добавлять;
-- **ответ + долговременное изменение:** ранний проверенный результат → durable tail;
+- **только ответ:** current → lookup → ответ, если нет новой/изменённой
+  `SOURCE / FACT / INTERPRETATION / DECISION / OPEN`; без audit/inbox/Git;
+- **material delta:** ранний результат → durable tail; без write-authority —
+  `DURABLE_TAIL=PENDING` + точные targets/bounded handoff;
 - **опасное/внешнее действие:** сначала относящийся к нему authority/source gate.
 
 1. Прочитать короткий проектный вход и текущее состояние.
 2. Запустить только принятые проверки; PASS не шире их охвата, сбой — `UNKNOWN`.
 3. Открыть один routed reference/project skill только по trigger.
 4. Полезный проверенный черновик показать сразу; durable tail не ставить перед ним.
-5. Записать итог в канон/corrections/исход сообщения без второй копии current.
+5. Закрыть outcome: дельту — в канон/corrections/исход сообщения либо `PENDING`;
+   навигация, цитата и brainstorm tail не создают.

@@ -585,27 +585,31 @@ def main():
     # выполняется никогда и сигнала об этом не подаёт. Проверка ниже и есть
     # тот сигнал: незаполненное поле теперь видно.
     skill_version_now = kb_paths.skill_version()
+    skill_line_now = kb_paths.skill_contract_line()
     if rules:
         proj_v, proj_raw = kb_paths.project_version(root)
         skill_v = skill_version_now
         if not proj_raw:
             due.append(f"редакция контракта не записана — сессия не знает, по какой версии "
                        f"живёт проект, а стандарт меняется. Впиши в «Соответствие» строку "
-                       f"«kb_standard_version: {skill_v or '<версия из шапки SKILL.md>'}»")
+                       f"«kb_standard_version: {skill_line_now or '<metadata.contract_line>'}»")
         elif not proj_v:
             due.append(f"редакция контракта записана словами: «{proj_raw}» — сравнить не с чем. "
-                       f"Поставь номер: «kb_standard_version: {skill_v or '<номер>'}», "
+                       f"Поставь номер: «kb_standard_version: {skill_line_now or '<номер>'}», "
                        f"описание можно оставить рядом")
-        elif skill_v and contract_line(proj_v) != contract_line(skill_v):
+        elif skill_line_now and contract_line(proj_v) != contract_line(skill_line_now):
             due.append(f"проект записан на contract line {proj_v}, установлен build {skill_v} — "
                        f"запусти `python3 scripts/kb_apply.py .` (он покажет, что менялось "
                        f"между ними и чего это касается здесь), примени применимое и обнови "
                        f"строку. Сама строка не двигается: она говорит, по какой редакции "
                        f"проект собран, а не какая лежит на диске — поднять её без разбора "
                        f"значит соврать")
-        elif skill_v:
+        elif skill_v and skill_line_now:
             ok.append(f"contract line: {proj_v} — совместима с build {skill_v}; "
-                      "patch не требует миграции")
+                      "выпуск не требует миграции")
+        elif skill_v:
+            due.append(f"установлен build {skill_v}, но metadata.contract_line отсутствует "
+                       "или некорректна — migration state неизвестен")
     if skill_version_now:
         # Печатается всегда, даже когда всё сходится: скилл меняется под
         # сессией молча, и «я читал этот код час назад» — не то же самое,

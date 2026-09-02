@@ -51,6 +51,10 @@ ACT = re.compile(r"⟦Д:\s*(.+?)⟧", re.DOTALL)
 # проект не узнал о способности. Молчание смешало «действий нет» и «решение не
 # принято» — тот же fail-open, ради которого существует весь скрипт.
 CHOICE = re.compile(r"⟦В:\s*(.+?)⟧", re.DOTALL)
+# A release series may advance without changing the project contract.  New
+# decoupled releases record the mapping explicitly; older rows keep the
+# historical major.minor fallback.
+LINE = re.compile(r"⟦LINE:\s*(\d+(?:\.\d+)+)\s*⟧")
 APPLICATION_RECEIPT = "KB_RELEASE_APPLICATION.json"
 RECEIPT_REQUIRED_FROM = (6, 0)
 APPLICATION_DECISIONS = {
@@ -91,6 +95,16 @@ def releases_between(low, high):
         except ValueError:
             continue
     return sorted(rows, key=lambda r: ver_key(r[0]))
+
+
+def release_contract_line(version):
+    """Return the project contract line carried by one release."""
+    for current, text in releases_between("0", version):
+        if current != version:
+            continue
+        match = LINE.search(text)
+        return contract_line(match.group(1)) if match else contract_line(version)
+    return contract_line(version)
 
 
 def sha256(data):
@@ -473,25 +487,36 @@ def main():
 
     proj, raw = kb_paths.project_version(root)
     inst = kb_paths.skill_version()
+    declared_line = kb_paths.skill_contract_line()
 
     if not inst:
         print("не вижу установленной редакции — читать нечего")
+        return 2
+    if not declared_line:
+        print("metadata.contract_line отсутствует или записана некорректно — "
+              "нельзя выводить project migration из номера выпуска")
         return 2
     target = args.target_version or inst
     try:
         target_key = ver_key(target)
         installed_key = ver_key(inst)
-        target_line = contract_line(target)
-        installed_line = contract_line(inst)
+        target_line = release_contract_line(target)
+        installed_line = contract_line(declared_line)
+        released_line = release_contract_line(inst)
     except (AttributeError, ValueError):
         print(f"некорректная целевая редакция: {target}")
+        return 2
+    if released_line != installed_line:
+        print(f"metadata.contract_line {declared_line} расходится с release history "
+              f"для build {inst} — migration state неизвестен")
         return 2
     if target_key > installed_key:
         print(f"целевая редакция {target} новее установленного скилла {inst} — "
               "эта копия не может проверить будущий contract")
         return 2
     known_targets = {version for version, _ in releases_between("0", inst)}
-    known_lines = {contract_line(version) for version in known_targets}
+    known_lines = {release_contract_line(version) for version in known_targets}
+    known_lines.add(installed_line)
     if target not in known_targets and target_line not in known_lines:
         print(f"целевая линия {line_text(target)} отсутствует в release history "
               f"установленного скилла {inst}")
@@ -499,7 +524,7 @@ def main():
     if not proj:
         print(f"Редакция проекта не записана числом{f' (записано: «{raw}»)' if raw else ''}.")
         print(f"Установлен скилл {inst}. Впиши в «Соответствие» строку")
-        print(f"«kb_standard_version: {line_text(inst)}» только после короткой приёмки —")
+        print(f"«kb_standard_version: {line_text(declared_line)}» только после короткой приёмки —")
         print("без исходной редакции сначала надо восстановить source snapshot.")
         return 1
     try:
@@ -531,7 +556,7 @@ def main():
 
     # A migration applies the current contract directly. Patch history is tool
     # provenance, not a to-do list that every project must replay.
-    target_line_name = line_text(target)
+    target_line_name = ".".join(str(part) for part in target_line)
     rows = [(version, text) for version, text in releases_between("0", target)
             if version == target_line_name]
     traits = base_traits(root)

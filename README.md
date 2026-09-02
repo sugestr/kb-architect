@@ -425,9 +425,10 @@ plugins/kb-architect/skills/kb-architect/
 ## Версии и лицензия
 
 Номер в `metadata.version` файла `SKILL.md` меняется при любой правке содержимого
-пакета. Начиная с 6.1, совместимая починка поднимает patch, изменение обязательного
-контракта — minor, полная смена operating model — major. История лежит в
-`references/releases.md`.
+пакета. Patch означает малую совместимую починку, minor — заметное совместимое
+изменение, major — смену operating model. Project migration управляется отдельно:
+только изменение `metadata.contract_line` требует новой приёмки проекта. История
+лежит в `references/releases.md`.
 
 MIT. Бери, адаптируй и проверяй на своей работе. Если сломалось — расскажи как.
 

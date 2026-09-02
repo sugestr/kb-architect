@@ -1,4 +1,4 @@
-# Применение contract line без повторной миграции на patch
+# Применение contract line без повторной миграции на новый выпуск
 
 Этот reference читают только когда `kb_apply.py` вернул `NEEDS_APPLICATION` или
 `APPLICATION_UNPROVEN`. Доставка build и применение contract line — разные результаты.
@@ -6,10 +6,12 @@
 ## Версия состоит из двух смыслов
 
 - `kb_standard_version: 6.2` — принятая проектом **contract line**;
-- metadata `6.2.x` — точная сборка инструмента.
+- `metadata.version: 6.3.0` — точный выпуск инструмента;
+- `metadata.contract_line: 6.2` — contract line, которую несёт выпуск.
 
-Patch внутри линии обновляет tool/docs и не переоткрывает роли, owner acceptance или
-миграцию. Новый project gate появляется только у явно выпущенной contract line.
+Patch или minor-выпуск может обновить tool/docs/поведение и не переоткрывать роли,
+owner acceptance или миграцию. Новый project gate появляется только при изменении
+`metadata.contract_line`; номер release сам по себе его не создаёт.
 `kb_apply.py` применяет текущий contract напрямую: проект не воспроизводит историю всех
 patch-релизов и не ведёт строку ledger на каждый из них.
 
@@ -17,9 +19,9 @@ patch-релизов и не ведёт строку ledger на каждый и
 
 1. Сначала выполнить read-only `kb_skills.py <root> --prepare-candidate`: он возвращает
    prefill из legacy/templates, список только смысловых `UNRESOLVED` и bounded
-   fresh-context prompt. Уже принятый проект получает `action: none`, поэтому patch не
-   открывает миграцию. До первой записи сохранить exact pre-change Git commit и файл,
-   где прочитан marker.
+   fresh-context prompt. Уже принятый проект получает `action: none`, поэтому новый
+   выпуск при той же contract line не открывает миграцию. До первой записи сохранить
+   exact pre-change Git commit и файл, где прочитан marker.
    Для tracked-only проекта этот commit уже является rollback; второй checkout не нужен.
    Если ветка продвинулась до финализации, сначала проверить промежуточные commits и
    заменить source на фактический parent candidate: старый предок остаётся session
@@ -69,7 +71,7 @@ ref + hash, release rows, evidence paths и один owner gate в нескол�
 - повторный model-turn Claude/Codex при тех же canonical bytes и неизменном wiring;
 - пять искусственных behavior-case, mutation suite и per-case hash receipts;
 - предметное исследование, не нужное для изменения структуры;
-- новый acceptance только потому, что вышел patch той же линии.
+- новый acceptance только потому, что изменилась release version при той же линии.
 
 Эти проверки допустимы при найденном риске или специальном аудите. Их отсутствие не
 называется доказательством того, чего проект не проверял.

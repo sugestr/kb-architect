@@ -86,8 +86,9 @@ Cost baseline — бюджет. Не принимай точное равенс�
 - Выпускай связный batch, а не версию на каждую мысль. Новый подтверждённый риск может
   переоткрыть diff; повторное ревью без новой evidence — нет.
 
-Контракт получает line (`6.2`), совместимая починка — build (`6.2.1`). Marker хранит
-line, metadata — build; patch не переоткрывает миграцию. Смена operating model — major.
+Контракт получает line (`metadata.contract_line: 6.2`), выпуск — отдельную
+`metadata.version`. Patch/minor/major описывают масштаб выпуска; project migration
+открывает только изменение contract line. Marker хранит line, не release version.
 
 ## Release и authority
 

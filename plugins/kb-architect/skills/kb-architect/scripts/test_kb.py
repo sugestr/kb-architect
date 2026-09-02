@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.2.6"
+          and data.get("baseline_version") == "6.3.0"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -181,6 +181,27 @@ def t_interactive_result_precedes_durable_tail():
           and "integration audit" in ref
           and "durable tail не" in router,
           out, "show a checked draft first; save one coherent block afterwards")
+
+
+def t_material_delta_cannot_disappear_after_answer():
+    """02.09 Grisha: material analysis was sent while accepted canon stayed stale."""
+    router = skill_text("SKILL.md")
+    ref = skill_text("references/operations.md")
+    roles = ("SOURCE", "FACT", "INTERPRETATION", "DECISION", "OPEN")
+    out = Vyvod(router + "\n" + ref, 0)
+    check("material result ends in a durable outcome or an explicit pending handoff",
+          "если нет новой/изменённой" in router
+          and all(role in router for role in roles)
+          and "DURABLE_TAIL=PENDING" in router
+          and "точные targets" in router
+          and "bounded handoff" in router
+          and "Report-only/no-write" in ref
+          and "exact canonical targets" in ref
+          and "bounded payload/handoff" in ref
+          and "это не\nзавершение" in ref
+          and "Навигация, цитата, brainstorm" in ref
+          and all(role in ref for role in roles),
+          out, "material delta cannot be hidden by answer-only; no-write remains explicit")
 
 
 def t_warm_turn_does_not_restart_project_boot():
@@ -4910,9 +4931,11 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_620_compact_application_uses_contract_line_not_patch_build():
-    """A 6.2 project stays accepted when the installed exact build is 6.2.6."""
+def t_630_release_series_is_independent_from_contract_line():
+    """Release 6.3.0 keeps already accepted projects on contract line 6.2."""
     import json
+    import kb_paths
+    import kb_skills
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
@@ -4941,10 +4964,13 @@ def t_620_compact_application_uses_contract_line_not_patch_build():
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("contract line 6.2 accepts exact installed build 6.2.6 without remigration",
-          p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
+    check("release 6.3.0 keeps accepted contract line 6.2 without remigration",
+          kb_paths.skill_version() == "6.3.0"
+          and kb_paths.skill_contract_line() == "6.2"
+          and kb_skills.current_contract_line() == "6.2"
+          and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
           and "PROJECT_LINE_OK" in p.stdout,
-          out, "patch build is delivery, not a new project migration")
+          out, "release series and project migration line are independent")
     shutil.rmtree(d, ignore_errors=True)
 
 

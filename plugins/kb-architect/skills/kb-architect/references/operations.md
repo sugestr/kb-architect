@@ -156,6 +156,11 @@ intake, не ставь весь durable cycle на критический пу�
 push**, затем в финале повтори артефакт и отдельно назови durable state. Не коммить
 каждое сообщение или наблюдение отдельно. Две метрики не смешиваются:
 
+Report-only/no-write не пишет файлы: после раннего результата —
+`DURABLE_TAIL=PENDING`, exact canonical targets и bounded payload/handoff; это не
+завершение. Навигация, цитата, brainstorm без новой
+`SOURCE / FACT / INTERPRETATION / DECISION / OPEN` tail не запускают.
+
 - **time to first useful result** заканчивается проверяемым черновиком;
 - **time to durable completion** заканчивается проверкой, сохранением и push блока.
 

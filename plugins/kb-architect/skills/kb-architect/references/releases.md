@@ -112,12 +112,14 @@ v1 была проверена на трёх реальных разнородн
 
 ### Выпуски скилла
 
-Номер версии стоит в шапке `SKILL.md` и повторяется полем `kb_standard_version` в правилах проекта. **Номер обязан меняться при любой правке содержимого пакета** — иначе владелец, у которого стоит скилл, не отличит одну сборку от другой, а проект, записавший версию, зафиксирует ложь.
+Точная release version стоит в `metadata.version` шапки `SKILL.md` и меняется при
+любой правке пакета. Принятая проектом line записана отдельно в
+`kb_standard_version`, а поставляемая — в `metadata.contract_line`.
 
-Начиная с линии 6.x: совместимая починка инструмента или документации меняет patch,
-изменение обязательного контракта — minor, полная смена operating model — major.
-Исторические номера до 6.1 не переименовываются. Любая новая редакция контракта
-становится явной project delta и не применяется одной установкой файлов.
+Patch означает малую совместимую починку, minor — заметное совместимое изменение,
+major — смену operating model. Project migration открывает только изменение
+`metadata.contract_line`, а не сам номер выпуска. Исторические номера не
+переименовываются; decoupled release row содержит machine marker `⟦LINE: n.n⟧`.
 
 | Версия | Что изменилось | Класс |
 |---|---|---|
@@ -211,6 +213,7 @@ v1 была проверена на трёх реальных разнородн
 | 6.2.4 | **первая реальная установка 6.2.3 воспроизвела саму cost-петлю updater:** неизменный 193-test suite выполнился пять раз — source, staged и installed для каждой из двух byte-identical копий. Теперь public source проходит full suite один раз; каждая staged/installed копия доказывает exact managed-tree fingerprint до и после recoverable rename. Несовпадение восстанавливает backup, совпадение не изображает новое behavioral evidence. Patch не открывает project migration; entry/ordinary/role routes не растут. | single source suite, staged/installed byte parity, recoverable copy, regression, metadata |
 | 6.2.5 | **первый short-path после выпуска `--prepare-candidate` дважды остановился до фактического project validator.** Два project-local skill не имели `metadata.version`, а legacy registry хранил `1.0.0; Git commit is the delivery pin`; helper буквально подставлял prose в строгий version field и не показывал будущий platform error. Теперь read-only prefill берёт только явно записанный ведущий release token, заранее печатает `mechanical_preflight` с exact skill path/value и strict-runner errors, а при отсутствии token ничего не изобретает. На pre-change Family Logistic оба действия видны до candidate; фактический validator по-прежнему запускается один раз. Contract line остаётся 6.2, принятые проекты ничего не меняют. Entry/ordinary/migration без роста; role route −6 Б. | legacy version normalization, early mechanical preflight, no guessing, regression, metadata |
 | 6.2.6 | **Flor marketing воспроизвёл противоречие обещанию «не изобретать роли»:** в Git уже были два project-owned `skills/*/SKILL.md`, но без legacy registry `--prepare-candidate` возвращал пустой prefill и показывал generic `research-adviser`. Теперь bounded read-only inventory берёт только Git-tracked project skills, их path/version/hash и одинаковые discovery-точки, заранее показывает frontmatter gaps, но не назначает profession, selector, posture, owner или validator. Выдаваемый scaffold нейтрален и остаётся заведомо `UNRESOLVED`; package example больше не выглядит проектным предложением. Regression на pre-change Flor видит обе реальные роли и сохраняет missing version как `UNKNOWN`. Contract line остаётся 6.2, accepted projects получают `action: none`; entry/ordinary/migration без роста, role route −50 Б. | tracked-skill inventory, neutral candidate scaffold, no invented profession, regression, metadata |
+| 6.3.0 | **Университетский разбор Григория воспроизвёл потерю material derived knowledge после уже выданного результата:** project canon сохранил старые `OPEN`, пока владелец отдельно не спросил о записи и push. Router теперь разрешает «только ответ» лишь когда результат не создаёт и не меняет `SOURCE / FACT / INTERPRETATION / DECISION / OPEN`; material delta обязана получить durable outcome. При report-only/no-write ответ остаётся ранним, но финальный статус — `DURABLE_TAIL=PENDING` с exact targets и bounded handoff, а не ложное завершение. Навигация, цитата и brainstorm не получают Git-tail. `metadata.version` и `metadata.contract_line` разведены: заметный выпуск 6.3.0 несёт прежнюю line 6.2 и не запускает миграцию. Автоматический semantic detector не заявлен. Принятый рост относительно 6.2.6: entry/material +178 Б, intake +533 Б, migration +476 Б; entry 7 773 Б из 8 192. ⟦LINE: 6.2⟧ | explicit answer/durable join, independent release/contract versions, no-write pending outcome, trivial negative control, regressions, metadata |
 
 ### Чем вызван каждый выпуск — и почему это считается, а не обсуждается
 

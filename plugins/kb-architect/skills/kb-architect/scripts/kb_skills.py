@@ -164,8 +164,8 @@ def frontmatter(skill_md: Path) -> tuple[dict[str, str], dict[str, str], list[st
 
 def frontmatter_value(skill_md: Path, key: str) -> Optional[str]:
     top, metadata, _errors = frontmatter(skill_md)
-    if key == "version":
-        return metadata.get("version")
+    if key in {"version", "contract_line"}:
+        return metadata.get(key)
     return top.get(key)
 
 
@@ -1838,7 +1838,8 @@ def load_json_object(path: Path) -> dict | None:
 
 def current_contract_line() -> str:
     skill_file = Path(__file__).resolve().parent.parent / "SKILL.md"
-    version = frontmatter_value(skill_file, "version") or "6.2"
+    version = (frontmatter_value(skill_file, "contract_line")
+               or frontmatter_value(skill_file, "version") or "6.2")
     try:
         return kb_apply.line_text(version)
     except (AttributeError, ValueError):
