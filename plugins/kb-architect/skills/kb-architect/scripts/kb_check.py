@@ -23,9 +23,9 @@ kb_check.py — целостность базы. Семь проверок, ко
   3. Пустой verify.  Поле заведено и не заполнено — утверждение о
      совершённом действии без доказательства, выданное за факт.
 
-  4. Объём входа против потолка 8 КБ.  Единственный численный лимит
-     контракта — и потому единственный размер, который тут меряется.
-     Не нашли, где вход, — так и печатается, отдельной находкой.
+  4. Runtime rules boot и current против потолка 8 КБ каждый. Symlink двух
+     agent-имён считается один раз; максимальная сумма печатается отдельно.
+     Не нашли current — так и печатается, отдельной находкой.
 
   5. Неслитая ветка с содержимым вне канона.  Работа, доставленная в
      ветку и не влитая, — второй контур: рабочее дерево чисто, а знания
@@ -308,6 +308,15 @@ def main():
     # ниже: она превращает промах поиска из молчания в находку.
     ENTRY_LIMIT = 8 * 1024
     entry = kb_paths.locate(root, "entry")
+    rules = kb_paths.rules_files(root)
+    rules_sizes = []
+    for path in rules:
+        try:
+            rules_sizes.append((os.path.relpath(path, root), os.path.getsize(path)))
+        except OSError:
+            pass
+    oversized_rules = [(name, value) for name, value in rules_sizes
+                       if value > ENTRY_LIMIT]
     oversized, unchecked, entry_note = None, None, None
     size = entry.size()
     if size is None:
@@ -463,6 +472,16 @@ def main():
         print("  Обычно причина — историческое накопление внутри входа: закрытые сюжеты,")
         print("  оставленные абзацами. Цена не в ошибке, а в счёте за каждую сессию.\n")
 
+    if oversized_rules:
+        found += len(oversized_rules)
+        print(f"RUNTIME RULES BOOT ПЕРЕРОС ПОТОЛОК — {len(oversized_rules)}:")
+        for name, value in oversized_rules:
+            print(f"  {name}: {value / 1024:.1f} КБ при потолке 8 КБ "
+                  f"(×{value / ENTRY_LIMIT:.1f})")
+        print("  Этот слой автоматически входит в новый task до вызова checker.")
+        print("  Подробности вынеси в routed project guide; authority, stops и")
+        print("  current pointer оставь в коротком boot canon.\n")
+
     if broken:
         found += len(broken)
         print(f"БИТЫЕ ССЫЛКИ — {len(broken)}:")
@@ -531,10 +550,24 @@ def main():
         scope.append("инбокс отчётов — НЕ ПРОВЕРЕН")
     else:
         scope.append(f"инбокс отчётов — {report_inbox_note}")
+    if rules_sizes:
+        state = "EXCEEDED" if oversized_rules else "PASS"
+        values = ", ".join(f"{name}={value} B" for name, value in rules_sizes)
+        scope.append(f"runtime rules boot — {state} ({values})")
+    else:
+        scope.append("runtime rules boot — NOT_CHECKED (root rules file not found)")
     if entry.found:
-        scope.append(f"объём входа ({entry.where(root)})")
+        state = "EXCEEDED" if oversized else "PASS"
+        scope.append(f"current entry — {state} ({entry.where(root)}={size} B)")
     elif entry_note:
-        scope.append("объём входа — неприменим")
+        scope.append("current entry — NOT_APPLICABLE")
+    else:
+        scope.append("current entry — NOT_CHECKED")
+    if rules_sizes and size is not None:
+        bootstrap = max(value for _name, value in rules_sizes) + size
+        scope.append(f"max project bootstrap — {bootstrap} B (informational)")
+    else:
+        scope.append("max project bootstrap — NOT_CHECKED")
 
     if not found:
         print("целостность: чисто. Проверено: " + ", ".join(scope) + ".")

@@ -64,8 +64,59 @@ def t_report_only_envelope_cancels_old_write_authority():
     check("текущий report-only envelope отменяет старую write-authority",
           "отменяют старое разрешение на запись" in ref
           and "точные разрешённые targets" in ref
-          and "старое разрешение на запись не переносится" in router,
+          and "Report/read-only сбрасывает старую write-authority" in router,
           out, "current task scope wins before first write")
+
+
+def t_632_consumer_task_routes_skill_changes_to_report_only():
+    """03–04.09: two consumer tasks treated a common improvement as maintenance."""
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "kb_owner_gate_fixture", os.path.join(HERE, "kb_owner_gate.py"))
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    parent = Path(tempfile.mkdtemp(prefix="kbtest-owner-gate-"))
+    owner, consumer = parent / "owner", parent / "consumer"
+    sessions = parent / "sessions" / "2026" / "09" / "04"
+    sessions.mkdir(parents=True)
+    for root, remote in ((owner, "git@github.com:sugestr/kb-architect-lab.git"),
+                         (consumer, "https://github.com/example/consumer.git")):
+        root.mkdir()
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin", remote],
+                       check=True)
+
+    def session(thread, root):
+        path = sessions / f"rollout-{thread}.jsonl"
+        with path.open("w", encoding="utf-8") as stream:
+            json.dump({"type": "session_meta", "payload": {
+                "id": thread, "cwd": str(root), "originator": "Codex Desktop"}}, stream)
+            stream.write("\n")
+
+    session("consumer-thread", consumer)
+    session("owner-thread", owner)
+    blocked = gate.evaluate(
+        owner, True, {"CODEX_THREAD_ID": "consumer-thread"}, parent / "sessions")
+    passed = gate.evaluate(
+        owner, True, {"CODEX_THREAD_ID": "owner-thread"}, parent / "sessions")
+    unknown = gate.evaluate(owner, True, {}, parent / "sessions")
+    router = skill_text("SKILL.md")
+    template = skill_text("assets/templates/defect-report.md")
+    out = Vyvod(json.dumps({"blocked": blocked, "passed": passed,
+                            "unknown": unknown}, ensure_ascii=False), 0)
+    check("consumer task cannot become kb-architect maintainer by wording or cwd",
+          blocked["state"] == "BLOCKED_WRONG_EXECUTOR" and blocked["code"] == 3
+          and passed["state"] == "PASS" and passed["code"] == 0
+          and unknown["state"] == "OWNER_CONTEXT_UNKNOWN" and unknown["code"] == 2
+          and "Consumer task на «исправь общий скилл»" in router
+          and "owner-worktree/write/release/install" in router
+          and "из consumer project — только" in router
+          and "consumer task соблюдает report-only stop" in template,
+          out, "runtime-bound consumer blocks before write; only owner task maintains")
+    shutil.rmtree(parent, ignore_errors=True)
 
 
 def t_620_thin_router_points_to_versioned_contract():
@@ -80,7 +131,7 @@ def t_620_thin_router_points_to_versioned_contract():
           and "role posture" in contract
           and "пустой lexical/search result не доказывает отсутствие" in contract
           and "Cost baseline — **потолок/бюджет**" in contract
-          and "Project entry/current ≤8 КиБ" in contract
+          and "Project rules boot и current pointer — каждый ≤8 КиБ" in contract
           and "Readiness имеет один канонический executable command" in contract
           and "CORRECTIONS.md" in contract
           and "обычный fresh-context вопрос" in contract
@@ -115,14 +166,14 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.3.1"
+          and data.get("baseline_version") == "6.3.2"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
           and "matching project role" in router
           and "current state" in router
-          and "Не перечитывай неизменный reference" in router
-          and "сбрасывает эту квитанцию" in router
+          and "Не перечитывай reference без изменения" in router
+          and "сбрасывает receipt" in router
           and help_run.returncode == 0
           and len(evidence_help.encode("utf-8")) <= 2_500
           and all(x in evidence_help for x in
@@ -245,11 +296,12 @@ def t_warm_turn_does_not_restart_project_boot():
     template = skill_text("assets/templates/CLAUDE.md")
     out = Vyvod(router + "\n" + service + "\n" + template, 0)
     check("warm turn reuses boot receipt and keeps service work off answer path",
-          "Новый пользовательский turn — не новый вход" in router
+          "Новый turn — не новый вход" in router
           and "только ответ" in router
           and "не при каждом сообщении" in service
           and "не запускай этот цикл снова" in service
-          and "до current state" in service
+          and "Updater не блокирует первый\nбезопасный результат" in service
+          and "после результата и до durable/external шага" in service
           and "на первой безопасной границе" in service
           and "один раз на новую task/session" in template,
           out, "cold task defers service work to a safe boundary; warm turns reuse receipt")
@@ -1957,14 +2009,14 @@ def t_service_distribution_is_public_not_development_symlink():
           and "git ls-remote" in ref
           and "установленного локального `SKILL.md`" in ref
           and "не открывает public README/SKILL вручную" in ref
-          and "до current state" in ref
+          and "после результата и до durable/external шага" in ref
           and "«Обнови скилл базы знаний»" in entry
           and "«Обнови скилл базы знаний»" in tpl
           and "не report-only" in entry
           and "UPDATE_STATUS=INSTALLED" in updater
           and "REREAD_INSTALLED_ENTRY" in updater
           and "PUBLIC_REPOSITORY" in updater,
-          out, "public stable update precedes project work and emits a session action")
+          out, "public stable update runs at the first safe boundary and emits a session action")
 
 
 def t_fast_update_checks_remote_even_with_fresh_receipt():
@@ -2295,6 +2347,23 @@ def check(name, cond, out, hint=""):
 
 
 NOW_OK = "Обновлено: 2026-08-06\n\n## ГДЕ МЫ\nтекст\n"
+
+
+def t_632_checker_measures_runtime_rules_and_current_separately():
+    """04.09: a 57 KB project rules file passed while only NOW.md was measured."""
+    d = base({"NOW.md": NOW_OK,
+              "CLAUDE.md": "# правила\n\nвход: NOW.md\n" + "х" * 9000})
+    os.symlink("CLAUDE.md", os.path.join(d, "AGENTS.md"))
+    out = run("kb_check.py", d)
+    check("checker catches oversized runtime rules without double-counting symlink aliases",
+          out.code == 1
+          and "RUNTIME RULES BOOT ПЕРЕРОС ПОТОЛОК — 1" in out
+          and "runtime rules boot — EXCEEDED (CLAUDE.md=" in out
+          and "AGENTS.md=" not in out
+          and "current entry — PASS (NOW.md=" in out
+          and "max project bootstrap —" in out,
+          out, "rules >8KiB is red; current remains separately PASS; symlink counts once")
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def t_declared_entry_missing():
@@ -4965,8 +5034,8 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_631_release_series_is_independent_from_contract_line():
-    """Release 6.3.1 keeps already accepted projects on contract line 6.2."""
+def t_632_release_series_is_independent_from_contract_line():
+    """Release 6.3.2 keeps already accepted projects on contract line 6.2."""
     import json
     import kb_paths
     import kb_skills
@@ -4998,8 +5067,8 @@ def t_631_release_series_is_independent_from_contract_line():
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("release 6.3.1 keeps accepted contract line 6.2 without remigration",
-          kb_paths.skill_version() == "6.3.1"
+    check("release 6.3.2 keeps accepted contract line 6.2 without remigration",
+          kb_paths.skill_version() == "6.3.2"
           and kb_paths.skill_contract_line() == "6.2"
           and kb_skills.current_contract_line() == "6.2"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

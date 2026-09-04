@@ -86,11 +86,28 @@ def read(path):
 
 
 def rules_path(root):
-    for n in RULES_NAMES:
-        p = os.path.join(root, n)
-        if os.path.isfile(p):
-            return p
-    return None
+    paths = rules_files(root)
+    return paths[0] if paths else None
+
+
+def rules_files(root):
+    """Existing root rule files, with symlink aliases counted once.
+
+    Claude and Codex may use different conventional names.  Distinct files are
+    distinct boot variants; ``AGENTS.md -> CLAUDE.md`` is one byte payload and
+    must not inflate the measured bootstrap merely because it has two names.
+    """
+    found, seen = [], set()
+    for name in RULES_NAMES:
+        path = os.path.join(root, name)
+        if not os.path.isfile(path):
+            continue
+        identity = os.path.realpath(path)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        found.append(path)
+    return found
 
 
 def context_docs(root):

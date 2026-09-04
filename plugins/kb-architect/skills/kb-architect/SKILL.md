@@ -3,7 +3,7 @@ name: kb-architect
 description: "Durable AI knowledge-base router: start, audit, update or move a KB; coordinate agents, roles, runtimes, credentials and cloud/MCP; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.3.1"
+  version: "6.3.2"
   contract_line: "6.2"
   author: "sugestr"
 ---
@@ -39,37 +39,35 @@ metadata:
 | Понять authority и границы публикации | `references/authority.md` |
 | Измерить пользу/стоимость слоёв | `references/measurement.md` + `scripts/kb_cost.py --check` |
 | Разобрать дефект или сопровождать скилл | `references/measurement.md` + `references/maintainer.md` |
-| Собрать или доставить баг-репорт | `assets/templates/defect-report.md` + `scripts/kb_report.py --help` |
+| Собрать или доставить баг-репорт | из consumer project — только `assets/templates/defect-report.md` + `scripts/kb_report.py --help`; maintenance запрещён |
 
-Неясный маршрут — `references/00-kak-chitat.md`. Историю releases целиком не читай:
-дельту извлекает `scripts/kb_apply.py`.
+Неясный маршрут — `references/00-kak-chitat.md`; release-дельту извлекает
+`scripts/kb_apply.py`, историю не перечитывай.
 
 ## Инварианты исполнения
 
-- Контракт — `references/contract.md`; reference обязателен только после явного принятия.
-- Локальные правила и project role задают модальность, authority, source ladder и stops.
-- `PROJECT_ROLES.json` объявляет posture/triggers, `KNOWLEDGE_INDEX.json` — адреса;
-  непокрытая существенная работа — stop, required-роли загружаются все.
-- Git не переносит MCP, Keychain и ignored-файлы; runtime принимай по account,
-  scope и safe probe.
-- Внешнее/необратимое/высокорисковое действие требует project source и owner gate.
-- Последовательно используй один checkout; параллельным писателям — отдельные
-  worktree/ветки и exact-path commits.
-- В report/read-only старое разрешение на запись не переносится: targets нужны до записи.
-- `kb_lookup.py --claim` нужен существенному project-derived выводу, не полям,
-  прямо прочитанным в первичном источнике. Domain skill задаёт темы, core — гейт.
-- Update — не report-only: installed entry ведёт обратимые local changes до owner gate;
-  public — только freshness/delivery.
-- Project marker = `metadata.contract_line`, build = `metadata.version`; migration
-  открывает только смена line.
+- Контракт — `references/contract.md`; reference обязателен лишь после принятия.
+- Project rules/role задают modality, authority, sources и stops.
+- `PROJECT_ROLES.json` задаёт triggers, `KNOWLEDGE_INDEX.json` — адреса;
+  непокрытая существенная работа = stop, matching required-роли загружаются все.
+- Git не переносит MCP/Keychain/ignored state; runtime = account + scope + safe probe.
+- Внешнее/необратимое/высокорисковое требует project source + owner gate.
+- Consumer task на «исправь общий скилл» делает лишь баг-репорт. Нет `PASS` от
+  `kb_owner_gate.py --project <active-root>` — `BLOCKED_WRONG_EXECUTOR`; никаких
+  owner-worktree/write/release/install. Исполняет только task owner repo.
+- Последовательно — один checkout; параллельным писателям — worktree/ветка и exact paths.
+- Report/read-only сбрасывает старую write-authority; targets нужны до записи.
+- `kb_lookup.py --claim` нужен project-derived выводу, не прямым полям источника;
+  domain skill задаёт темы, core — гейт.
+- Update не report-only: installed entry ведёт local changes до owner gate; public — delivery.
+- Project marker = contract line, build = `metadata.version`; migration открывает лишь новая line.
 - Рост route блокирует `kb_cost.py --check` как `OPTIMIZATION_REQUIRED`.
-- Не перечитывай неизменный reference в одной логической задаче. Новый выпуск,
-  authority-контекст или изменившийся файл сбрасывает эту квитанцию.
+- Не перечитывай reference без изменения; новая версия/file/authority сбрасывает receipt.
 
 ## Дешёвый рабочий цикл
 
-Новый пользовательский turn — не новый вход. Переиспользуй receipt при тех же root, current, версии
-и authority; изменившийся файл создаёт только свой evidence gate.
+Новый turn — не новый вход. Переиспользуй receipt при тех же root/current/version/authority;
+изменившийся файл создаёт только свой evidence gate.
 
 До вызова инструментов выбери критический путь:
 
