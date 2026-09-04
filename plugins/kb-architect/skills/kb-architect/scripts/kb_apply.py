@@ -10,8 +10,8 @@ kb_apply.py — что новая редакция значит для ЭТОЙ 
 знаний» вызывающий агент после кода 1 продолжает обратимые локальные изменения по
 `references/migration.md`; в явном audit/read-only режиме он только сообщает итог.
 Post-results acceptance, secrets/private runtime и push остаются отдельными gates.
-Migration unit is the minimum compatible project level (currently 6.3.0);
-build 6.3.3 does not reopen a project already accepted there.
+Migration unit is the minimum compatible project level (currently 6.4.0);
+a future patch does not reopen a project already accepted there.
 
 Код 1 означает `NEEDS_APPLICATION` либо `APPLICATION_UNPROVEN`: проект отстаёт
 по минимальному уровню или его 6.0+ marker не подтверждён короткой финальной квитанцией.
@@ -183,8 +183,8 @@ def marker_line_at_commit(root, commit, source):
         return None
 
 
-def actual_transition_parent(root, source_commit, source, from_line, to_line, marker):
-    """Find the actual parent on which the current line candidate was based.
+def actual_transition_parent(root, source_commit, source, from_version, to_version, marker):
+    """Find the actual parent on which the current project-version candidate was based.
 
     A session-start commit may remain an ancestor after another writer advances the
     branch.  That makes it useful provenance but no longer the exact pre-change
@@ -196,23 +196,23 @@ def actual_transition_parent(root, source_commit, source, from_line, to_line, ma
         return None, "cannot resolve candidate HEAD"
     head = head_run.stdout.strip()
     head_line = marker_line_at_commit(root, head, source)
-    expected_from = line_text(from_line) if from_line is not None else None
-    expected_to = line_text(to_line)
+    expected_from = line_text(from_version) if from_version is not None else None
+    expected_to = line_text(to_version)
     try:
         current_line = line_text(marker)
     except (AttributeError, ValueError):
-        return None, "current marker is not a contract line"
+        return None, "current marker is not a project version"
 
     # Before commit, HEAD itself is the only honest candidate parent.
     if head_line != current_line:
         if head_line == expected_from and current_line == expected_to:
             return head, None
-        return None, "working-tree marker is not based on the declared from_line"
+        return None, "working-tree marker is not based on the declared from_version"
 
     history = git(root, "rev-list", "--first-parent", "--reverse",
                   f"{source_commit}..HEAD")
     if history.returncode:
-        return None, "cannot inspect contract-line transition history"
+        return None, "cannot inspect project-version transition history"
     for candidate in history.stdout.splitlines():
         parent_run = git(root, "rev-parse", f"{candidate}^1")
         if parent_run.returncode:
@@ -222,7 +222,7 @@ def actual_transition_parent(root, source_commit, source, from_line, to_line, ma
         after = marker_line_at_commit(root, candidate, source)
         if before == expected_from and after == expected_to:
             return parent, None
-    return None, "cannot locate the declared contract-line transition after source commit"
+    return None, "cannot locate the declared project-version transition after source commit"
 
 
 def _evidence_errors(root, value, label):
@@ -263,22 +263,27 @@ def application_receipt_errors(root, marker):
         data = json.loads(kb_paths.read(path))
     except (OSError, json.JSONDecodeError) as exc:
         return [f"{APPLICATION_RECEIPT} is unreadable: {exc}"]
-    if data.get("schema") == 2:
+    schema = data.get("schema")
+    if schema in {2, 3}:
         application = data.get("application")
         if not isinstance(application, dict):
-            return [f"{APPLICATION_RECEIPT} schema 2 requires one application object"]
+            return [f"{APPLICATION_RECEIPT} schema {schema} requires one application object"]
         errors = []
-        from_line = application.get("from_line")
-        to_line = application.get("to_line")
+        # Schema 3 uses the one-version vocabulary. Schema 2 remains readable
+        # so an already accepted project is not forced through a cosmetic migration.
+        from_key, to_key = (("from_version", "to_version") if schema == 3
+                            else ("from_line", "to_line"))
+        from_version = application.get(from_key)
+        to_version = application.get(to_key)
         if application.get("status") != "finalized" or not application.get("finalized_at"):
             errors.append("compact application is not finalized")
         try:
-            if line_text(marker) != line_text(to_line):
-                errors.append("compact application to_line does not match project line")
-            if from_line is not None:
-                contract_line(from_line)
+            if line_text(marker) != line_text(to_version):
+                errors.append(f"compact application {to_key} does not match project version")
+            if from_version is not None:
+                contract_line(from_version)
         except (AttributeError, ValueError):
-            errors.append("compact application has invalid from_line/to_line")
+            errors.append(f"compact application has invalid {from_key}/{to_key}")
         source = application.get("source")
         if not isinstance(source, dict) or not source.get("commit") \
                 or not source.get("version_source"):
@@ -298,12 +303,13 @@ def application_receipt_errors(root, marker):
                     errors.append(source_error)
                 else:
                     old_marker = marker_from_bytes(shown)
-                    if from_line is not None and (not old_marker or
-                                                  line_text(old_marker) !=
-                                                  line_text(from_line)):
-                        errors.append("compact application source marker does not match from_line")
+                    if from_version is not None and (not old_marker or
+                                                     line_text(old_marker) !=
+                                                     line_text(from_version)):
+                        errors.append("compact application source marker does not match "
+                                      f"{from_key}")
                     transition_parent, transition_error = actual_transition_parent(
-                        root, commit, locator, from_line, to_line, marker)
+                        root, commit, locator, from_version, to_version, marker)
                     if transition_error:
                         errors.append(transition_error)
                     elif transition_parent != commit:
@@ -517,13 +523,13 @@ def main():
         return 2
     if target_key > installed_key:
         print(f"целевая редакция {target} новее установленного скилла {inst} — "
-              "эта копия не может проверить будущий contract")
+              "эта копия не может проверить будущую версию")
         return 2
     known_targets = {version for version, _ in releases_between("0", inst)}
     known_lines = {release_contract_line(version) for version in known_targets}
     known_lines.add(installed_line)
     if target not in known_targets and target_line not in known_lines:
-        print(f"целевая линия {line_text(target)} отсутствует в release history "
+        print(f"целевая версия проекта {line_text(target)} отсутствует в release history "
               f"установленного скилла {inst}")
         return 2
     if not proj:
@@ -541,21 +547,21 @@ def main():
         if project_line >= (6, 2):
             receipt_errors = application_receipt_errors(root, proj)
             if receipt_errors:
-                print(f"APPLICATION_UNPROVEN: линия {line_text(proj)} не имеет короткой "
+                print(f"APPLICATION_UNPROVEN: версия проекта {line_text(proj)} не имеет короткой "
                       "финальной квитанции.")
                 for error in receipt_errors:
                     print("  ERROR:", error)
                 return 1
-            print(f"APPLICATION_RECEIPT_OK: {APPLICATION_RECEIPT} подтверждает линию "
+            print(f"APPLICATION_RECEIPT_OK: {APPLICATION_RECEIPT} подтверждает версию проекта "
                   f"{line_text(proj)}.")
         if project_line == target_line and ver_key(proj) != target_key:
-            print(f"PROJECT_LINE_OK: проект принят на линии {line_text(proj)}; "
-                  f"сборка {target} не открывает новую миграцию.")
+            print(f"PROJECT_VERSION_OK: проект принят на версии {line_text(proj)}; "
+                  f"выпуск {target} не открывает новую миграцию.")
         elif target != inst:
-            print(f"TARGET_APPLICATION_OK: проект на линии {line_text(proj)} уже покрывает "
+            print(f"TARGET_APPLICATION_OK: версия проекта {line_text(proj)} уже покрывает "
                   f"цель {line_text(target)}.")
         else:
-            print(f"проект на линии {line_text(proj)}, установлен build {inst} — "
+            print(f"версия проекта {line_text(proj)}, установлен скилл {inst} — "
                   "миграции нет")
         return 0
 
@@ -584,14 +590,14 @@ def main():
             if value not in {"…", "..."}:
                 vozmozhnosti.append((v, value))
 
-    print(f"Проект на линии {line_text(proj)}, цель {target_line_name}, "
-          f"установлен build {inst}.\n")
+    print(f"Версия проекта {line_text(proj)}, цель {target_line_name}, "
+          f"установлен скилл {inst}.\n")
 
     if not dela:
         print("ОБЯЗАТЕЛЬНЫХ ДЕЛ НЕТ. Правки инструментов и текста уже работают,")
         print("потому что скилл установлен.\n")
     else:
-        print(f"ТРЕБУЮТ ДЕЙСТВИЯ: {len(dela)} для линии {target_line_name}.\n")
+        print(f"ТРЕБУЮТ ДЕЙСТВИЯ: {len(dela)} для версии {target_line_name}.\n")
         for k, (v, act) in enumerate(dela, 1):
             print(f"  {k}. [{v}] {act}\n")
 
@@ -613,7 +619,7 @@ def main():
     print("  2. применить текущий минимальный уровень, не проигрывая patch history;")
     print("  3. для ролей: один узкий project check и один обычный fresh-context вопрос;")
     print("  4. показать владельцу изменения и честные OPEN;")
-    print(f"  5. после acceptance записать одну schema-2 квитанцию в {APPLICATION_RECEIPT},")
+    print(f"  5. после acceptance записать одну schema-3 квитанцию в {APPLICATION_RECEIPT},")
     print(f"     поставить kb_standard_version: {target_line_name}, commit и отдельно push.")
     print("Full core suite, повтор каждого runtime и mutation receipts принадлежат")
     print("выпуску скилла или специальному аудиту, а не обычной миграции проекта.")

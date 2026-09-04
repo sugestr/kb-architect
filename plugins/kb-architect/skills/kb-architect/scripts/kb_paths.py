@@ -7,7 +7,7 @@ kb_paths.py — где у проекта вход, журнал и контро�
 Почему отдельным модулем. Каждый скрипт искал вход своим списком имён и
 только в корне — два источника правды об одном факте, ровно то, что
 запрещает первое правило контракта. Счёт пришёл с проекта, у которого вход
-лежит в подпапке: kb_check.py файла не нашёл, пропустил проверку потолка
+лежит в подпапке: kb_check.py файла не нашёл, пропустил измерение входа
 и напечатал «чисто», а kb_due.py отнёс это в «в порядке». Вход при этом
 был превышен в 1.8 раза и рос дальше.
 
@@ -48,7 +48,7 @@ KINDS = {
     "entry": {
         "что": "вход",
         "names": ("NOW.md", "STATUS.md", "СЕЙЧАС.md"),
-        "keys": ("вход", "entry"),
+        "keys": ("вход", "entry", "текущее состояние", "current state"),
         "headings": ("СЕЙЧАС", "ТЕКУЩЕЕ СОСТОЯНИЕ"),
     },
     "journal": {
@@ -206,7 +206,7 @@ class Located:
     """
 
     def __init__(self, kind, path=None, section=None, how=None,
-                 declared=None, others=(), broken=None):
+                 declared=None, others=(), broken=None, container=None):
         self.kind = kind
         self.path = path
         self.section = section
@@ -214,6 +214,9 @@ class Located:
         self.declared = declared
         self.others = list(others)
         self.broken = broken   # объявленный путь, которого нет
+        # Физический файл, внутри которого найден section. Нужен, чтобы
+        # измерение boot не считало один и тот же байт второй раз.
+        self.container = container
 
     @property
     def found(self):
@@ -275,7 +278,8 @@ def locate(root, kind):
                            how="объявлен в правилах проекта", declared=raw)
         sec, where = find_section(root, spec["headings"], docs)
         if sec is not None:
-            return Located(kind, section=sec, declared=raw,
+            return Located(kind, section=sec, declared=raw, others=files,
+                           container=where,
                            how=f"раздел внутри {os.path.relpath(where, root)}")
         # Объявление, похожее на путь, но никуда не ведущее, — это опечатка,
         # а не «вычисляемый вход». Разница решающая: во втором случае
@@ -297,7 +301,7 @@ def locate(root, kind):
 
     sec, where = find_section(root, spec["headings"], docs)
     if sec is not None:
-        return Located(kind, section=sec,
+        return Located(kind, section=sec, container=where,
                        how=f"раздел внутри {os.path.relpath(where, root)}")
 
     return Located(kind)

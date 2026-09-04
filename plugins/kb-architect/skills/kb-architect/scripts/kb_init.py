@@ -21,9 +21,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES = os.path.normpath(os.path.join(HERE, "..", "assets", "templates"))
 
-# Минимум по контракту: вход, канал для плохих новостей, что сломалось, проверка.
+# Минимум по контракту: единый rules/current вход, канал плохих новостей,
+# эксплуатационный журнал и проверка. Отдельный NOW.md — опция, не второй default.
 CORE = {
-    "NOW.md": "NOW.md",
     "CORRECTIONS.md": "CORRECTIONS.md",
     "SLOMALOS.md": "SLOMALOS.md",
     "QUESTIONS.md": "QUESTIONS.md",
@@ -80,6 +80,15 @@ def main() -> int:
     for name in names:
         copy_template(name, os.path.join(root, name), created, skipped)
 
+    # Two runtime names, one physical canon. Do not create an independently
+    # editable copy: that would reintroduce the split-brain this default removes.
+    agents = os.path.join(root, "AGENTS.md")
+    if os.path.lexists(agents):
+        skipped.append("AGENTS.md")
+    else:
+        os.symlink("CLAUDE.md", agents)
+        created.append("AGENTS.md -> CLAUDE.md")
+
     kdir = args.knowledge_dir
     os.makedirs(os.path.join(root, kdir), exist_ok=True)
     created.append(f"{kdir}/")
@@ -131,9 +140,9 @@ def main() -> int:
         print("Пропущено (уже есть): " + ", ".join(skipped))
     print(
         "\nДальше:\n"
-        "  1. Заполни NOW.md — где мы, что дальше, чего ждём, что запрещено.\n"
+        "  1. Заполни раздел «Сейчас» в CLAUDE.md — где мы, что дальше, чего ждём, что запрещено.\n"
         "  2. Впиши в QUESTIONS.md пять вопросов проекта, один из них злой.\n"
-        "  3. Заполни CLAUDE.md: язык, вход в сессию, границы, блок «Соответствие».\n"
+        "  3. Заполни остальной CLAUDE.md: язык, вход в сессию, границы, блок «Соответствие».\n"
         "  4. git init + приватный remote + первый коммит.\n"
         "\nСверх минимума ничего не заводи, пока в SLOMALOS.md не появится повтор."
     )

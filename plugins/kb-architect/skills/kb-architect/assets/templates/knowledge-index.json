@@ -13,7 +13,7 @@
       "description": "Current facts, evidence, decisions, hypotheses and open questions for the active case",
       "load_when": ["a conclusion depends on the current project or case"],
       "aliases": ["current case", "project facts", "case evidence"],
-      "paths": ["NOW.md", "knowledge/INDEX.md"]
+      "paths": ["CLAUDE.md", "knowledge/INDEX.md"]
     }
   ]
 }

@@ -3,8 +3,8 @@ name: kb-architect
 description: "Durable AI knowledge-base router: start, audit, update or move a KB; coordinate agents, roles, runtimes, credentials and cloud/MCP; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.3.3"
-  minimum_project_version: "6.3.0"
+  version: "6.4.0"
+  minimum_project_version: "6.4.0"
   author: "sugestr"
 ---
 
@@ -60,8 +60,8 @@ metadata:
 - `kb_lookup.py --claim` нужен project-derived выводу, не прямым полям источника;
   domain skill задаёт темы, core — гейт.
 - Update не report-only: installed entry ведёт local changes до owner gate; public — delivery.
-- Текущая версия одна: `6.3.3`. `minimum_project_version: 6.3.0` — только
-  порог проекта: ниже обновить один раз; patch миграцию не повторяет.
+- Текущая версия одна: `6.4.0`; проекты ниже `6.4.0` принимают эту дельту один раз.
+  Это не вторая «контрактная версия», а минимальная версия совместимого проекта.
 - Рост route блокирует `kb_cost.py --check` как `OPTIMIZATION_REQUIRED`.
 - Не перечитывай reference без изменения; новая версия/file/authority сбрасывает receipt.
 
@@ -78,7 +78,7 @@ metadata:
   `DURABLE_TAIL=PENDING` + точные targets/bounded handoff;
 - **опасное/внешнее действие:** сначала относящийся к нему authority/source gate.
 
-1. Короткий project entry/current и обязательную диагностику читать параллельно
+1. Project entry/current и обязательную диагностику читать параллельно
    с уже доступным источником; локальный файл не требует MCP-инвентаря.
 2. Запустить только принятые проверки; PASS не шире их охвата, сбой — `UNKNOWN`.
 3. Открыть один routed reference/project skill только по trigger.

@@ -23,9 +23,10 @@ kb_check.py — целостность базы. Семь проверок, ко
   3. Пустой verify.  Поле заведено и не заполнено — утверждение о
      совершённом действии без доказательства, выданное за факт.
 
-  4. Runtime rules boot и current против потолка 8 КБ каждый. Symlink двух
-     agent-имён считается один раз; максимальная сумма печатается отдельно.
-     Не нашли current — так и печатается, отдельной находкой.
+  4. Runtime rules boot и current измеряются раздельно, symlink двух agent-имён
+     считается один раз, inline current не считается второй раз. Сам размер не
+     доказывает поломку. Красный исход появляется только против явно принятого
+     проектом `project_boot_budget_bytes`. Не нашли current — отдельная находка.
 
   5. Неслитая ветка с содержимым вне канона.  Работа, доставленная в
      ветку и не влитая, — второй контур: рабочее дерево чисто, а знания
@@ -298,26 +299,23 @@ def main():
                     and not has_verify and not look:
                 no_verify.append((rel, val))
 
-    # 4. Объём входа — единственный численный лимит контракта, и потому
-    # единственный, который проверяется механически бесплатно.
+    # 4. Объём project bootstrap — измерение, а не универсальный приговор.
     #
     # Раньше вход искался двумя именами и только в корне. Проект, у которого
     # вход лежит в подпапке, получал пропуск проверки, неотличимый от
     # пройденной проверки: печаталось «чисто». Поиск теперь общий
-    # (kb_paths.py), но чинит случай не он, а строка «ПОТОЛОК НЕ ПРОВЕРЕН»
+    # (kb_paths.py), но чинит случай не он, а строка «CURRENT НЕ ПРОВЕРЕН»
     # ниже: она превращает промах поиска из молчания в находку.
-    ENTRY_LIMIT = 8 * 1024
     entry = kb_paths.locate(root, "entry")
     rules = kb_paths.rules_files(root)
     rules_sizes = []
     for path in rules:
         try:
-            rules_sizes.append((os.path.relpath(path, root), os.path.getsize(path)))
+            rules_sizes.append(
+                (path, os.path.relpath(path, root), os.path.getsize(path)))
         except OSError:
             pass
-    oversized_rules = [(name, value) for name, value in rules_sizes
-                       if value > ENTRY_LIMIT]
-    oversized, unchecked, entry_note = None, None, None
+    unchecked, entry_note = None, None
     size = entry.size()
     if size is None:
         if entry.broken:
@@ -327,12 +325,43 @@ def main():
                          + (f"; при этом рядом лежит {os.path.relpath(entry.others[0], root)}"
                             if entry.others else ""))
         elif entry.declared:
-            entry_note = (f"потолок входа не применяется: вход объявлен "
+            entry_note = (f"байтовое измерение current не применяется: вход объявлен "
                           f"вычисляемым — «{entry.declared}»")
         else:
             unchecked = kb_paths.how_to_declare("entry")
-    elif size > ENTRY_LIMIT:
-        oversized = (entry.where(root), size)
+
+    # Один опциональный бюджет относится к дедуплицированным статическим байтам,
+    # которые новая сессия получает автоматически. Его отсутствие не является
+    # отступлением: размер — proxy стоимости, а не доказательство достаточности.
+    budget_raw, budget_source = kb_paths.declared_value(
+        root, ("project_boot_budget_bytes",))
+    budget, budget_error = None, None
+    if budget_raw:
+        if re.fullmatch(r"[1-9][0-9]*", budget_raw):
+            budget = int(budget_raw)
+        else:
+            where = os.path.relpath(budget_source, root) if budget_source else "правила проекта"
+            budget_error = (f"{where}: project_boot_budget_bytes должен быть целым "
+                            f"положительным числом байт, получено «{budget_raw}»")
+
+    entry_identity = None
+    if entry.path:
+        entry_identity = os.path.realpath(entry.path)
+    elif entry.container:
+        entry_identity = os.path.realpath(entry.container)
+
+    bootstrap = None
+    if rules_sizes:
+        totals = []
+        for path, _name, rule_size in rules_sizes:
+            already_loaded = entry_identity == os.path.realpath(path)
+            totals.append(rule_size + (0 if already_loaded or size is None else size))
+        bootstrap = max(totals)
+    elif size is not None:
+        bootstrap = size
+
+    budget_exceeded = bool(budget is not None and bootstrap is not None
+                           and bootstrap > budget)
 
     # 5. Работа, доставленная в ветку, но не влитая в канон.
     #
@@ -447,7 +476,7 @@ def main():
 
     if unchecked:
         found += 1
-        print("ПОТОЛОК ВХОДА НЕ ПРОВЕРЕН — вход не найден по известным путям.")
+        print("CURRENT НЕ ПРОВЕРЕН — вход не найден по известным путям.")
         print(f"  {unchecked}.")
         print("  Это не «всё в порядке»: проверка, которая не выполнилась, дороже")
         print("  отсутствующей — отсутствующую компенсируют вниманием, а на")
@@ -456,31 +485,24 @@ def main():
     if entry.others:
         found += len(entry.others)
         print(f"ВХОД НАЙДЕН В НЕСКОЛЬКИХ МЕСТАХ — {1 + len(entry.others)}:")
-        for p in [entry.path] + entry.others:
+        print(f"  {entry.where(root)}")
+        for p in entry.others:
             print(f"  {os.path.relpath(p, root)}")
         print("  Инвариант входа — ровно один. Два независимо обновляемых входа")
         print("  означают, что сессия выберет из них произвольно. Оставь один,")
         print("  остальные переименуй или объяви путь строкой «вход:» в правилах.\n")
 
-    if oversized:
-        name, size = oversized
+    if budget_error:
         found += 1
-        print(f"ВХОД ПЕРЕРОС ПОТОЛОК — {name}: {size / 1024:.1f} КБ при потолке 8 КБ "
-              f"(×{size / ENTRY_LIMIT:.1f}):")
-        print("  Мера в байтах, а не в строках: в плотном markdown с таблицами строка")
-        print("  не единица объёма, и лимит «по строкам» проходит там, где байтовый нет.")
-        print("  Обычно причина — историческое накопление внутри входа: закрытые сюжеты,")
-        print("  оставленные абзацами. Цена не в ошибке, а в счёте за каждую сессию.\n")
+        print("БЮДЖЕТ BOOT ПРОЕКТА НЕ ПРОВЕРЕН — объявление некорректно.")
+        print(f"  {budget_error}.\n")
 
-    if oversized_rules:
-        found += len(oversized_rules)
-        print(f"RUNTIME RULES BOOT ПЕРЕРОС ПОТОЛОК — {len(oversized_rules)}:")
-        for name, value in oversized_rules:
-            print(f"  {name}: {value / 1024:.1f} КБ при потолке 8 КБ "
-                  f"(×{value / ENTRY_LIMIT:.1f})")
-        print("  Этот слой автоматически входит в новый task до вызова checker.")
-        print("  Подробности вынеси в routed project guide; authority, stops и")
-        print("  current pointer оставь в коротком boot canon.\n")
+    if budget_exceeded:
+        found += 1
+        print(f"PROJECT BOOT ПРЕВЫСИЛ ПРИНЯТЫЙ БЮДЖЕТ — {bootstrap} B > {budget} B.")
+        print("  Это нарушение собственного решения проекта, а не универсального лимита.")
+        print("  Не сокращай данные вслепую: сначала карта блоков и мест назначения,")
+        print("  затем rollback и fresh-context проверка recall/authority/stops.\n")
 
     if broken:
         found += len(broken)
@@ -531,7 +553,7 @@ def main():
         print("  подписано. Утверждение без способа перепроверки — не факт.\n")
 
     # Отчёт всегда называет объём проверенного. «Чисто» без списка — это
-    # утверждение шире выполненного: именно так пропуск проверки потолка
+    # утверждение шире выполненного: именно так пропуск измерения current
     # читался как пройденная проверка. И формулировка не шире сделанного:
     # «пустые verify» звучало как «verify проверен», а поле, названное
     # `verified`, проходило чистым.
@@ -551,21 +573,24 @@ def main():
     else:
         scope.append(f"инбокс отчётов — {report_inbox_note}")
     if rules_sizes:
-        state = "EXCEEDED" if oversized_rules else "PASS"
-        values = ", ".join(f"{name}={value} B" for name, value in rules_sizes)
-        scope.append(f"runtime rules boot — {state} ({values})")
+        values = ", ".join(f"{name}={value} B" for _path, name, value in rules_sizes)
+        scope.append(f"runtime rules boot — MEASURED ({values})")
     else:
         scope.append("runtime rules boot — NOT_CHECKED (root rules file not found)")
     if entry.found:
-        state = "EXCEEDED" if oversized else "PASS"
-        scope.append(f"current entry — {state} ({entry.where(root)}={size} B)")
+        scope.append(f"current entry — MEASURED ({entry.where(root)}={size} B)")
     elif entry_note:
         scope.append("current entry — NOT_APPLICABLE")
     else:
         scope.append("current entry — NOT_CHECKED")
-    if rules_sizes and size is not None:
-        bootstrap = max(value for _name, value in rules_sizes) + size
-        scope.append(f"max project bootstrap — {bootstrap} B (informational)")
+    if bootstrap is not None:
+        if budget is None:
+            scope.append(f"max project bootstrap — {bootstrap} B "
+                         "(informational; project budget not declared)")
+        else:
+            state = "EXCEEDED" if budget_exceeded else "PASS"
+            scope.append(f"project bootstrap budget — {state} "
+                         f"({bootstrap}/{budget} B)")
     else:
         scope.append("max project bootstrap — NOT_CHECKED")
 

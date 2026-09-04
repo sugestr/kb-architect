@@ -195,7 +195,7 @@ def main():
                    f"Вычисляемая форма допустима, зелёный исход без выполнения — нет")
     else:
         due.append("вход не найден, и в правилах не объявлен — а значит не проверены "
-                   "ни свежесть, ни потолок. " + kb_paths.how_to_declare("entry"))
+                   "ни свежесть, ни объём. " + kb_paths.how_to_declare("entry"))
 
     # 1а. Канал правок новее входа — вход считается устаревшим.
     #
@@ -578,7 +578,7 @@ def main():
         due.append("файла правил проекта нет (CLAUDE.md / AGENTS.md) — сессии неоткуда "
                    "узнать соглашения, и объявить отступления тоже негде")
 
-    # 7. По какой редакции контракта живёт проект.
+    # 7. По какой версии стандарта живёт проект.
     #
     # Поле kb_standard_version было объявлено способностью — «сравню версию
     # проекта с установленной» — и не имело шага, на котором данные
@@ -592,25 +592,25 @@ def main():
         proj_v, proj_raw = kb_paths.project_version(root)
         skill_v = skill_version_now
         if not proj_raw:
-            due.append(f"редакция контракта не записана — сессия не знает, по какой версии "
+            due.append(f"версия проекта не записана — сессия не знает, по какой версии "
                        f"живёт проект, а стандарт меняется. Впиши в «Соответствие» строку "
                        f"«kb_standard_version: {skill_line_now or '<minimum project version>'}»")
         elif not proj_v:
-            due.append(f"редакция контракта записана словами: «{proj_raw}» — сравнить не с чем. "
+            due.append(f"версия проекта записана словами: «{proj_raw}» — сравнить не с чем. "
                        f"Поставь номер: «kb_standard_version: {skill_line_now or '<номер>'}», "
                        f"описание можно оставить рядом")
         elif skill_line_now and contract_line(proj_v) != contract_line(skill_line_now):
-            due.append(f"проект записан на уровень {proj_v}, установлен build {skill_v} — "
+            due.append(f"версия проекта {proj_v}, установлен скилл {skill_v} — "
                        f"запусти `python3 scripts/kb_apply.py .` (он покажет, что менялось "
                        f"между ними и чего это касается здесь), примени применимое и обнови "
                        f"строку. Сама строка не двигается: она говорит, по какой редакции "
                        f"проект собран, а не какая лежит на диске — поднять её без разбора "
                        f"значит соврать")
         elif skill_v and skill_line_now:
-            ok.append(f"уровень проекта: {proj_v} — совместим с build {skill_v}; "
+            ok.append(f"версия проекта: {proj_v} — совместима со скиллом {skill_v}; "
                       "выпуск не требует миграции")
         elif skill_v:
-            due.append(f"установлен build {skill_v}, но metadata.minimum_project_version отсутствует "
+            due.append(f"установлен скилл {skill_v}, но metadata.minimum_project_version отсутствует "
                        "или некорректна — migration state неизвестен")
     if skill_version_now:
         # Печатается всегда, даже когда всё сходится: скилл меняется под

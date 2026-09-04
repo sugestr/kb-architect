@@ -1840,11 +1840,11 @@ def current_contract_line() -> str:
     skill_file = Path(__file__).resolve().parent.parent / "SKILL.md"
     version = (frontmatter_value(skill_file, "minimum_project_version")
                or frontmatter_value(skill_file, "contract_line")
-               or frontmatter_value(skill_file, "version") or "6.3.0")
+               or frontmatter_value(skill_file, "version") or "6.4.0")
     try:
         return kb_apply.line_text(version)
     except (AttributeError, ValueError):
-        return "6.3.0"
+        return "6.4.0"
 
 
 def current_marker(root: Path) -> tuple[str | None, str | None]:
@@ -2155,8 +2155,8 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
     source_commit = head.stdout.strip() if head.returncode == 0 else None
     application = application_template.get("application", {})
     application.update({
-        "from_line": marker,
-        "to_line": current_contract_line(),
+        "from_version": marker,
+        "to_version": current_contract_line(),
         "status": "candidate",
         "source": {
             "commit": source_commit,

@@ -131,7 +131,11 @@ def t_620_thin_router_points_to_versioned_contract():
           and "role posture" in contract
           and "пустой lexical/search result не доказывает отсутствие" in contract
           and "Cost baseline — **потолок/бюджет**" in contract
-          and "Project rules boot и current pointer — каждый ≤8 КиБ" in contract
+          and "Универсального лимита project-файла нет" in contract
+          and "project_boot_budget_bytes" in contract
+          and "карта каждого блока" in contract
+          and "Форма проекта не выводится из размера" in contract
+          and all(kind in contract for kind in ("`focused`", "`portfolio`", "`hybrid`"))
           and "Readiness имеет один канонический executable command" in contract
           and "CORRECTIONS.md" in contract
           and "обычный fresh-context вопрос" in contract
@@ -166,7 +170,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.3.3"
+          and data.get("baseline_version") == "6.4.0"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -195,21 +199,23 @@ def t_analytical_delta_keeps_canon_and_primary_scope_visible():
           out, "canon path vs new delta; derived scope cannot overrule fuller primary evidence")
 
 
-def t_project_entry_is_two_layer_and_keeps_stop_gates():
-    """Шесть проектов: entry rules достигали 52 КБ; authority нельзя потерять."""
+def t_640_project_entry_allows_one_physical_owner_and_keeps_stop_gates():
+    """Boot optimization cannot cost current, authority or stop conditions."""
     tpl = skill_text("assets/templates/CLAUDE.md")
     out = Vyvod(tpl, 0)
-    check("project boot entry короткий, routed и fail-closed",
-          len(tpl.encode("utf-8")) <= 8_000
-          and "короткий boot canon" in tpl
+    check("project boot/current entry is single-owner, routed and fail-closed",
+          "один физический boot/current canon" in tpl
+          and "текущее состояние: раздел «Сейчас»" in tpl
+          and "Отдельный `NOW.md` нужен только" in tpl
           and "подробные правила" in tpl
           and "Authority и stop-gates" in tpl
           and "Required role" in tpl
           and "один\n   объявленный readiness command/manifest" in tpl
           and "role readiness: `PROJECT_ROLES.json`" in tpl
           and "measure-route-costs.py" not in tpl
-          and "`UNKNOWN`, не PASS" in tpl,
-          out, "static details move out; current, authority, checks and role trigger remain")
+          and "`UNKNOWN`, не PASS" in tpl
+          and "без него размер измеряется информационно" in tpl,
+          out, "one file is first-class; optional routing cannot lose safety semantics")
 
 
 def t_interactive_result_precedes_durable_tail():
@@ -1798,8 +1804,8 @@ def t_633_apply_does_not_replay_historical_cleanup():
     d = base({"NOW.md": NOW_OK,
               "CLAUDE.md": "# правила\n\nkb_standard_version: 5.3\n"})
     out = run("kb_apply.py", d)
-    check("6.3 application does not replay historical cleanup rows",
-          "[6.3.3]" in out
+    check("6.4 application does not replay historical cleanup rows",
+          "[6.4.0]" in out
           and "[5.4]" not in out
           and "credential cleanup" not in out,
           out, "current minimum level replaces a per-patch historical replay")
@@ -1957,7 +1963,7 @@ def t_620_update_does_not_replay_old_optional_capabilities():
               "CLAUDE.md": "# правила\n\nkb_standard_version: 4.18\n"})
     out = run("kb_apply.py", d)
     check("обновление не переоткрывает старые опциональные возможности",
-          "[6.3.3]" in out
+          "[6.4.0]" in out
           and "[4.19]" not in out
           and "НОВЫХ ВОЗМОЖНОСТЕЙ, ТРЕБУЮЩИХ РЕШЕНИЯ, НЕТ" in out,
           out, "the project considers choices declared by the current minimum level")
@@ -2349,20 +2355,85 @@ def check(name, cond, out, hint=""):
 NOW_OK = "Обновлено: 2026-08-06\n\n## ГДЕ МЫ\nтекст\n"
 
 
-def t_632_checker_measures_runtime_rules_and_current_separately():
-    """04.09: a 57 KB project rules file passed while only NOW.md was measured."""
+def t_640_checker_measures_large_boot_without_inventing_a_failure():
+    """A large project file is cost evidence, not proof of structural damage."""
     d = base({"NOW.md": NOW_OK,
               "CLAUDE.md": "# правила\n\nвход: NOW.md\n" + "х" * 9000})
     os.symlink("CLAUDE.md", os.path.join(d, "AGENTS.md"))
     out = run("kb_check.py", d)
-    check("checker catches oversized runtime rules without double-counting symlink aliases",
-          out.code == 1
-          and "RUNTIME RULES BOOT ПЕРЕРОС ПОТОЛОК — 1" in out
-          and "runtime rules boot — EXCEEDED (CLAUDE.md=" in out
+    check("large runtime rules are measured without a universal red verdict",
+          out.code == 0
+          and "ПЕРЕРОС ПОТОЛОК" not in out
+          and "runtime rules boot — MEASURED (CLAUDE.md=" in out
           and "AGENTS.md=" not in out
-          and "current entry — PASS (NOW.md=" in out
-          and "max project bootstrap —" in out,
-          out, "rules >8KiB is red; current remains separately PASS; symlink counts once")
+          and "current entry — MEASURED (NOW.md=" in out
+          and "informational; project budget not declared" in out,
+          out, "size remains visible; symlink counts once; no project budget means no failure")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_640_explicit_project_boot_budget_is_enforced():
+    """A project may opt into one deduplicated static boot budget."""
+    d = base({"NOW.md": NOW_OK,
+              "CLAUDE.md": ("# правила\n\nвход: NOW.md\n"
+                            "project_boot_budget_bytes: 8192\n" + "х" * 9000)})
+    os.symlink("CLAUDE.md", os.path.join(d, "AGENTS.md"))
+    out = run("kb_check.py", d)
+    check("explicit project boot budget produces the only size failure",
+          out.code == 1
+          and "PROJECT BOOT ПРЕВЫСИЛ ПРИНЯТЫЙ БЮДЖЕТ" in out
+          and "project bootstrap budget — EXCEEDED" in out
+          and "RUNTIME RULES BOOT ПЕРЕРОС" not in out,
+          out, "one project-owned total budget is enforced after deduplication")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_640_inline_current_is_a_single_deduplicated_entry():
+    """One physical CLAUDE/AGENTS file may own both rules and current."""
+    content = ("# Правила\n\nтекущее состояние: раздел Сейчас в этом файле\n"
+               "project_boot_budget_bytes: 20000\n\n## Сейчас\n\n"
+               "Обновлено: 2026-09-04\n\n- next\n" + "я" * 9000)
+    d = base({"CLAUDE.md": content})
+    os.symlink("CLAUDE.md", os.path.join(d, "AGENTS.md"))
+    out = run("kb_check.py", d)
+    total = os.path.getsize(os.path.join(d, "CLAUDE.md"))
+    check("inline current is accepted and not added to its container twice",
+          out.code == 0
+          and "current entry — MEASURED (раздел внутри CLAUDE.md=" in out
+          and f"project bootstrap budget — PASS ({total}/20000 B)" in out
+          and "ВХОД НАЙДЕН В НЕСКОЛЬКИХ" not in out,
+          out, "one physical file is first-class and its current section is deduplicated")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_640_malformed_project_boot_budget_fails_closed():
+    d = base({"CLAUDE.md": ("# Правила\n\nтекущее состояние: раздел Сейчас\n"
+                            "project_boot_budget_bytes: восемь килобайт\n\n"
+                            "## Сейчас\n\nОбновлено: 2026-09-04\n")})
+    out = run("kb_check.py", d)
+    check("malformed explicit project budget is not silently ignored",
+          out.code == 1 and "БЮДЖЕТ BOOT ПРОЕКТА НЕ ПРОВЕРЕН" in out,
+          out, "an opted-in budget must be a positive integer byte count")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def t_640_init_creates_one_physical_boot_current_owner():
+    d = tempfile.mkdtemp(prefix="kbtest-init-640-")
+    p = subprocess.run([sys.executable, os.path.join(HERE, "kb_init.py"), d],
+                       capture_output=True, text=True, timeout=30)
+    claude = os.path.join(d, "CLAUDE.md")
+    agents = os.path.join(d, "AGENTS.md")
+    now = os.path.join(d, "NOW.md")
+    with open(claude, encoding="utf-8") as stream:
+        generated = stream.read()
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("new project has one physical boot/current owner for both agents",
+          p.returncode == 0 and os.path.isfile(claude)
+          and os.path.islink(agents) and os.path.samefile(claude, agents)
+          and not os.path.exists(now)
+          and "текущее состояние: раздел «Сейчас»" in generated
+          and "Обновлено:" in generated,
+          out, "CLAUDE/AGENTS share bytes; inline current is default; NOW remains optional")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -2548,7 +2619,7 @@ def t_apply_ignores_marker_syntax_examples():
     out = run("kb_apply.py", d)
     check("пример маркера не становится действием проекта",
           "[4.17] …" not in out and "[4.21] …" not in out
-          and "[5.0]" not in out and "[6.3.3]" in out
+          and "[5.0]" not in out and "[6.4.0]" in out
           and "ТРЕБУЮТ ДЕЙСТВИЯ" in out, out,
           "parser skips placeholders and shows only the current minimum level")
     shutil.rmtree(d, ignore_errors=True)
@@ -2754,11 +2825,15 @@ def t_mirror_vocabulary_not_flagged():
 
 
 def t_entry_in_subfolder():
-    """Отчёт «Медицина»: вход в подпапке — потолок молча не проверялся."""
+    """Отчёт «Медицина»: вход в подпапке должен находиться и измеряться."""
     d = base({"claude/STATUS.md": "Обновлено: 2026-08-06\n\n## ГДЕ МЫ\n" + "х" * 9000})
     out = run("kb_check.py", d)
     check("вход в подпапке найден и измерен",
-          "ПЕРЕРОС ПОТОЛОК" in out, out, "потолок проверен на claude/STATUS.md")
+          out.code == 0
+          and "current entry — MEASURED (claude/STATUS.md=" in out
+          and "max project bootstrap —" in out
+          and "ПЕРЕРОС ПОТОЛОК" not in out,
+          out, "подпапка измерена; без project budget большой файл не объявлен поломкой")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -2768,7 +2843,7 @@ def t_no_entry_is_a_finding():
     out = run("kb_check.py", d)
     check("вход не найден → находка, а не «чисто»",
           "НЕ ПРОВЕРЕН" in out and "чисто" not in out, out,
-          "«ПОТОЛОК ВХОДА НЕ ПРОВЕРЕН»")
+          "«CURRENT НЕ ПРОВЕРЕН»")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -3123,7 +3198,7 @@ def t_512_update_project_option_really_runs_apply():
           and "ПРИМЕНЕНИЕ К ПРОЕКТУ" in out
           and "NEEDS_APPLICATION" in out
           and "SESSION_ACTION=APPLY_PROJECT_DELTA_NOW" in out
-          and "[6.3.3]" in out
+          and "[6.4.0]" in out
           and "[5.4]" not in out,
           out, "the single entry command executes kb_apply and propagates exit 1")
     shutil.rmtree(source, ignore_errors=True)
@@ -3319,13 +3394,13 @@ def t_516_broad_evidence_query_refuses_context_overrun():
     shutil.rmtree(project, ignore_errors=True)
 
 
-def t_633_marker_without_compact_application_is_unproven():
+def t_640_marker_without_compact_application_is_unproven():
     """A current-line marker still needs one compact owner receipt."""
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.3\n"})
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.4.0\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
     out = run("kb_apply.py", d)
-    check("marker 6.3 без короткой квитанции не скрывает незавершённую миграцию",
+    check("marker 6.4.0 без короткой квитанции не скрывает незавершённую миграцию",
           out.code == 1 and "APPLICATION_UNPROVEN" in out
           and "missing KB_RELEASE_APPLICATION.json" in out,
           out, "the marker is an outcome, but no per-release ledger is required")
@@ -3428,11 +3503,11 @@ def t_620_release_application_binds_source_line_and_owner():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.3\n")
+        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
     receipt = {
         "schema": 2,
         "application": {
-            "from_line": "6.1", "to_line": "6.3", "status": "finalized",
+            "from_line": "6.1", "to_line": "6.4.0", "status": "finalized",
             "source": {"commit": source, "version_source": "CLAUDE.md"},
             "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
             "finalized_at": "2026-08-29", "open": [],
@@ -3446,7 +3521,7 @@ def t_620_release_application_binds_source_line_and_owner():
     out = run("kb_apply.py", d)
     check("release application binds source line and owner without patch ledger",
           out.code == 0 and "APPLICATION_RECEIPT_OK" in out
-          and "PROJECT_LINE_OK" in out,
+          and "миграции нет" in out,
           out, "source commit, old line and post-results owner receipt are bound once")
     shutil.rmtree(d, ignore_errors=True)
 
@@ -3472,13 +3547,13 @@ def t_621_compact_application_requires_the_actual_candidate_parent():
         ["git", "-C", d, "rev-parse", "HEAD"], capture_output=True,
         text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.3\n")
+        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
 
     def write_receipt(source):
         with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w",
                   encoding="utf-8") as f:
             json.dump({"schema": 2, "application": {
-                "from_line": "6.1", "to_line": "6.3", "status": "finalized",
+                "from_line": "6.1", "to_line": "6.4.0", "status": "finalized",
                 "source": {"commit": source, "version_source": "CLAUDE.md"},
                 "owner": {"accepted_by": "fixture owner",
                           "accepted_at": "2026-08-29"},
@@ -3516,11 +3591,11 @@ def t_612_release_application_follows_safe_boot_symlink():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.3\n")
+        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
     receipt = {
         "schema": 2,
         "application": {
-            "from_line": "6.1", "to_line": "6.3", "status": "finalized",
+            "from_line": "6.1", "to_line": "6.4.0", "status": "finalized",
             "source": {"commit": source, "version_source": "AGENTS.md"},
             "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
             "finalized_at": "2026-08-29", "open": [],
@@ -3597,9 +3672,9 @@ def t_620_release_application_template_is_one_compact_receipt():
     template = json.loads(skill_text("assets/templates/release-application.json"))
     application = template["application"]
     out = Vyvod(json.dumps(template, ensure_ascii=False), 0)
-    check("release-application template contains one compact line receipt",
-          template.get("schema") == 2
-          and set(application) == {"from_line", "to_line", "status", "source",
+    check("release-application template contains one compact version receipt",
+          template.get("schema") == 3
+          and set(application) == {"from_version", "to_version", "status", "source",
                                    "owner", "finalized_at", "open"}
           and "applications" not in template
           and "release_ledger" not in application,
@@ -3619,9 +3694,9 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.3\n")
+        f.write("\nkb_standard_version: 6.4.0\n")
     receipt = {"schema": 2, "application": {
-        "from_line": None, "to_line": "6.3", "status": "finalized",
+        "from_line": None, "to_line": "6.4.0", "status": "finalized",
         "source": {"commit": source, "version_source": "CLAUDE.md"},
         "owner": {"accepted_by": "owner", "accepted_at": "2026-08-29"},
         "finalized_at": "2026-08-29", "open": [],
@@ -3651,9 +3726,9 @@ def t_620_direct_migration_does_not_replay_intermediate_releases():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.3\n")
+        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
     receipt = {"schema": 2, "application": {
-        "from_line": "5.16", "to_line": "6.3", "status": "finalized",
+        "from_line": "5.16", "to_line": "6.4.0", "status": "finalized",
         "source": {"commit": source, "version_source": "CLAUDE.md"},
         "owner": {"accepted_by": "owner", "accepted_at": "2026-08-29"},
         "finalized_at": "2026-08-29", "open": [],
@@ -5085,12 +5160,12 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_633_has_one_current_build_and_a_630_project_floor():
-    """The current skill is 6.3.3; projects below 6.3.0 must update once."""
+def t_640_has_one_current_version_and_a_640_project_floor():
+    """The current skill is 6.4.0; projects below 6.4.0 update once."""
     import json
     import kb_paths
     import kb_skills
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.3.0\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
     subprocess.run(["git", "-C", d, "-c", "user.name=Fixture", "-c",
@@ -5099,12 +5174,13 @@ def t_633_has_one_current_build_and_a_630_project_floor():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.3.0\n")
+        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
     with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
         json.dump({
-            "schema": 2,
+            "schema": 3,
             "application": {
-                "from_line": "6.1", "to_line": "6.3.0", "status": "finalized",
+                "from_version": "6.3.0", "to_version": "6.4.0",
+                "status": "finalized",
                 "source": {"commit": source, "version_source": "CLAUDE.md"},
                 "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
                 "finalized_at": "2026-08-29", "open": [],
@@ -5117,19 +5193,19 @@ def t_633_has_one_current_build_and_a_630_project_floor():
                    check=True)
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
-    old = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.2\n"})
+    old = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.3.0\n"})
     old_run = subprocess.run(
         [sys.executable, os.path.join(HERE, "kb_apply.py"), old],
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("6.3.3 is current and projects below 6.3.0 must update",
-          kb_paths.skill_version() == "6.3.3"
-          and kb_paths.skill_contract_line() == "6.3.0"
-          and kb_skills.current_contract_line() == "6.3.0"
+    check("6.4.0 is current and projects below 6.4.0 must update",
+          kb_paths.skill_version() == "6.4.0"
+          and kb_paths.skill_contract_line() == "6.4.0"
+          and kb_skills.current_contract_line() == "6.4.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
-          and "PROJECT_LINE_OK" in p.stdout
+          and "миграции нет" in p.stdout
           and old_run.returncode == 1 and "NEEDS_APPLICATION" in old_run.stdout
-          and "цель 6.3.0" in old_run.stdout,
+          and "цель 6.4.0" in old_run.stdout,
           out, "one current build plus one explicit minimum project level")
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(old, ignore_errors=True)

@@ -408,7 +408,7 @@ plugins/kb-architect/skills/kb-architect/
   SKILL.md               лёгкий маршрутизатор к одной нужной процедуре
   references/contract.md версионируемый обязательный контракт на одной странице
   references/            опциональный справочник
-  assets/templates/      вход, текущее состояние, журнал, вопросы и хендовер
+  assets/templates/      единый вход/current, опциональный NOW, журнал, вопросы и хендовер
   agents/openai.yaml     интерфейс skill в Codex
   scripts/kb_init.py     развернуть минимальную базу
   scripts/kb_due.py      найти просроченное
@@ -426,9 +426,10 @@ plugins/kb-architect/skills/kb-architect/
 
 Номер в `metadata.version` файла `SKILL.md` меняется при любой правке содержимого
 пакета. Patch означает малую совместимую починку, minor — заметное совместимое
-изменение, major — смену operating model. Project migration управляется отдельно:
-только изменение `metadata.contract_line` требует новой приёмки проекта. История
-лежит в `references/releases.md`.
+изменение, major — смену operating model. `metadata.minimum_project_version` не
+является второй версией: оно лишь говорит, должен ли старый проект принять текущую
+дельту. Для `6.4.0` минимальный совместимый проект тоже `6.4.0`. История лежит в
+`references/releases.md`.
 
 MIT. Бери, адаптируй и проверяй на своей работе. Если сломалось — расскажи как.
 
