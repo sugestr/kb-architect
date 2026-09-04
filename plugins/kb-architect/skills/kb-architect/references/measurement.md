@@ -60,6 +60,15 @@ rationale, после выбора: сократить, разделить ли�
 результата. Такой случай создаёт запрос на оптимизацию тем же маршрутом, что дефект;
 он не разрешает молча урезать evidence или пропустить обязательную project role.
 
+### Квитанция одного холодного старта
+
+Для разбора конкретной сессии сохрани отдельно: timestamp запроса, первого полезного
+результата и durable completion; число top-level tool calls до/после первого результата;
+сумму измеренного tool wall time; boot-output bytes; provider input, cached input,
+output и reasoning, если они доступны. Долларовую цену без текущего тарифа не выводи.
+Если tools заняли малую часть elapsed time, называй причиной последовательную
+оркестрацию/context replay, а не «медленный PDF».
+
 Для проектной роли не смешивай три цены: bytes обязательного `SKILL.md`; static
 end-to-end route (`SKILL.md` + перечисленные knowledge files); фактические
 input/cached-input/output/orchestration tokens конкретного прогона. Первые две дают

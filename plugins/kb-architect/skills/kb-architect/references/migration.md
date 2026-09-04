@@ -6,7 +6,7 @@
 ## Версия состоит из двух смыслов
 
 - `kb_standard_version: 6.2` — принятая проектом **contract line**;
-- `metadata.version: 6.3.0` — точный выпуск инструмента;
+- `metadata.version: 6.3.1` — точный выпуск инструмента;
 - `metadata.contract_line: 6.2` — contract line, которую несёт выпуск.
 
 Patch или minor-выпуск может обновить tool/docs/поведение и не переоткрывать роли,

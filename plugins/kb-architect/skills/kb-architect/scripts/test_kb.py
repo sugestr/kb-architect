@@ -115,7 +115,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.3.0"
+          and data.get("baseline_version") == "6.3.1"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500
@@ -153,7 +153,7 @@ def t_project_entry_is_two_layer_and_keeps_stop_gates():
           and "короткий boot canon" in tpl
           and "подробные правила" in tpl
           and "Authority и stop-gates" in tpl
-          and "обязательная project role" in tpl
+          and "Required role" in tpl
           and "один\n   объявленный readiness command/manifest" in tpl
           and "role readiness: `PROJECT_ROLES.json`" in tpl
           and "measure-route-costs.py" not in tpl
@@ -163,24 +163,58 @@ def t_project_entry_is_two_layer_and_keeps_stop_gates():
 
 def t_interactive_result_precedes_durable_tail():
     """13.08: copyable draft waited 19 minutes behind intake/check/commit/push."""
-    ref = skill_text("references/operations.md")
+    ref = skill_text("references/incoming.md")
     router = skill_text("SKILL.md")
-    draft = "покажи владельцу явно помеченный черновик"
-    durable = "один общий точечный commit и"
+    draft = "Дай ранний `SOURCE`-результат"
+    durable = "После результата: долговременный хвост"
     out = Vyvod(ref + "\n" + router, 0)
     check("interactive draft is not blocked by the durable tail",
           draft in ref
           and durable in ref
           and ref.index(draft) < ref.index(durable)
-          and "time to first useful result" in ref
-          and "time to durable completion" in ref
-          and "Не коммить" in ref
+          and "первого полезного результата" in ref
+          and "один exact-path commit/push" in ref
           and "60 секунд" in ref
           and "три последовательных tool round-trip" in ref
-          and "коммуникационный порог" in ref
-          and "integration audit" in ref
+          and "порог коммуникации" in ref
+          and "MCP-инвентарь" in ref
           and "durable tail не" in router,
           out, "show a checked draft first; save one coherent block afterwards")
+
+
+def t_631_local_source_uses_bounded_cold_path():
+    """04.09: a local 3-page PDF took 76s/4 calls to first fact and 57 overall."""
+    import json
+    router = skill_text("SKILL.md")
+    ref = skill_text("references/incoming.md")
+    operations = skill_text("references/operations.md")
+    template = skill_text("assets/templates/CLAUDE.md")
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_cost.py"), "--json", "--check"],
+        capture_output=True, text=True, timeout=120)
+    try:
+        data = json.loads(p.stdout)
+    except (ValueError, TypeError):
+        data = {}
+    routes = {item.get("task"): item for item in data.get("routes", [])}
+    local = routes.get("Разобрать приложенный локальный файл («пришло»)", {})
+    reconcile = routes.get("Сверить реальность, найти факт или gap", {})
+    out = Vyvod(router + "\n" + ref + "\n" + p.stdout + p.stderr, p.returncode)
+    check("local source reaches a visible fact before service and durable work",
+          p.returncode == 0
+          and local.get("resources") == ["references/incoming.md"]
+          and local.get("total_bytes", 99_999) <= 14_000
+          and reconcile.get("total_bytes", 0) > 3 * local.get("total_bytes", 99_999)
+          and "Разобрать входящее, сверить реальность, найти факт" not in router
+          and "что файл прямо говорит" in ref
+          and "source-derived, не project-derived" in ref
+          and "Для него не нужен\n`kb_lookup.py --claim`" in ref
+          and "MCP-инвентарь/диагностика connector" in ref
+          and "один относящийся к ним пакет проверок" in ref
+          and "Project authority, required role и stop-gates" in ref
+          and "после первого безопасного результата" in template
+          and "единственный владелец критического пути" in operations,
+          out, "local file route is <=14KB; service work is deferred; safety remains")
 
 
 def t_material_delta_cannot_disappear_after_answer():
@@ -218,7 +252,7 @@ def t_warm_turn_does_not_restart_project_boot():
           and "до current state" in service
           and "на первой безопасной границе" in service
           and "один раз на новую task/session" in template,
-          out, "cold task updates before work; warm turns reuse receipt; long task waits for a safe boundary")
+          out, "cold task defers service work to a safe boundary; warm turns reuse receipt")
 
 
 def t_moved_project_retires_stale_runtime_bindings():
@@ -4931,8 +4965,8 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
     shutil.rmtree(d, ignore_errors=True)
 
 
-def t_630_release_series_is_independent_from_contract_line():
-    """Release 6.3.0 keeps already accepted projects on contract line 6.2."""
+def t_631_release_series_is_independent_from_contract_line():
+    """Release 6.3.1 keeps already accepted projects on contract line 6.2."""
     import json
     import kb_paths
     import kb_skills
@@ -4964,8 +4998,8 @@ def t_630_release_series_is_independent_from_contract_line():
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("release 6.3.0 keeps accepted contract line 6.2 without remigration",
-          kb_paths.skill_version() == "6.3.0"
+    check("release 6.3.1 keeps accepted contract line 6.2 without remigration",
+          kb_paths.skill_version() == "6.3.1"
           and kb_paths.skill_contract_line() == "6.2"
           and kb_skills.current_contract_line() == "6.2"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

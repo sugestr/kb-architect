@@ -16,15 +16,15 @@ project root: . (repo root; локальный абсолютный путь н�
 «Обнови скилл базы знаний» — action-first до owner gate, не ещё один отчёт.
 Acceptance, secrets/private runtime и push требуют отдельной authority.
 
-1. Если обновление не отключено политикой `по сигналу`, до предметной работы
-   один раз запусти `kb_update.py --public --fast --сделать --project <корень-проекта>`. После
-   `INSTALLED` прочитай новый entry и текущий route; `UNKNOWN` не называй PASS.
-2. Прочитай указанное текущее состояние; не загружай всю базу.
+1. Прочитай current; локальный приложенный источник — в том же первом пакете.
+2. Если update не отключён, запусти `kb_update.py --public --fast --сделать
+   --project <корень-проекта>` после первого безопасного результата. До durable/external шага
+   после `INSTALLED` перечитай entry/route. Явный project pre-work gate имеет приоритет.
 3. Если в «Соответствии» **явно принята диагностика** при входе, запусти один
    объявленный readiness command/manifest. Не дублируй здесь его внутренний список.
    Ошибка запуска или ненайденный scope — `UNKNOWN`, не PASS.
-4. Если задача предметная и обязательная project role объявлена ниже, прочитай её
-   до вывода. Отсутствие required skill — stop-condition.
+4. Required role прочитай до интерпретации/совета. Точные поля источника — `SOURCE`.
+   Отсутствие required skill — stop-condition.
 
 ## Authority и stop-gates
 
