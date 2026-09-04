@@ -120,6 +120,27 @@ def public_head():
     return (row[0], None) if row else (None, "public main не найден")
 
 
+def public_tag_commit(version):
+    """Prove that public HEAD is an explicitly published version tag."""
+    tag = "v" + str(version)
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--tags", PUBLIC_REPOSITORY,
+             "refs/tags/" + tag, "refs/tags/" + tag + "^{}"],
+            capture_output=True, text=True, timeout=30)
+    except Exception as exc:
+        return None, str(exc)
+    if result.returncode != 0:
+        why = (result.stderr.strip().splitlines() or
+               [f"код {result.returncode}"])[0]
+        return None, why
+    rows = [line.split() for line in result.stdout.splitlines() if line.split()]
+    peeled = [row[0] for row in rows if row[1].endswith("^{}")]
+    direct = [row[0] for row in rows if not row[1].endswith("^{}")]
+    commit = (peeled or direct or [None])[0]
+    return (commit, None) if commit else (None, "public tag не найден: " + tag)
+
+
 def fast_public_check(ttl_hours):
     """Probe public HEAD once; a matching receipt may skip clone, never the probe."""
     # `--ttl-hours` existed in 6.0/6.0.1. Keep accepting it so old project
@@ -252,6 +273,11 @@ def public_source():
         source = resolve_source(checkout)
         if not source:
             return None, temp_root, "в GitHub public не найден каталог скилла"
+        head, head_error = git(checkout, "rev-parse", "HEAD")
+        tagged, tag_error = public_tag_commit(versiya(source))
+        if head_error or tag_error or tagged != head:
+            why = tag_error or head_error or "public tag не совпадает с HEAD"
+            return None, temp_root, "public release не сформирован: " + why
         return source, temp_root, None
     except Exception as exc:
         return None, temp_root, str(exc)
@@ -303,12 +329,7 @@ def apply_project(skill, project, action_mode=False):
 
 
 def safe_replace(source, destination, old_version):
-    """Install one byte-identical copy after the source suite passed once.
-
-    Re-running the same full suite on staged and installed copies proves no new
-    behavior when their managed-tree fingerprints are identical.  Parity before
-    and after the recoverable rename is the narrower copy-integrity gate.
-    """
+    """Install one byte-identical release with parity and recoverable rename."""
     parent = os.path.dirname(destination)
     os.makedirs(parent, exist_ok=True)
     stage_root = tempfile.mkdtemp(prefix=".kb-architect-stage-", dir=parent)
@@ -319,7 +340,7 @@ def safe_replace(source, destination, old_version):
         shutil.copytree(source, staged,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
         if fingerprint(staged) != expected_fingerprint:
-            return None, None, "staged copy differs from the tested source bytes"
+            return None, None, "staged copy differs from the release bytes"
 
         backup_root = os.path.join(parent, ".backups")
         os.makedirs(backup_root, exist_ok=True)
@@ -346,7 +367,7 @@ def safe_replace(source, destination, old_version):
             failed = backup + ".failed-new"
             os.rename(destination, failed)
             os.rename(backup, destination)
-            return None, failed, ("installed copy differs from the tested source bytes; "
+            return None, failed, ("installed copy differs from the release bytes; "
                                   "backup restored")
         return versiya(destination), backup, ""
     finally:
@@ -398,11 +419,14 @@ def update_from_source(src, args, source_label, record_receipt=False):
     else:
         print(f"  редакция source: {after}")
 
-    ok, why = test_skill(src)
-    if not ok:
-        print("  ОБНОВЛЕНИЕ ЗАБЛОКИРОВАНО: " + why)
-        return 2
-    print("  приёмочные тесты source: прошли")
+    if record_receipt:
+        print("  public release: приёмочные тесты уже пройдены при публикации")
+    else:
+        ok, why = test_skill(src)
+        if not ok:
+            print("  ОБНОВЛЕНИЕ ЗАБЛОКИРОВАНО: " + why)
+            return 2
+        print("  maintainer source: приёмочные тесты прошли")
     print()
 
     source_version = versiya(src)

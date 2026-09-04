@@ -353,15 +353,14 @@ def skill_version():
 
 
 def skill_contract_line():
-    """Project contract line declared independently from the release version.
-
-    Builds released before this field existed fall back to their major.minor
-    line.  A present but malformed field fails closed instead of silently
-    treating a new release series as a new project migration.
-    """
+    """Minimum compatible project version declared by the current release."""
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "SKILL.md")
     text = read(p)
-    field = re.search(r'^\s*contract_line:\s*(.*?)\s*$', text, re.MULTILINE)
+    field = re.search(
+        r'^\s*minimum_project_version:\s*(.*?)\s*$', text, re.MULTILINE)
+    if not field:
+        # Backward-compatible read only. New releases never write this field.
+        field = re.search(r'^\s*contract_line:\s*(.*?)\s*$', text, re.MULTILINE)
     if field:
         value = field.group(1).strip().strip("\"'")
         return value if re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", value) else None
@@ -369,7 +368,7 @@ def skill_contract_line():
     if not version:
         return None
     parts = version.split(".")
-    return ".".join(parts[:2]) if len(parts) >= 2 else None
+    return ".".join(parts[:2] + ["0"]) if len(parts) >= 2 else None
 
 
 def published_version():

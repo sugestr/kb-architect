@@ -10,11 +10,11 @@ kb_apply.py — что новая редакция значит для ЭТОЙ 
 знаний» вызывающий агент после кода 1 продолжает обратимые локальные изменения по
 `references/migration.md`; в явном audit/read-only режиме он только сообщает итог.
 Post-results acceptance, secrets/private runtime и push остаются отдельными gates.
-Migration unit is the contract line (for example 6.2); 6.2.1 is a tool build and
-does not reopen a project accepted on 6.2.
+Migration unit is the minimum compatible project level (currently 6.3.0);
+build 6.3.3 does not reopen a project already accepted there.
 
 Код 1 означает `NEEDS_APPLICATION` либо `APPLICATION_UNPROVEN`: проект отстаёт
-по contract line или его 6.2+ marker не подтверждён короткой финальной квитанцией.
+по минимальному уровню или его 6.0+ marker не подтверждён короткой финальной квитанцией.
 Patch history не превращается в project ledger.
 
 Зачем отдельная команда. `kb_due.py` умеет сказать «проект записан на 4.0,
@@ -55,6 +55,7 @@ CHOICE = re.compile(r"⟦В:\s*(.+?)⟧", re.DOTALL)
 # decoupled releases record the mapping explicitly; older rows keep the
 # historical major.minor fallback.
 LINE = re.compile(r"⟦LINE:\s*(\d+(?:\.\d+)+)\s*⟧")
+MIN_PROJECT = re.compile(r"⟦MIN_PROJECT:\s*(\d+(?:\.\d+)+)\s*⟧")
 APPLICATION_RECEIPT = "KB_RELEASE_APPLICATION.json"
 RECEIPT_REQUIRED_FROM = (6, 0)
 APPLICATION_DECISIONS = {
@@ -72,10 +73,14 @@ def ver_key(v):
 
 
 def contract_line(v):
-    """Return the migration line; patch builds do not create project migrations."""
+    """Return the minimum project level; patch builds do not create migrations."""
     parts = ver_key(v)
     if len(parts) < 2:
         raise ValueError(v)
+    # From 6.3 onward the public vocabulary uses a full minimum project
+    # version. Missing patch means .0; release patches never reopen migration.
+    if parts[:2] >= (6, 3):
+        return parts[:2] + (0,)
     return parts[:2]
 
 
@@ -98,11 +103,11 @@ def releases_between(low, high):
 
 
 def release_contract_line(version):
-    """Return the project contract line carried by one release."""
+    """Return the minimum project level carried by one release."""
     for current, text in releases_between("0", version):
         if current != version:
             continue
-        match = LINE.search(text)
+        match = MIN_PROJECT.search(text) or LINE.search(text)
         return contract_line(match.group(1)) if match else contract_line(version)
     return contract_line(version)
 
@@ -268,11 +273,10 @@ def application_receipt_errors(root, marker):
         if application.get("status") != "finalized" or not application.get("finalized_at"):
             errors.append("compact application is not finalized")
         try:
-            if contract_line(to_line) != ver_key(to_line) \
-                    or line_text(marker) != to_line:
+            if line_text(marker) != line_text(to_line):
                 errors.append("compact application to_line does not match project line")
-            if from_line is not None and contract_line(from_line) != ver_key(from_line):
-                errors.append("compact application from_line is not a contract line")
+            if from_line is not None:
+                contract_line(from_line)
         except (AttributeError, ValueError):
             errors.append("compact application has invalid from_line/to_line")
         source = application.get("source")
@@ -294,8 +298,9 @@ def application_receipt_errors(root, marker):
                     errors.append(source_error)
                 else:
                     old_marker = marker_from_bytes(shown)
-                    if from_line is not None and (not old_marker
-                                                  or line_text(old_marker) != from_line):
+                    if from_line is not None and (not old_marker or
+                                                  line_text(old_marker) !=
+                                                  line_text(from_line)):
                         errors.append("compact application source marker does not match from_line")
                     transition_parent, transition_error = actual_transition_parent(
                         root, commit, locator, from_line, to_line, marker)
@@ -493,8 +498,8 @@ def main():
         print("не вижу установленной редакции — читать нечего")
         return 2
     if not declared_line:
-        print("metadata.contract_line отсутствует или записана некорректно — "
-              "нельзя выводить project migration из номера выпуска")
+        print("минимальный уровень проекта отсутствует или записан некорректно — "
+              "нельзя определить обязательное обновление")
         return 2
     target = args.target_version or inst
     try:
@@ -507,7 +512,7 @@ def main():
         print(f"некорректная целевая редакция: {target}")
         return 2
     if released_line != installed_line:
-        print(f"metadata.contract_line {declared_line} расходится с release history "
+        print(f"минимальный уровень {declared_line} расходится с release history "
               f"для build {inst} — migration state неизвестен")
         return 2
     if target_key > installed_key:
@@ -554,11 +559,15 @@ def main():
                   "миграции нет")
         return 0
 
-    # A migration applies the current contract directly. Patch history is tool
-    # provenance, not a to-do list that every project must replay.
+    # A migration applies the current minimum project level directly. Patch
+    # history is tool provenance, not a to-do list every project must replay.
     target_line_name = ".".join(str(part) for part in target_line)
-    rows = [(version, text) for version, text in releases_between("0", target)
-            if version == target_line_name]
+    rows = []
+    for version, text in releases_between("0", target):
+        marker = MIN_PROJECT.search(text) or LINE.search(text)
+        if ((marker and contract_line(marker.group(1)) == target_line) or
+                (not marker and version == target_line_name)):
+            rows.append((version, text))
     traits = base_traits(root)
 
     dela = []
@@ -601,7 +610,7 @@ def main():
     print("─" * 70)
     print("Короткий путь:")
     print("  1. сохранить exact pre-change Git commit;")
-    print("  2. применить текущий contract напрямую, не проигрывая patch history;")
+    print("  2. применить текущий минимальный уровень, не проигрывая patch history;")
     print("  3. для ролей: один узкий project check и один обычный fresh-context вопрос;")
     print("  4. показать владельцу изменения и честные OPEN;")
     print(f"  5. после acceptance записать одну schema-2 квитанцию в {APPLICATION_RECEIPT},")

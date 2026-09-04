@@ -1,8 +1,8 @@
 {
   "schema": 2,
   "application": {
-    "from_line": "previous-contract-line-or-null",
-    "to_line": "current-contract-line",
+    "from_line": "previous-project-version-or-null",
+    "to_line": "current-minimum-project-version",
     "status": "candidate",
     "source": {
       "commit": "exact-pre-change-commit",

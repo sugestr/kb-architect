@@ -39,7 +39,7 @@ Acceptance, secrets/private runtime и push требуют отдельной au
 
 ## Соответствие kb-architect
 
-kb_standard_version: <contract line, например 6.2; не patch build>
+kb_standard_version: <минимальная версия проекта, сейчас 6.3.0; не каждый patch release>
 release application: `KB_RELEASE_APPLICATION.json`
 сервисный контур kb-architect: <принят | не принят>
 обновление скилла: <по сигналу | автоматически>
@@ -56,7 +56,7 @@ release application: `KB_RELEASE_APPLICATION.json`
 
 <Если сервисный контур принят, new task до project-derived работы выполняет delivery
 + `kb_apply.py`. `NEEDS_APPLICATION`/`APPLICATION_UNPROVEN` остаётся до короткой
-post-results приёмки; marker line меняется последним. Patch build её не переоткрывает.
+post-results приёмки; marker меняется последним. Patch build его не переоткрывает.
 Новая возможность получает
 явный исход. Никаких симлинков рабочего проекта на private development checkout.>
 

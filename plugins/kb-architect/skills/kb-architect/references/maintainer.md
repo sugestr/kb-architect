@@ -87,9 +87,10 @@ Cost baseline — бюджет. Не принимай точное равенс�
 - Выпускай связный batch, а не версию на каждую мысль. Новый подтверждённый риск может
   переоткрыть diff; повторное ревью без новой evidence — нет.
 
-Контракт получает line (`metadata.contract_line: 6.2`), выпуск — отдельную
-`metadata.version`. Patch/minor/major описывают масштаб выпуска; project migration
-открывает только изменение contract line. Marker хранит line, не release version.
+`metadata.version` — единственная текущая версия скилла. Отдельный минимальный
+уровень проекта отвечает только на вопрос, обязан ли старый проект обновиться:
+для `6.3.3` всё ниже `6.3.0` обновляется один раз. Patch выше этого порога
+ставится везде, но не открывает повторную project migration.
 
 ## Release и authority
 
@@ -99,5 +100,13 @@ snapshot. Local commit, private delivery, public push/release и изменен�
 cost gate, portable validator, двух одинаковых builds, allowlist/leakage проверки,
 exact public diff, tag/asset push, private receipt и повторной drift-проверки.
 
-Новая line требует pre-change commit, candidate, честные исходы и решение владельца.
-Одна короткая квитанция меняет marker; patch её не трогает.
+После публикации эти проверки не исполняются заново на каждой машине. Установка
+принимает exact public commit/archive/fingerprint, создаёт одну управляемую копию,
+атомарно переключает стандартные Claude/Codex discovery links и сохраняет предыдущую
+копию для отката. Она не запускает и не перезапускает модель, Мегамозг или клиент:
+следующая полноценная сессия прочитает новый скилл обычным startup-механизмом.
+Install receipt доказывает file parity и единое physical tree; runtime probe нужен
+только для диагностики фактического сбоя новой сессии.
+
+Новый минимальный уровень проекта требует pre-change commit, candidate, честные
+исходы и решение владельца. Одна короткая квитанция меняет marker; patch её не трогает.

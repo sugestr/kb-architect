@@ -3,8 +3,8 @@ name: kb-architect
 description: "Durable AI knowledge-base router: start, audit, update or move a KB; coordinate agents, roles, runtimes, credentials and cloud/MCP; пароль, карточка, 'перенеси себя в общее поле'."
 license: MIT
 metadata:
-  version: "6.3.2"
-  contract_line: "6.2"
+  version: "6.3.3"
+  minimum_project_version: "6.3.0"
   author: "sugestr"
 ---
 
@@ -52,15 +52,16 @@ metadata:
   непокрытая существенная работа = stop, matching required-роли загружаются все.
 - Git не переносит MCP/Keychain/ignored state; runtime = account + scope + safe probe.
 - Внешнее/необратимое/высокорисковое требует project source + owner gate.
-- Consumer task на «исправь общий скилл» делает лишь баг-репорт. Нет `PASS` от
-  `kb_owner_gate.py --project <active-root>` — `BLOCKED_WRONG_EXECUTOR`; никаких
-  owner-worktree/write/release/install. Исполняет только task owner repo.
+- Consumer project: дефект общего скилла → только bug-report; package/project
+  canon не править. Maintenance требует `kb_owner_gate.py` = `PASS`; иначе
+  `BLOCKED_WRONG_EXECUTOR`, без owner-worktree/write/release/install.
 - Последовательно — один checkout; параллельным писателям — worktree/ветка и exact paths.
 - Report/read-only сбрасывает старую write-authority; targets нужны до записи.
 - `kb_lookup.py --claim` нужен project-derived выводу, не прямым полям источника;
   domain skill задаёт темы, core — гейт.
 - Update не report-only: installed entry ведёт local changes до owner gate; public — delivery.
-- Project marker = contract line, build = `metadata.version`; migration открывает лишь новая line.
+- Текущая версия одна: `6.3.3`. `minimum_project_version: 6.3.0` — только
+  порог проекта: ниже обновить один раз; patch миграцию не повторяет.
 - Рост route блокирует `kb_cost.py --check` как `OPTIMIZATION_REQUIRED`.
 - Не перечитывай reference без изменения; новая версия/file/authority сбрасывает receipt.
 

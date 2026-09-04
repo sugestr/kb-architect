@@ -112,14 +112,18 @@ v1 была проверена на трёх реальных разнородн
 
 ### Выпуски скилла
 
-Точная release version стоит в `metadata.version` шапки `SKILL.md` и меняется при
-любой правке пакета. Принятая проектом line записана отдельно в
-`kb_standard_version`, а поставляемая — в `metadata.contract_line`.
+Единственная текущая версия стоит в `metadata.version` шапки `SKILL.md` и меняется
+при любой правке пакета. `kb_standard_version` отвечает на более узкий вопрос:
+прошёл ли проект обязательное обновление до минимального совместимого уровня.
+Для current `6.3.3` этот порог — `6.3.0`; всё ниже обязано обновиться.
 
 Patch означает малую совместимую починку, minor — заметное совместимое изменение,
-major — смену operating model. Project migration открывает только изменение
-`metadata.contract_line`, а не сам номер выпуска. Исторические номера не
-переименовываются; decoupled release row содержит machine marker `⟦LINE: n.n⟧`.
+major — смену operating model. Совместимый patch устанавливается везде, но не
+заставляет уже совместимый проект повторять миграцию. Исторические номера не
+переименовываются; release row хранит machine marker минимального уровня.
+Строки `6.3.0`–`6.3.2` ниже сохраняют историю отменённого эксперимента с
+отдельной contract line; они не описывают current и не могут отменить правило
+`6.3.3`: версия скилла одна, а `6.3.0` — только порог проекта.
 
 | Версия | Что изменилось | Класс |
 |---|---|---|
@@ -216,6 +220,7 @@ major — смену operating model. Project migration открывает то�
 | 6.3.0 | **Университетский разбор Григория воспроизвёл потерю material derived knowledge после уже выданного результата:** project canon сохранил старые `OPEN`, пока владелец отдельно не спросил о записи и push. Router теперь разрешает «только ответ» лишь когда результат не создаёт и не меняет `SOURCE / FACT / INTERPRETATION / DECISION / OPEN`; material delta обязана получить durable outcome. При report-only/no-write ответ остаётся ранним, но финальный статус — `DURABLE_TAIL=PENDING` с exact targets и bounded handoff, а не ложное завершение. Навигация, цитата и brainstorm не получают Git-tail. `metadata.version` и `metadata.contract_line` разведены: заметный выпуск 6.3.0 несёт прежнюю line 6.2 и не запускает миграцию. Автоматический semantic detector не заявлен. Принятый рост относительно 6.2.6: entry/material +178 Б, intake +533 Б, migration +476 Б; entry 7 773 Б из 8 192. ⟦LINE: 6.2⟧ | explicit answer/durable join, independent release/contract versions, no-write pending outcome, trivial negative control, regressions, metadata |
 | 6.3.1 | **Повтор медленного ответа на уже приложенный локальный источник:** трёхстраничный текстовый PDF дал первый факт через 76 секунд/4 calls, а durable completion — через 14:36/57 calls при 29 сек tool wall. Incoming больше не делит один route с reconcile/gap: `references/incoming.md` ставит прямой `SOURCE`-результат раньше updater, inventory, web/external verification, broad lookup и Git; поля первичного источника не оплачивают project-derived claim receipt. Current/due читаются параллельно с файлом, один edit/check/commit batch остаётся после ответа. Project template переносит updater на первую безопасную границу; explicit project pre-work gate сохраняется. Entry 7 773→7 574 Б; local intake 51 692→13 982 Б (−72,9%); contract line остаётся 6.2. ⟦LINE: 6.2⟧ | local-source fast path, source-vs-derived evidence, visible stage, deferred service work, cost regression |
 | 6.3.2 | **Consumer task без owner handoff выпустила 6.3.1 и применила cross-project/runtime changes; отдельный cold-start report доказал, что checker видел current, но не автоматически загружаемые rules.** Always-loaded entry теперь ведёт пожелание изменить общий skill только в defect report и запрещает owner worktree/write/release/install из consumer task. `kb_owner_gate.py` сверяет runtime-bound task root, private hooks защищают commit/push, exporter и rollout request повторяют gate; это defense от обычной orchestration ошибки, не security boundary против сознательного bypass. Service-layer выровнен с template: updater идёт после первого безопасного результата до durable/external шага. `kb_check.py` отдельно проверяет rules boot/current по 8 КиБ, дедуплицирует symlink и печатает максимальную сумму без нового общего лимита. Entry одновременно сокращён 7 574→7 446 Б; local intake 13 982→13 854 Б, report route 27 820→27 989 Б. Contract line остаётся 6.2; принятые проекты не мигрируют. ⟦LINE: 6.2⟧ | consumer report-only gate, runtime owner evidence, release hooks, updater consistency, project boot coverage, regressions |
+| 6.3.3 | **Владелец остановил тяжёлую удалённую установку: сформированный public release повторно прогонял suite и запускал свежие Claude/Codex discovery-сессии, хотя требовалась только доставка файлов.** Теперь все содержательные tests, cost и leakage gates остаются в формировании release. Локальная и удалённая установка сверяют exact published bytes/fingerprint, создают одну managed copy, атомарно переключают Claude/Codex links и сохраняют rollback; model, client и Мегамозг не запускаются и не перезапускаются. Следующая полноценная сессия читает current через стандартный startup path. Rollout schema 2 доказывает file parity и `runtime_action: NONE`, а не поведение незапущенной модели. Единственная текущая версия — 6.3.3; прежнее отдельное поле `contract_line` упразднено. Всё ниже 6.3.0 обязано один раз обновить project marker, 6.3.0+ не повторяет миграцию на каждый patch. ⟦Д: если `kb_standard_version` ниже 6.3.0, применить текущую project delta и после приёмки поднять marker до 6.3.0; проект на 6.3.0 или выше повторно не мигрирует⟧ ⟦MIN_PROJECT: 6.3.0⟧ | release-time validation, install-only delivery, single managed tree, no runtime restart, one current version, minimum project 6.3.0 |
 
 ### Чем вызван каждый выпуск — и почему это считается, а не обсуждается
 

@@ -50,7 +50,9 @@ def contract_line(version):
         parts = tuple(int(value) for value in version.split("."))
     except (AttributeError, ValueError):
         return None
-    return parts[:2] if len(parts) >= 2 else None
+    if len(parts) < 2:
+        return None
+    return parts[:2] + (0,) if parts[:2] >= (6, 3) else parts[:2]
 
 
 def find(root, names):
@@ -592,23 +594,23 @@ def main():
         if not proj_raw:
             due.append(f"редакция контракта не записана — сессия не знает, по какой версии "
                        f"живёт проект, а стандарт меняется. Впиши в «Соответствие» строку "
-                       f"«kb_standard_version: {skill_line_now or '<metadata.contract_line>'}»")
+                       f"«kb_standard_version: {skill_line_now or '<minimum project version>'}»")
         elif not proj_v:
             due.append(f"редакция контракта записана словами: «{proj_raw}» — сравнить не с чем. "
                        f"Поставь номер: «kb_standard_version: {skill_line_now or '<номер>'}», "
                        f"описание можно оставить рядом")
         elif skill_line_now and contract_line(proj_v) != contract_line(skill_line_now):
-            due.append(f"проект записан на contract line {proj_v}, установлен build {skill_v} — "
+            due.append(f"проект записан на уровень {proj_v}, установлен build {skill_v} — "
                        f"запусти `python3 scripts/kb_apply.py .` (он покажет, что менялось "
                        f"между ними и чего это касается здесь), примени применимое и обнови "
                        f"строку. Сама строка не двигается: она говорит, по какой редакции "
                        f"проект собран, а не какая лежит на диске — поднять её без разбора "
                        f"значит соврать")
         elif skill_v and skill_line_now:
-            ok.append(f"contract line: {proj_v} — совместима с build {skill_v}; "
+            ok.append(f"уровень проекта: {proj_v} — совместим с build {skill_v}; "
                       "выпуск не требует миграции")
         elif skill_v:
-            due.append(f"установлен build {skill_v}, но metadata.contract_line отсутствует "
+            due.append(f"установлен build {skill_v}, но metadata.minimum_project_version отсутствует "
                        "или некорректна — migration state неизвестен")
     if skill_version_now:
         # Печатается всегда, даже когда всё сходится: скилл меняется под
