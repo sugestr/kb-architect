@@ -112,20 +112,27 @@ MSG_FIELD = {
 
 
 def imena_proekta(root):
-    """Как этот проект называет сам себя: каталог и slug удалённого репозитория."""
-    imena = {os.path.basename(os.path.abspath(root)).lower()}
+    """Exact local/repository identities plus explicitly declared aliases."""
+    imena = {os.path.basename(os.path.abspath(root))}
     git_root = kb_paths.find_git(root)
     if git_root:
         url, _ = kb_paths.git_out(git_root, "remote", "get-url", "origin", timeout=10)
         if url:
             hvost = url.strip().rstrip("/").rsplit("/", 1)[-1]
-            imena.add(hvost[:-4].lower() if hvost.endswith(".git") else hvost.lower())
-    return {i for i in imena if i}
+            imena.add(hvost[:-4] if hvost.endswith(".git") else hvost)
+    aliases, _ = kb_paths.declared_value(root, ("project_aliases", "алиасы проекта"))
+    if aliases:
+        imena.update(aliases.strip().strip("[]").split(","))
+    return {identity(i) for i in imena if identity(i)}
+
+
+def identity(value):
+    return (value or "").strip().strip("`*_\"' ").casefold()
 
 
 def nash(znachenie, imena):
-    z = (znachenie or "").strip().strip("`*_\"' ").lower()
-    return any(i and i in z for i in imena)
+    z = identity(znachenie)
+    return bool(z) and z in {identity(i) for i in imena}
 
 
 def inbox_dir(root):

@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 import kb_due
+import kb_check
 import kb_index
 import kb_lookup
 import kb_paths
@@ -22,6 +23,23 @@ HERE = Path(__file__).resolve().parent
 
 
 class RedesignTests(unittest.TestCase):
+    def test_inbox_identity_does_not_confuse_related_project_names(self):
+        self.init_git()
+        self.git('remote', 'add', 'origin', 'https://example.invalid/owner/shop.git')
+        self.save('CLAUDE.md', 'project_aliases: family-alias, "Old Shop"\n')
+        self.save('NOW.md', 'Current source.\n')
+        names = kb_check.imena_proekta(str(self.root))
+        self.assertTrue(kb_check.nash(' `SHOP` ', names))
+        self.assertTrue(kb_check.nash('old shop', names))
+        self.assertTrue(kb_check.nash('family-alias', names))
+        for value in ('shop-sl', 'shop-odoo', 'other-shop', ''):
+            self.assertFalse(kb_check.nash(value, names), value)
+        self.save('_inbox/incoming.md', '---\ntype: agent-message\nfrom_project: shop-sl\nto_project: shop\ndelivery_state: delivered\n---\nIncoming.\n')
+        self.save('_inbox/outgoing.md', '---\ntype: agent-message\nfrom_project: old shop\nto_project: shop-sl\ndelivery_state: delivered\n---\nOutgoing.\n')
+        result = self.run_tool('kb_check.py')
+        self.assertIn('outgoing.md', result.stdout)
+        self.assertNotIn('incoming.md', result.stdout)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="kb7-test-")
         self.addCleanup(self.temp.cleanup)
