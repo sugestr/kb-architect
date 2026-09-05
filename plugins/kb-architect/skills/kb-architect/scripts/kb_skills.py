@@ -1880,9 +1880,35 @@ def choose_registry(root: Path, explicit: Path | None) -> Path:
 def load_json_object(path: Path) -> dict | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
+
+
+def active_registry(root: Path, registry: Path) -> tuple[Path, dict | None, list[str], list[str]]:
+    """Follow the same bounded migration pointer for validation and selection."""
+    seen, notes = set(), []
+    for _ in range(32):
+        key = registry.resolve()
+        if key in seen:
+            return registry, None, notes, ["superseded role registry cycle"]
+        seen.add(key)
+        data = load_json_object(registry)
+        if data is None:
+            return registry, None, notes, [f"registry unreadable: {registry.name}"]
+        if data.get("status") != "superseded":
+            return registry, data, notes, []
+        target_raw = data.get("superseded_by")
+        if not isinstance(target_raw, str) or not target_raw:
+            return registry, None, notes, ["superseded role registry has no superseded_by target"]
+        target = (registry.parent / target_raw).resolve(strict=False)
+        if not target.is_relative_to(root.resolve()):
+            return registry, None, notes, ["superseded role registry target leaves project root"]
+        if target == key:
+            return registry, None, notes, ["superseded role registry points to itself"]
+        notes.append(f"ROLE_REGISTRY_MOVED: {registry.name} -> {target.relative_to(root.resolve())}")
+        registry = target
+    return registry, None, notes, ["superseded role registry depth exceeds 32"]
 
 
 def current_contract_line() -> str:
@@ -2266,30 +2292,15 @@ def validate(root: Path, registry: Path, runtime_roots: list[Path] | None = None
         detail = (": " + ", ".join(observed)) if observed else ""
         return ["professional role posture is undeclared: add PROJECT_ROLES.json "
                 "or explicitly record not-applicable" + detail], [], 0
-    try:
-        data = json.loads(registry.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return [f"registry unreadable: {exc}"], [], 0
-    if data.get("status") == "superseded":
-        target_raw = data.get("superseded_by")
-        if not isinstance(target_raw, str) or not target_raw:
-            return ["superseded role registry has no superseded_by target"], [], 0
-        target = (registry.parent / target_raw).resolve(strict=False)
-        try:
-            target.relative_to(root)
-        except ValueError:
-            return ["superseded role registry target leaves project root"], [], 0
-        if target == registry.resolve():
-            return ["superseded role registry points to itself"], [], 0
-        errors, notes, count = validate(
-            root, target, runtime_roots, execute_project_check,
-            project_check_timeout)
-        return errors, [f"ROLE_REGISTRY_MOVED: {registry.name} -> "
-                        f"{target.relative_to(root)}"] + notes, count
+    registry, data, moved, errors = active_registry(root, registry)
+    if errors:
+        return errors, moved, 0
     if registry.name == VISIBLE_REGISTRY or "role_posture" in data:
-        return validate_visible(root, data, registry, runtime_roots,
-                                execute_project_check, project_check_timeout)
-    return validate_legacy(root, data, registry)
+        errors, notes, count = validate_visible(root, data, registry, runtime_roots,
+                                              execute_project_check, project_check_timeout)
+    else:
+        errors, notes, count = validate_legacy(root, data, registry)
+    return errors, moved + notes, count
 
 
 def main() -> int:
@@ -2319,11 +2330,11 @@ def main() -> int:
         return 0
     registry = choose_registry(root, args.registry)
     if args.select:
-        data = load_json_object(registry)
-        if data is None:
-            print("role registry unreadable", file=sys.stderr)
-            return 1
-        result = selection_plan(data, args.select)
+        registry, data, notes, errors = active_registry(root, registry)
+        result = selection_plan(data or {}, args.select)
+        result["errors"] = errors + result["errors"]
+        result["registry"] = str(registry)
+        result["notes"] = notes
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1 if result["errors"] else 0
     runtime_roots = default_runtime_roots()

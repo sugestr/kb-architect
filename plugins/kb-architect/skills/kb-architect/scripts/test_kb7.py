@@ -89,6 +89,27 @@ class RedesignTests(unittest.TestCase):
                                "--supports", "c1", "--reason", "old state only")
         self.assertEqual(result.returncode, 2)
 
+    def test_role_selection_follows_legacy_pointer_and_rejects_cycles(self):
+        self.save('.kb-skills.json', {'status': 'superseded', 'superseded_by': 'PROJECT_ROLES.json'})
+        self.save('PROJECT_ROLES.json', {'skills': [
+            {'name': 'method', 'canonical': 'skills/method'},
+            {'name': 'specialist', 'canonical': 'skills/specialist'}], 'roles': [
+            {'id': 'base', 'skill': 'method', 'knowledge_routes': ['evidence']},
+            {'id': 'case', 'extends': 'base', 'skill': 'specialist', 'knowledge_routes': ['case']}]})
+        result = self.run_tool('kb_skills.py', '--select', 'case')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        data = json.loads(result.stdout)
+        self.assertTrue(data['registry'].endswith('PROJECT_ROLES.json'))
+        self.assertTrue(data['notes'][0].startswith('ROLE_REGISTRY_MOVED'))
+        self.save('PROJECT_ROLES.json', {'status': 'superseded', 'superseded_by': '.kb-skills.json'})
+        result = self.run_tool('kb_skills.py', '--select', 'case')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('registry cycle', result.stdout)
+        self.save('.kb-skills.json', {'status': 'superseded', 'superseded_by': '../elsewhere.json'})
+        result = self.run_tool('kb_skills.py', '--select', 'case')
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('leaves project root', result.stdout)
+
     def test_identical_blob_at_same_path_is_deduplicated(self):
         self.init_git()
         self.save("state.md", "PROJECT initial\n")
