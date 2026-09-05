@@ -112,8 +112,8 @@ def t_632_consumer_task_routes_skill_changes_to_report_only():
           and passed["state"] == "PASS" and passed["code"] == 0
           and unknown["state"] == "OWNER_CONTEXT_UNKNOWN" and unknown["code"] == 2
           and "дефект общего скилла → только bug-report" in router
-          and "owner-worktree/write/release/install" in router
-          and "из consumer project — только" in router
+          and "Maintenance требует" in router
+          and "без записи в owner" in router
           and "consumer task соблюдает report-only stop" in template,
           out, "runtime-bound consumer blocks before write; only owner task maintains")
     shutil.rmtree(parent, ignore_errors=True)
@@ -127,7 +127,7 @@ def t_620_thin_router_points_to_versioned_contract():
     check("тонкий entry маршрутизирует к версионируемому обязательному контракту",
           len(router.encode("utf-8")) <= 8_192
           and "references/contract.md" in router
-          and "С версии 6.1 контракт снова **версионируется**" in contract
+          and "Изменение ядра требует release delta" in contract
           and "role posture" in contract
           and "пустой lexical/search result не доказывает отсутствие" in contract
           and "Cost baseline — **потолок/бюджет**" in contract
@@ -170,18 +170,17 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "6.4.0"
+          and data.get("baseline_version") == "7.0.0"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
-          and 0 < evidence.get("extra_bytes", 0) <= 2_500
-          and "matching project role" in router
-          and "current state" in router
-          and "Не перечитывай reference без изменения" in router
-          and "сбрасывает receipt" in router
+          and 0 < evidence.get("extra_bytes", 0) <= 6_144
+          and evidence.get("resources") == ["references/retrieval.md"]
+          and "current + matching role" in router
+          and "неизменное прочитанное переиспользуется" in router
           and help_run.returncode == 0
-          and len(evidence_help.encode("utf-8")) <= 2_500
+          and len(evidence_help.encode("utf-8")) <= 3_500
           and all(x in evidence_help for x in
-                  ("--support", "--challenge", "read every cN", "A limit forbids supported"))
+                  ("--support", "--challenge", "--page", "--review", "--finalize"))
           and "references/measurement.md" in measured.get("resources", []),
           out, "entry <=8KiB; section/help costs and accepted release baseline are measured")
 
@@ -193,8 +192,8 @@ def t_analytical_delta_keeps_canon_and_primary_scope_visible():
     check("аналитика различает канон, новую дельту и охват производного агрегата",
           "уже в каноне" in ref
           and "новая дельта" in ref
-          and "Переформулированный канон не становится новой находкой" in ref
-          and "агрегат производного слоя" in ref
+          and "Повторно изложенный" in ref
+          and "неполным агрегатом" in ref
           and "первичный документ" in ref,
           out, "canon path vs new delta; derived scope cannot overrule fuller primary evidence")
 
@@ -235,7 +234,7 @@ def t_interactive_result_precedes_durable_tail():
           and "три последовательных tool round-trip" in ref
           and "порог коммуникации" in ref
           and "MCP-инвентарь" in ref
-          and "durable tail не" in router,
+          and "полезный проверенный результат → долговременная дельта" in router,
           out, "show a checked draft first; save one coherent block afterwards")
 
 
@@ -261,7 +260,7 @@ def t_631_local_source_uses_bounded_cold_path():
           p.returncode == 0
           and local.get("resources") == ["references/incoming.md"]
           and local.get("total_bytes", 99_999) <= 14_000
-          and reconcile.get("total_bytes", 0) > 3 * local.get("total_bytes", 99_999)
+          and reconcile.get("total_bytes", 99_999) <= 24_576
           and "Разобрать входящее, сверить реальность, найти факт" not in router
           and "что файл прямо говорит" in ref
           and "source-derived, не project-derived" in ref
@@ -270,7 +269,7 @@ def t_631_local_source_uses_bounded_cold_path():
           and "один относящийся к ним пакет проверок" in ref
           and "Project authority, required role и stop-gates" in ref
           and "после первого безопасного результата" in template
-          and "единственный владелец критического пути" in operations,
+          and "`incoming.md`" in operations,
           out, "local file route is <=14KB; service work is deferred; safety remains")
 
 
@@ -281,16 +280,14 @@ def t_material_delta_cannot_disappear_after_answer():
     roles = ("SOURCE", "FACT", "INTERPRETATION", "DECISION", "OPEN")
     out = Vyvod(router + "\n" + ref, 0)
     check("material result ends in a durable outcome or an explicit pending handoff",
-          "если нет новой/изменённой" in router
+          "Для ответа без новой" in router
           and all(role in router for role in roles)
           and "DURABLE_TAIL=PENDING" in router
-          and "точные targets" in router
-          and "bounded handoff" in router
-          and "Report-only/no-write" in ref
-          and "exact canonical targets" in ref
-          and "bounded payload/handoff" in ref
-          and "это не\nзавершение" in ref
-          and "Навигация, цитата, brainstorm" in ref
+          and "адресом продолжения" in router
+          and "Report-only не создаёт" in ref
+          and "точный незавершённый хвост" in ref
+          and "exact-path" in ref
+          and "навигации, цитаты или brainstorm" in ref
           and all(role in ref for role in roles),
           out, "material delta cannot be hidden by answer-only; no-write remains explicit")
 
@@ -303,7 +300,7 @@ def t_warm_turn_does_not_restart_project_boot():
     out = Vyvod(router + "\n" + service + "\n" + template, 0)
     check("warm turn reuses boot receipt and keeps service work off answer path",
           "Новый turn — не новый вход" in router
-          and "только ответ" in router
+          and "Для ответа без новой" in router
           and "не при каждом сообщении" in service
           and "не запускай этот цикл снова" in service
           and "Updater не блокирует первый\nбезопасный результат" in service
@@ -354,7 +351,7 @@ def t_shared_project_move_is_a_two_system_gate():
     skill = skill_text("SKILL.md")
     out = Vyvod(ref + "\n" + skill, 0)
     check("перенос в общее поле требует один канон и две приёмки",
-          "перенеси себя в общее поле" in skill
+          "references/move-project.md" in skill
           and "~/Documents/Projects" in ref
           and "один канонический checkout" in ref
           and "Две независимые приёмки" in ref
@@ -406,7 +403,7 @@ def t_shared_move_names_ai_projects_not_the_folder():
           and "list_projects" in ref
           and "list_threads" in ref
           and "root существующего Codex project неизменяем" in ref
-          and "получают `* `" in skill,
+          and "references/move-project.md" in skill,
           out, "оба AI получают * name; folder и repo остаются без звёздочки")
 
 
@@ -1805,7 +1802,7 @@ def t_633_apply_does_not_replay_historical_cleanup():
               "CLAUDE.md": "# правила\n\nkb_standard_version: 5.3\n"})
     out = run("kb_apply.py", d)
     check("6.4 application does not replay historical cleanup rows",
-          "[6.4.0]" in out
+          "[7.0.0]" in out
           and "[5.4]" not in out
           and "credential cleanup" not in out,
           out, "current minimum level replaces a per-patch historical replay")
@@ -1827,7 +1824,7 @@ def t_55_agent_vault_keeps_read_simple_and_actions_gated():
           and "повторный вопрос перед оплатой не нужен" in recipe
           and "3-D Secure" in recipe and "owner handoff" in recipe
           and "локальный Keychain не существует в контейнере" in recipe
-          and "пароль" in skill and "карточка" in skill,
+          and "`agent_vault_and_external_actions`" in skill,
           out, "one accepted local vault; current task gates use; irreversible challenge hands off")
 
 
@@ -1963,7 +1960,7 @@ def t_620_update_does_not_replay_old_optional_capabilities():
               "CLAUDE.md": "# правила\n\nkb_standard_version: 4.18\n"})
     out = run("kb_apply.py", d)
     check("обновление не переоткрывает старые опциональные возможности",
-          "[6.4.0]" in out
+          "[7.0.0]" in out
           and "[4.19]" not in out
           and "НОВЫХ ВОЗМОЖНОСТЕЙ, ТРЕБУЮЩИХ РЕШЕНИЯ, НЕТ" in out,
           out, "the project considers choices declared by the current minimum level")
@@ -2016,9 +2013,9 @@ def t_service_distribution_is_public_not_development_symlink():
           and "установленного локального `SKILL.md`" in ref
           and "не открывает public README/SKILL вручную" in ref
           and "после результата и до durable/external шага" in ref
-          and "«Обнови скилл базы знаний»" in entry
+          and "references/service-layer.md" in entry
           and "«Обнови скилл базы знаний»" in tpl
-          and "не report-only" in entry
+          and "action-first" in ref
           and "UPDATE_STATUS=INSTALLED" in updater
           and "REREAD_INSTALLED_ENTRY" in updater
           and "PUBLIC_REPOSITORY" in updater,
@@ -2619,7 +2616,7 @@ def t_apply_ignores_marker_syntax_examples():
     out = run("kb_apply.py", d)
     check("пример маркера не становится действием проекта",
           "[4.17] …" not in out and "[4.21] …" not in out
-          and "[5.0]" not in out and "[6.4.0]" in out
+          and "[5.0]" not in out and "[7.0.0]" in out
           and "ТРЕБУЮТ ДЕЙСТВИЯ" in out, out,
           "parser skips placeholders and shows only the current minimum level")
     shutil.rmtree(d, ignore_errors=True)
@@ -3198,7 +3195,7 @@ def t_512_update_project_option_really_runs_apply():
           and "ПРИМЕНЕНИЕ К ПРОЕКТУ" in out
           and "NEEDS_APPLICATION" in out
           and "SESSION_ACTION=APPLY_PROJECT_DELTA_NOW" in out
-          and "[6.4.0]" in out
+          and "[7.0.0]" in out
           and "[5.4]" not in out,
           out, "the single entry command executes kb_apply and propagates exit 1")
     shutil.rmtree(source, ignore_errors=True)
@@ -3231,11 +3228,10 @@ def t_516_hot_context_has_evidence_driven_lifecycle():
     flat = " ".join(ref.split())
     out = Vyvod(ref, 0)
     check("рабочий кэш не создаёт второй канон и deep scan остаётся явным",
-          "Не копируй параллельный «memory»-слой" in flat
-          and "после наблюдаемого повторного обращения" in flat
-          and "источник и проверка" in flat
-          and "Глубокий обзор всех источников запускается отдельным явным trigger" in flat
-          and "не право автоматически создавать" in flat,
+          "Promotion/demotion меняют доставку, не source owner" in flat
+          and "warm/deep слои остаются обнаружимыми" in flat
+          and "расширь поиск и исправь маршрут" in flat
+          and "не прогоняется при каждом рабочем ответе" in flat,
           out, "promote/demote by evidence; retain one owner and explicit deep scan")
 
 
@@ -3382,25 +3378,25 @@ def t_516_broad_evidence_query_refuses_context_overrun():
          "--finalize", receipt, "--outcome", "unknown", "--reason", "broad"],
         capture_output=True, text=True, timeout=120)
     out = Vyvod(p.stdout + p.stderr + finalize.stdout + finalize.stderr, 0)
-    check("широкий evidence search требует уточнения без тихого обрезания",
+    check("широкий evidence search ограничивает вывод, сохраняя покрытие",
           p.returncode == 1
-          and data.get("status") == "refine_required"
+          and data.get("status") == "review_required"
           and len(data.get("candidates", [])) == 100
-          and "OPTIMIZATION_REQUIRED" in p.stdout
-          and "c1  " not in p.stdout
-          and finalize.returncode == 2
-          and "уточнить широкий поиск" in finalize.stderr,
-          out, "all candidates remain in receipt, but no conclusion/finalize is allowed")
+          and "NEXT_OFFSET=" in p.stdout
+          and len(p.stdout.encode("utf-8")) < 14_000
+          and finalize.returncode == 1
+          and "EVIDENCE_GATE=UNKNOWN" in finalize.stdout,
+          out, "all candidates remain; bounded pages preserve coverage; unknown is not positive")
     shutil.rmtree(project, ignore_errors=True)
 
 
 def t_640_marker_without_compact_application_is_unproven():
     """A current-line marker still needs one compact owner receipt."""
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.4.0\n"})
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 7.0.0\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
     out = run("kb_apply.py", d)
-    check("marker 6.4.0 без короткой квитанции не скрывает незавершённую миграцию",
+    check("marker 7.0.0 без короткой квитанции не скрывает незавершённую миграцию",
           out.code == 1 and "APPLICATION_UNPROVEN" in out
           and "missing KB_RELEASE_APPLICATION.json" in out,
           out, "the marker is an outcome, but no per-release ledger is required")
@@ -3503,11 +3499,11 @@ def t_620_release_application_binds_source_line_and_owner():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
     receipt = {
         "schema": 2,
         "application": {
-            "from_line": "6.1", "to_line": "6.4.0", "status": "finalized",
+            "from_line": "6.1", "to_line": "7.0.0", "status": "finalized",
             "source": {"commit": source, "version_source": "CLAUDE.md"},
             "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
             "finalized_at": "2026-08-29", "open": [],
@@ -3547,13 +3543,13 @@ def t_621_compact_application_requires_the_actual_candidate_parent():
         ["git", "-C", d, "rev-parse", "HEAD"], capture_output=True,
         text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
 
     def write_receipt(source):
         with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w",
                   encoding="utf-8") as f:
             json.dump({"schema": 2, "application": {
-                "from_line": "6.1", "to_line": "6.4.0", "status": "finalized",
+                "from_line": "6.1", "to_line": "7.0.0", "status": "finalized",
                 "source": {"commit": source, "version_source": "CLAUDE.md"},
                 "owner": {"accepted_by": "fixture owner",
                           "accepted_at": "2026-08-29"},
@@ -3591,11 +3587,11 @@ def t_612_release_application_follows_safe_boot_symlink():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
     receipt = {
         "schema": 2,
         "application": {
-            "from_line": "6.1", "to_line": "6.4.0", "status": "finalized",
+            "from_line": "6.1", "to_line": "7.0.0", "status": "finalized",
             "source": {"commit": source, "version_source": "AGENTS.md"},
             "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
             "finalized_at": "2026-08-29", "open": [],
@@ -3694,9 +3690,9 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 6.4.0\n")
+        f.write("\nkb_standard_version: 7.0.0\n")
     receipt = {"schema": 2, "application": {
-        "from_line": None, "to_line": "6.4.0", "status": "finalized",
+        "from_line": None, "to_line": "7.0.0", "status": "finalized",
         "source": {"commit": source, "version_source": "CLAUDE.md"},
         "owner": {"accepted_by": "owner", "accepted_at": "2026-08-29"},
         "finalized_at": "2026-08-29", "open": [],
@@ -3726,9 +3722,9 @@ def t_620_direct_migration_does_not_replay_intermediate_releases():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
     receipt = {"schema": 2, "application": {
-        "from_line": "5.16", "to_line": "6.4.0", "status": "finalized",
+        "from_line": "5.16", "to_line": "7.0.0", "status": "finalized",
         "source": {"commit": source, "version_source": "CLAUDE.md"},
         "owner": {"accepted_by": "owner", "accepted_at": "2026-08-29"},
         "finalized_at": "2026-08-29", "open": [],
@@ -5161,7 +5157,7 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
 
 
 def t_640_has_one_current_version_and_a_640_project_floor():
-    """The current skill is 6.4.0; projects below 6.4.0 update once."""
+    """The current skill is 7.0.0; projects below 7.0.0 update once."""
     import json
     import kb_paths
     import kb_skills
@@ -5174,12 +5170,12 @@ def t_640_has_one_current_version_and_a_640_project_floor():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.4.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
     with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
         json.dump({
             "schema": 3,
             "application": {
-                "from_version": "6.3.0", "to_version": "6.4.0",
+                "from_version": "6.3.0", "to_version": "7.0.0",
                 "status": "finalized",
                 "source": {"commit": source, "version_source": "CLAUDE.md"},
                 "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
@@ -5198,17 +5194,26 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         [sys.executable, os.path.join(HERE, "kb_apply.py"), old],
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("6.4.0 is current and projects below 6.4.0 must update",
-          kb_paths.skill_version() == "6.4.0"
-          and kb_paths.skill_contract_line() == "6.4.0"
-          and kb_skills.current_contract_line() == "6.4.0"
+    check("7.0.0 is current and projects below 7.0.0 must update",
+          kb_paths.skill_version() == "7.0.0"
+          and kb_paths.skill_contract_line() == "7.0.0"
+          and kb_skills.current_contract_line() == "7.0.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
           and "миграции нет" in p.stdout
           and old_run.returncode == 1 and "NEEDS_APPLICATION" in old_run.stdout
-          and "цель 6.4.0" in old_run.stdout,
+          and "цель 7.0.0" in old_run.stdout,
           out, "one current build plus one explicit minimum project level")
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(old, ignore_errors=True)
+
+
+def t_700_heterogeneous_projects_and_observed_failures():
+    """7.0 regressions use raw evidence and exercise routing, intake boundaries and roles."""
+    result = subprocess.run([sys.executable, os.path.join(HERE, "test_kb7.py")],
+                            capture_output=True, text=True, timeout=90)
+    check("7.0 isolated behavioral regressions",
+          result.returncode == 0, Vyvod(result.stdout + result.stderr, result.returncode),
+          "all observed-failure and heterogeneous-project cases pass")
 
 
 def main():

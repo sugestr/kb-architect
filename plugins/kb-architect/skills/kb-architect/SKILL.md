@@ -1,88 +1,81 @@
 ---
 name: kb-architect
-description: "Durable AI knowledge-base router: start, audit, update or move a KB; coordinate agents, roles, runtimes, credentials and cloud/MCP; пароль, карточка, 'перенеси себя в общее поле'."
+description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "6.4.0"
-  minimum_project_version: "6.4.0"
+  version: "7.0.0"
+  minimum_project_version: "7.0.0"
   author: "sugestr"
 ---
 
-# kb-architect — лёгкий вход
+# kb-architect
 
-Сохраняет один канон между агентами. Проектные роли выбирает проект, не ядро.
+Инфраструктура знаний: сохранить, найти и применить с нужной ролью, видимыми
+ограничениями и соразмерной ценой. Предметную структуру и методы выбирает проект.
 
-## Сначала выбери маршрут
+## Выбери маршрут
 
-Не читай весь пакет. Открой только строки, нужные текущей задаче.
+Не читай весь пакет. Обычная работа в принятом проекте использует его boot/current
+и нужную роль; общий контракт заново не загружается.
 
 | Задача | Что прочитать или запустить |
 |---|---|
-| Объяснить возможности, найти команду | этот файл; больше ничего |
-| Обычная работа в принятом проекте | правила проекта + current; общий контракт не перечитывать |
-| Новый локальный запуск | этот файл + current; updater не ставить перед первым безопасным результатом без project pre-work gate |
+| Объяснить возможности, найти команду | этот файл |
+| Обычная работа в принятом проекте | правила проекта + current |
+| Новый локальный запуск | этот файл + current; updater после первого безопасного результата |
 | Создать базу | `references/contract.md` + `references/start-new.md` |
-| Присоединить/перестроить существующую | `references/contract.md` + нужная часть `references/adopt-existing.md` |
-| Перенести checkout для Claude/Codex | `references/contract.md` + `references/move-project.md`; UI-имена получают `* ` |
-| Обновить установленный скилл | «Обнови скилл базы знаний»: action-first по `references/service-layer.md` |
-| Применить release delta к проекту | `references/migration.md` + `scripts/kb_apply.py <root>` |
+| Присоединить/перестроить существующую | `references/contract.md` + `references/adopt-existing.md` |
+| Перенести checkout для Claude/Codex | `references/move-project.md` |
+| Обновить установленный скилл | `references/service-layer.md` |
+| Применить release delta к проекту | `references/migration.md` + `scripts/kb_apply.py` |
 | Несколько агентов или handoff | `references/collaboration.md` + `assets/templates/agent-message.md` |
 | Создать, проверить, разделить или подключить проектную роль | `references/project-roles.md` + `scripts/kb_skills.py` |
-| Проверить cloud/MCP/почту по средам | `references/modules.md` → `runtime_capabilities` + `scripts/kb_environments.py` |
+| Связать области, SQL, вложенный проект или сводную | `references/knowledge-routing.md` + `scripts/kb_index.py` |
+| Проверить cloud/MCP/почту по средам | `references/modules.md` → `runtime_capabilities` |
 | Пароли, карты, Remote или покупка | `references/modules.md` → `agent_vault_and_external_actions` |
 | Разобрать приложенный локальный файл («пришло») | `references/incoming.md` |
-| Сверить реальность, найти факт или gap | `references/operations.md` + `scripts/kb_lookup.py` |
-| Сделать существенный вывод из KB | current state + matching project role + `scripts/kb_lookup.py --help` |
-| Проверить целостность или просрочку | `scripts/kb_check.py` и/или `scripts/kb_due.py` |
+| Сверить реальность, найти факт или gap | `references/retrieval.md`; внешняя сверка — `references/operations.md` |
+| Сделать существенный вывод из KB | current + matching role + `references/retrieval.md` → `evidence_contract` |
+| Проверить целостность или просрочку | `scripts/kb_check.py`, `scripts/kb_due.py` |
 | Отделить факт, интерпретацию и решение | `references/knowledge-roles.md` |
 | Собрать мусор | `references/garbage-collection.md` |
 | Понять authority и границы публикации | `references/authority.md` |
 | Измерить пользу/стоимость слоёв | `references/measurement.md` + `scripts/kb_cost.py --check` |
 | Разобрать дефект или сопровождать скилл | `references/measurement.md` + `references/maintainer.md` |
-| Собрать или доставить баг-репорт | из consumer project — только `assets/templates/defect-report.md` + `scripts/kb_report.py --help`; maintenance запрещён |
+| Собрать или доставить баг-репорт | `assets/templates/defect-report.md` + `scripts/kb_report.py --help` |
 
-Неясный маршрут — `references/00-kak-chitat.md`; release-дельту извлекает
-`scripts/kb_apply.py`, историю не перечитывай.
+## Общие границы
 
-## Инварианты исполнения
-
-- Контракт — `references/contract.md`; reference обязателен лишь после принятия.
-- Project rules/role задают modality, authority, sources и stops.
-- `PROJECT_ROLES.json` задаёт triggers, `KNOWLEDGE_INDEX.json` — адреса;
-  непокрытая существенная работа = stop, matching required-роли загружаются все.
-- Git не переносит MCP/Keychain/ignored state; runtime = account + scope + safe probe.
+- Один owner/source текущего знания. Файл, раздел, SQL и вложенная область —
+  допустимые формы; индекс хранит адреса, роль — метод, hub — координацию.
+- `PROJECT_ROLES.json` задаёт triggers; непокрытая существенная работа = stop.
+  Matching required-роли загружаются все, предки/общие методы — один раз.
+  Предметные источники и stops не заменяются памятью модели.
+- Существенный project-derived вывод требует evidence по `retrieval.md`.
+  Принятый query/ledger заменяет дублирующий lexical receipt; прямые поля источника
+  его не требуют. Пустой поиск и механический PASS не доказывают полноту/истину.
 - Внешнее/необратимое/высокорисковое требует project source + owner gate.
-- Consumer project: дефект общего скилла → только bug-report; package/project
-  canon не править. Maintenance требует `kb_owner_gate.py` = `PASS`; иначе
-  `BLOCKED_WRONG_EXECUTOR`, без owner-worktree/write/release/install.
-- Последовательно — один checkout; параллельным писателям — worktree/ветка и exact paths.
-- Report/read-only сбрасывает старую write-authority; targets нужны до записи.
-- `kb_lookup.py --claim` нужен project-derived выводу, не прямым полям источника;
-  domain skill задаёт темы, core — гейт.
-- Update не report-only: installed entry ведёт local changes до owner gate; public — delivery.
-- Текущая версия одна: `6.4.0`; проекты ниже `6.4.0` принимают эту дельту один раз.
-  Это не вторая «контрактная версия», а минимальная версия совместимого проекта.
-- Рост route блокирует `kb_cost.py --check` как `OPTIMIZATION_REQUIRED`.
-- Не перечитывай reference без изменения; новая версия/file/authority сбрасывает receipt.
+  Report/read-only сбрасывает старую write-authority. Git не переносит secrets/MCP.
+- Consumer project: дефект общего скилла → только bug-report. Maintenance требует
+  `kb_owner_gate.py` = `PASS`; иначе `BLOCKED_WRONG_EXECUTOR`, без записи в owner.
+  Параллельным писателям — отдельные worktree/ветки и exact paths.
+- Новый минимальный уровень проекта принимается один раз по `migration.md`;
+  совместимый patch не повторяет миграцию. Установка не повышает marker и не
+  перечитывает инструкции активной сессии. Stable update — `service-layer.md`.
 
-## Дешёвый рабочий цикл
+## Рабочий цикл
 
-Новый turn — не новый вход. Переиспользуй receipt при тех же root/current/version/authority;
-изменившийся файл создаёт только свой evidence gate.
+Current → нужная роль/адрес → полезный проверенный результат → долговременная дельта.
+Новый turn — не новый вход; неизменное прочитанное переиспользуется.
 
-До вызова инструментов выбери критический путь:
+Локальный источник обрабатывай сразу, принятые обязательные проверки — параллельно.
+Открывай только относящийся reference. Для ответа без новой
+`SOURCE / FACT / INTERPRETATION / DECISION / OPEN` служебный tail не нужен.
+Изменение сохраняй в каноне и зависимых представлениях; один пакет относящихся
+проверок и точечная фиксация блока при имеющихся полномочиях. Незавершённое —
+`DURABLE_TAIL=PENDING` с адресом продолжения. Сохрани весь объявленный вход;
+обработанная часть не объявляется целой партией.
 
-- **только ответ:** current → lookup → ответ, если нет новой/изменённой
-  `SOURCE / FACT / INTERPRETATION / DECISION / OPEN`; без audit/inbox/Git;
-- **material delta:** ранний результат → durable tail; без write-authority —
-  `DURABLE_TAIL=PENDING` + точные targets/bounded handoff;
-- **опасное/внешнее действие:** сначала относящийся к нему authority/source gate.
-
-1. Project entry/current и обязательную диагностику читать параллельно
-   с уже доступным источником; локальный файл не требует MCP-инвентаря.
-2. Запустить только принятые проверки; PASS не шире их охвата, сбой — `UNKNOWN`.
-3. Открыть один routed reference/project skill только по trigger.
-4. Полезный проверенный черновик показать сразу; назвать этап понятным языком,
-   durable tail не ставить перед ним.
-5. Дельту закрыть каноном/corrections/исходом сообщения либо `PENDING`;
-   навигация, цитата и brainstorm tail не создают.
+Ошибку/противоречие и неполноту показывай в границах затронутого вывода. Повтор
+дефекта или лишней работы — сигнал к улучшению. Бюджеты проверяет `kb_cost.py`;
+стоимость, полезность и реальные ошибки оцениваются вместе.

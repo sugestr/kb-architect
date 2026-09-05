@@ -51,7 +51,7 @@ Acceptance, secrets/private runtime и push требуют отдельной au
 
 ## Соответствие kb-architect
 
-kb_standard_version: <минимальная совместимая версия проекта, сейчас 6.4.0>
+kb_standard_version: <минимальная совместимая версия проекта, сейчас 7.0.0>
 release application: `KB_RELEASE_APPLICATION.json`
 сервисный контур kb-architect: <принят | не принят>
 обновление скилла: <по сигналу | автоматически>

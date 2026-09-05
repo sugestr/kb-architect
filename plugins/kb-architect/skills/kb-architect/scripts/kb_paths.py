@@ -442,7 +442,7 @@ def find_git(start):
     return os.path.abspath(top) if top and os.path.isdir(top) else None
 
 
-def git_out(root, *args, timeout=30):
+def git_out(root, *args, timeout=30, ok_codes=(0,)):
     """(вывод, причина_отказа). Молчание и отказ здесь — разные исходы.
 
     Отчёт, в котором сбой git неотличим от «нечего показывать», уже стоил
@@ -454,7 +454,7 @@ def git_out(root, *args, timeout=30):
                            capture_output=True, text=True, timeout=timeout)
     except Exception as e:
         return None, f"{args[0]}: {e}"
-    if r.returncode != 0:
+    if r.returncode not in ok_codes:
         why = (r.stderr.strip().splitlines() or [f"код {r.returncode}"])[0]
         return None, f"{args[0]}: {why}"
     return r.stdout, None
@@ -512,11 +512,11 @@ def unmerged_refs(root):
     udalennye = set(udal_raw.split())
     refs_raw = mestnye_raw + "\n" + udal_raw
 
-    head_raw, why = git_out(git_root, "ls-tree", "-r", "HEAD")
+    head_raw, why = git_out(git_root, "ls-tree", "-r", "-z", "HEAD")
     if head_raw is None:
         return [], why
     head_paths, head_names, head_blobs = set(), set(), set()
-    for line in head_raw.split("\n"):
+    for line in head_raw.split("\0"):
         if not line:
             continue
         meta, _, path = line.partition("\t")
@@ -531,7 +531,9 @@ def unmerged_refs(root):
     # повтора отчёт перестают читать, и проверка выключается сама.
     tips = {}
     for ref in sorted(set(refs_raw.split())):
-        sha, _ = git_out(git_root, "rev-parse", ref)
+        sha, why = git_out(git_root, "rev-parse", ref)
+        if sha is None:
+            return [], why
         tips[ref] = (sha or ref).strip()
     skryt = set()
     for ref, sha in tips.items():
@@ -543,14 +545,14 @@ def unmerged_refs(root):
     for ref in sorted(set(refs_raw.split())):
         if ref.endswith("/HEAD") or ref in skryt:
             continue
-        base, _ = git_out(git_root, "merge-base", "HEAD", ref)
+        base, why = git_out(git_root, "merge-base", "HEAD", ref)
         if base is None:
-            continue
+            return out, f"{ref}: {why}"
         base = base.strip()
-        ref_raw, _ = git_out(git_root, "diff", "--name-only", base, ref)
+        ref_raw, why = git_out(git_root, "diff", "--name-only", "-z", base, ref)
         if ref_raw is None:
-            continue
-        ref_paths = [p for p in ref_raw.split("\n") if p]
+            return out, f"{ref}: {why}"
+        ref_paths = [p for p in ref_raw.split("\0") if p]
         outside_path = [p for p in ref_paths if p not in head_paths]
         # Три счёта, а не один. Путь ничего не доказывает: переезд каталога
         # выдаёт переименование за потерю всего. Имя доказывает больше.
@@ -558,19 +560,26 @@ def unmerged_refs(root):
         # и тот же полис под двумя именами — байт в байт, а по именам он
         # выглядел бы потерянным.
         ref_blobs = {}
-        blob_raw, _ = git_out(git_root, "ls-tree", "-r", ref)
-        for line in (blob_raw or "").split("\n"):
+        blob_raw, why = git_out(git_root, "ls-tree", "-r", "-z", ref)
+        if blob_raw is None:
+            return out, f"{ref}: {why}"
+        for line in blob_raw.split("\0"):
             if not line:
                 continue
             meta, _, path = line.partition("\t")
             parts = meta.split()
             if len(parts) >= 3:
                 ref_blobs[path] = parts[2]
-        outside_name = [p for p in outside_path
-                        if os.path.basename(p) not in head_names
-                        and ref_blobs.get(p) not in head_blobs]
-        head_raw2, _ = git_out(git_root, "diff", "--name-only", base, "HEAD")
-        moved = set((head_raw2 or "").split("\n"))
+        # A matching filename is not proof of matching knowledge. Compare all
+        # changed blobs, including edits at an existing path and deletions.
+        outside_name = [p for p in ref_paths
+                        if (ref_blobs.get(p) is not None
+                            and ref_blobs[p] not in head_blobs)
+                        or (p not in ref_blobs and p in head_paths)]
+        head_raw2, why = git_out(git_root, "diff", "--name-only", "-z", base, "HEAD")
+        if head_raw2 is None:
+            return out, f"{ref}: {why}"
+        moved = set(head_raw2.split("\0"))
         both = [p for p in ref_paths if p in head_paths and p in moved]
         last, _ = git_out(git_root, "log", "-1", "--format=%ad", "--date=short", ref)
         out.append(Vetka(ref, (last or "").strip(), outside_path, outside_name, both))

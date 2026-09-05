@@ -34,13 +34,13 @@
 пробелами либо `not-applicable` с причиной. Профессии выбирает владелец проекта;
 инфраструктура лишь не позволяет забытое отсутствие роли принять за готовность.
 Роли связываются с project-specific адресами в `KNOWLEDGE_INDEX.json`; индекс не
-навязывает проекту типы знания. Required-роли получают `ROLE_ACCEPTANCE.json`,
-с отдельными structural/discovery/behavior/owner outcomes; manifest, квитанция,
-индекс и его pointers должны восстанавливаться из Git.
+навязывает проекту типы знания. Required-роли принимаются по единственному текущему
+процессу `project-roles.md`: compact acceptance внутри manifest, без отдельного
+`ROLE_ACCEPTANCE.json`. Индекс и recovery pointers восстанавливаются из Git.
 
 Текущий `kb_standard_version` ставится не один: новый проект создаёт
-`KB_RELEASE_APPLICATION.json` с первым `kind: initial-adoption`, source snapshot до
-marker, текущей release row и post-results acceptance. Так новая база не разбирает всю
+`KB_RELEASE_APPLICATION.json` schema 3 с source snapshot до
+marker и post-results acceptance. Так новая база не разбирает всю
 историю, но marker не удостоверяет себя сам (`references/migration.md`).
 
 Codex Cloud получает выбранный GitHub repository/branch в изолированную среду и

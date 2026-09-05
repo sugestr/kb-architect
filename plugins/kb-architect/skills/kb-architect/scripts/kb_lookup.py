@@ -70,7 +70,7 @@ def collect(root, excluded=()):
     return sorted(out)
 
 
-def search(files, root, variants):
+def search(files, root, variants, errors=None):
     """Возвращает [(путь, строка-совпадение или None если совпало только имя)]."""
     pats = [re.compile(re.escape(v.strip()), re.IGNORECASE) for v in variants if v.strip()]
     hits = []
@@ -84,14 +84,16 @@ def search(files, root, variants):
                     if any(p.search(line) for p in pats):
                         line_hit = line.strip()[:SNIPPET]
                         break
-        except OSError:
+        except OSError as exc:
+            if errors is not None:
+                errors.append(f"{rel}: {exc}")
             continue
         if name_hit or line_hit:
             hits.append((rel, line_hit))
     return hits
 
 
-def search_refs(root, refs, variants):
+def search_refs(root, refs, variants, errors=None):
     """Совпадения в неслитых ветках: [(ветка, файл, строка или None)].
 
     Рабочее дерево — не весь репозиторий. Отчёт 18.08: полис лежал в ветке,
@@ -102,39 +104,60 @@ def search_refs(root, refs, variants):
     git_root = kb_paths.find_git(root)
     if not git_root:
         return []
-    # Файл, который есть в рабочем дереве, из веток не показывается: канон
-    # уже ответил, а вторая копия того же — шум, от которого отчёт перестают
-    # читать. Показывается только то, чего в каноне нет.
+    errors = errors if errors is not None else []
+    prefix = os.path.relpath(os.path.realpath(root), git_root)
+    prefix = "" if prefix == "." else prefix.replace(os.sep, "/") + "/"
+    pathspec = ["--", ":(literal)" + prefix.rstrip("/")] if prefix else []
     hits = []
+    blobs = {}
     for ref in refs:
+        tree, why = kb_paths.git_out(git_root, "ls-tree", "-r", "-z", ref, *pathspec)
+        if why:
+            errors.append(f"{ref}: {why}")
+            continue
+        names = []
+        for item in tree.split("\0"):
+            meta, _, path = item.partition("\t")
+            parts = meta.split()
+            if len(parts) == 3:
+                blobs[(ref, path)] = parts[2]
+                names.append(path)
         for v in variants:
             v = v.strip()
             if not v:
                 continue
-            out, _ = kb_paths.git_out(git_root, "grep", "-I", "-i", "-n",
-                                      "-e", v, ref)
+            out, why = kb_paths.git_out(git_root, "grep", "-F", "-I", "-i", "-n", "-z",
+                                        "-e", v, ref, *pathspec, ok_codes=(0, 1))
+            if why:
+                errors.append(f"{ref}: {why}")
             for line in (out or "").split("\n"):
                 if not line:
                     continue
-                # формат: <ref>:<путь>:<номер>:<строка>
-                parts = line.split(":", 3)
-                if len(parts) < 4:
+                location, separator, rest = line.partition("\0")
+                if not separator or not location.startswith(ref + ":"):
+                    errors.append(f"{ref}: unreadable grep record; coverage incomplete")
                     continue
-                hits.append((ref, parts[1], parts[3].strip()[:SNIPPET]))
-            names, _ = kb_paths.git_out(git_root, "ls-tree", "-r",
-                                        "--name-only", ref)
-            for path in (names or "").split("\n"):
+                number, _, snippet = rest.partition("\0")
+                hits.append((ref, location[len(ref) + 1:], snippet.strip()[:SNIPPET]))
+            for path in names:
                 if path and re.search(re.escape(v), path, re.IGNORECASE):
                     hits.append((ref, path, None))
     # один файл — одна строка, первая находка
-    seen, out = set(), []
+    seen, out, local_blobs = set(), [], {}
     for ref, path, line in hits:
         if (ref, path) in seen:
             continue
-        if os.path.exists(os.path.join(root, path)):
-            continue
         seen.add((ref, path))
-        out.append((ref, path, line))
+        local = os.path.join(git_root, path)
+        if os.path.isfile(local):
+            if path not in local_blobs:
+                value, why = kb_paths.git_out(git_root, "hash-object", "--no-filters", "--", local)
+                local_blobs[path] = value.strip() if value else None
+                if why:
+                    errors.append(f"{path}: {why}")
+            if local_blobs[path] == blobs.get((ref, path)):
+                continue
+        out.append((ref, path[len(prefix):], line))
     return out
 
 
@@ -143,13 +166,12 @@ def parser():
         description="Ищет темы в KB; evidence mode оставляет fail-closed receipt.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""evidence workflow:
-  1) --claim TEXT --receipt FILE --support TOPIC --challenge TOPIC
-     writes REVIEW_REQUIRED and exits 1.
-  2) read every cN, then --finalize FILE --outcome supported|qualified|unknown
-     with each cN exactly once in --supports, --limits or --irrelevant, plus --reason.
-  A limit forbids supported; unknown remains exit 1 and is not a current-state fact.
-  Any corpus or unmerged-branch change invalidates the receipt before finalize.
-  Project role defines topics/evidence criteria; this lexical tool records execution.""")
+  --claim TEXT --receipt FILE --support TOPIC --challenge TOPIC starts review.
+  --page FILE --offset N reads more; --review FILE records a batch with --reason.
+  --finalize FILE --outcome supported|qualified|unknown closes review.
+  Use --supports/--limits/--irrelevant; one document can support AND limit.
+  Unreviewed evidence or changed corpus forbids a positive outcome.
+  Role assesses truth; this tool records lexical coverage, not semantic proof.""")
     p.add_argument("root", help="корень проектной базы")
     p.add_argument("topics", nargs="*", help="темы обычного lookup, варианты через |")
     p.add_argument("--claim", help="существенный project-derived вывод")
@@ -159,6 +181,9 @@ def parser():
     p.add_argument("--challenge", action="append", default=[],
                    help="тема ограничений/противоречий; можно повторять")
     p.add_argument("--finalize", help="закрыть ранее созданный receipt")
+    p.add_argument("--review", help="сохранить оценку партии")
+    p.add_argument("--page", help="страница receipt")
+    p.add_argument("--offset", type=int, default=0)
     p.add_argument("--outcome", choices=("supported", "qualified", "unknown"))
     p.add_argument("--supports", action="append", default=[], metavar="ID",
                    help="прочитанный кандидат, поддерживающий вывод")
@@ -234,11 +259,12 @@ def evidence_candidates(files, root, refs, groups):
     found = {}
     order = []
     searches = []
+    errors = []
     for role, query in groups:
         variants = query.split("|")
         ids = []
-        local = [(None, path, line) for path, line in search(files, root, variants)]
-        branch = search_refs(root, refs, variants) if refs else []
+        local = [(None, path, line) for path, line in search(files, root, variants, errors)]
+        branch = search_refs(root, refs, variants, errors) if refs else []
         for ref, path, line in local + branch:
             key = (ref or "", path)
             if key not in found:
@@ -262,7 +288,7 @@ def evidence_candidates(files, root, refs, groups):
             "variants": [v.strip() for v in variants if v.strip()],
             "candidate_ids": list(dict.fromkeys(ids)),
         })
-    return [found[key] for key in order], searches
+    return [found[key] for key in order], searches, sorted(set(errors))
 
 
 def candidate_output(candidates):
@@ -276,6 +302,27 @@ def candidate_output(candidates):
     return "\n".join(lines)
 
 
+def print_page(receipt, offset=0):
+    candidates = receipt["candidates"]
+    if offset < 0 or offset > len(candidates):
+        print("invalid offset", file=sys.stderr)
+        return 2
+    rendered, index = "", offset
+    while index < len(candidates):
+        item = candidate_output([candidates[index]]) + "\n"
+        if len((rendered + item).encode("utf-8")) > MAX_EVIDENCE_OUTPUT_BYTES:
+            if rendered:
+                break
+            item = item.encode("utf-8")[:MAX_EVIDENCE_OUTPUT_BYTES - 160].decode("utf-8", errors="ignore")
+            item += "\n[display shortened; full candidate retained in receipt]\n"
+        rendered += item
+        index += 1
+    print(rendered, end="")
+    print(f"CANDIDATES={len(candidates)} SHOWN={index - offset} OFFSET={offset} "
+          f"NEXT_OFFSET={index if index < len(candidates) else 'END'}")
+    return 0
+
+
 def begin_evidence(args, root):
     if args.topics or not args.claim or not args.receipt or not args.support or not args.challenge:
         print("evidence mode требует --claim, --receipt, хотя бы один --support и "
@@ -287,7 +334,7 @@ def begin_evidence(args, root):
         files, root, refs, refs_why)
     groups = ([('support', query) for query in args.support]
               + [('challenge', query) for query in args.challenge])
-    candidates, searches = evidence_candidates(files, root, refs, groups)
+    candidates, searches, search_errors = evidence_candidates(files, root, refs, groups)
     receipt = {
         "schema": RECEIPT_SCHEMA,
         "tool": "kb_lookup.py",
@@ -301,6 +348,7 @@ def begin_evidence(args, root):
             "unmerged_refs_unchecked_reason": refs_why or None,
             "content_sha256": fingerprint,
             "fingerprint_errors": fingerprint_errors,
+            "search_errors": search_errors,
         },
         "searches": searches,
         "candidates": candidates,
@@ -310,8 +358,6 @@ def begin_evidence(args, root):
         },
         "review": None,
     }
-    if receipt["output_budget"]["candidate_bytes"] > MAX_EVIDENCE_OUTPUT_BYTES:
-        receipt["status"] = "refine_required"
     try:
         write_json(args.receipt, receipt)
     except OSError as exc:
@@ -320,38 +366,26 @@ def begin_evidence(args, root):
 
     print(f"База: {root} — {gde}")
     print(f"Вывод: {args.claim}\n")
-    if receipt["status"] == "refine_required":
-        print("OPTIMIZATION_REQUIRED: evidence output exceeds its context budget")
-        print(f"  candidates: {len(candidates)}")
-        print(f"  candidate bytes: {receipt['output_budget']['candidate_bytes']} "
-              f"> {MAX_EVIDENCE_OUTPUT_BYTES}")
-        for search_item in searches:
-            print(f"  {search_item['role']}:{search_item['query']} -> "
-                  f"{len(search_item['candidate_ids'])} candidates")
-        print("Уточни support/challenge aliases и создай новый receipt. Кандидаты не "
-              "обрезаны и вывод не разрешён.")
-        print(f"Receipt: {os.path.abspath(args.receipt)}")
-        return 1
-    rendered = candidate_output(candidates)
-    if rendered:
-        print(rendered)
+    print_page(receipt)
     if not candidates:
         print("Кандидатов не найдено; это не доказывает отсутствие или истинность вывода.")
     print("\nEVIDENCE_GATE=REVIEW_REQUIRED")
     print(f"Receipt: {os.path.abspath(args.receipt)}")
-    print("Прочитай каждый cN и закрой его ровно одной меткой: --supports, "
-          "--limits или --irrelevant. До --finalize это только черновик.")
+    print("Продолжение: --page FILE --offset N. Оценка партии: --review FILE. "
+          "Все кандидаты сохранены; до --finalize это черновик.")
     return 1
 
 
 def finalize_evidence(args, root):
+    partial = bool(args.review)
+    receipt_path = args.review or args.finalize
     if (args.topics or args.claim or args.receipt or args.support or args.challenge
-            or not args.outcome or not args.reason):
+            or (not partial and not args.outcome) or (partial and args.outcome) or not args.reason):
         print("finalize mode требует --finalize, --outcome и --reason; новый поиск "
               "создаётся отдельным вызовом", file=sys.stderr)
         return 2
     try:
-        with open(args.finalize, encoding="utf-8") as f:
+        with open(receipt_path, encoding="utf-8") as f:
             receipt = json.load(f)
     except (OSError, ValueError) as exc:
         print(f"receipt не прочитан: {exc}", file=sys.stderr)
@@ -363,14 +397,12 @@ def finalize_evidence(args, root):
         print("receipt относится к другому корню базы", file=sys.stderr)
         return 2
     if receipt.get("status") == "refine_required":
-        print("receipt требует уточнить широкий поиск; finalize запрещён",
-              file=sys.stderr)
-        return 2
+        receipt["status"] = "review_required"
     if receipt.get("status") != "review_required" or receipt.get("review") is not None:
         print("receipt уже закрыт; для пересмотра создай новый поиск", file=sys.stderr)
         return 2
 
-    files, refs, refs_why, _ = repository_scope(root, excluded=(args.finalize,))
+    files, refs, refs_why, _ = repository_scope(root, excluded=(receipt_path,))
     fingerprint, fingerprint_errors, ref_tips = scope_fingerprint(
         files, root, refs, refs_why)
     old_coverage = receipt.get("coverage", {})
@@ -389,42 +421,45 @@ def finalize_evidence(args, root):
     }
     selected = [item for values in classes.values() for item in values]
     unknown_ids = sorted(set(selected) - set(candidates))
-    duplicate_ids = sorted({item for item in selected if selected.count(item) > 1})
-    missing_ids = sorted(set(candidates) - set(selected))
-    if unknown_ids or duplicate_ids or missing_ids:
+    incompatible = sorted(set(args.irrelevant) & (set(args.supports) | set(args.limits)))
+    if unknown_ids or incompatible:
         if unknown_ids:
             print("неизвестные candidate id: " + ", ".join(unknown_ids), file=sys.stderr)
-        if duplicate_ids:
-            print("candidate классифицирован дважды: " + ", ".join(duplicate_ids), file=sys.stderr)
-        if missing_ids:
-            print("не прочитаны/не классифицированы: " + ", ".join(missing_ids), file=sys.stderr)
+        if incompatible:
+            print("irrelevant несовместим с support/limit: " + ", ".join(incompatible), file=sys.stderr)
         return 2
 
-    def found_as(candidate_id, role):
-        return any(x.startswith(role + ":")
-                   for x in candidates[candidate_id].get("found_by", []))
-
-    wrong_supports = [item for item in args.supports if not found_as(item, "support")]
-    wrong_limits = [item for item in args.limits if not found_as(item, "challenge")]
-    if wrong_supports:
-        print("--supports допустим только для кандидата из support-поиска: "
-              + ", ".join(wrong_supports), file=sys.stderr)
+    assessments = receipt.setdefault("assessments", {})
+    for candidate_id in set(selected):
+        assessments[candidate_id] = {
+            "classes": [key for key, values in classes.items() if candidate_id in values],
+            "reason": args.reason,
+        }
+    if partial:
+        if not selected:
+            print("review requires at least one candidate", file=sys.stderr)
+            return 2
+        write_json(receipt_path, receipt)
+        print(f"REVIEWED={len(assessments)}/{len(candidates)}; EVIDENCE_GATE=REVIEW_REQUIRED")
+        return 1
+    missing_ids = sorted(set(candidates) - set(assessments))
+    if missing_ids and args.outcome != "unknown":
+        print("не прочитаны/не классифицированы: " + ", ".join(missing_ids), file=sys.stderr)
         return 2
-    if wrong_limits:
-        print("--limits допустим только для кандидата из challenge-поиска: "
-              + ", ".join(wrong_limits), file=sys.stderr)
-        return 2
-    if args.outcome == "supported" and (not args.supports or args.limits):
+    supports = [key for key, value in assessments.items() if "support" in value["classes"]]
+    limits = [key for key, value in assessments.items() if "limit" in value["classes"]]
+    irrelevant = [key for key, value in assessments.items() if "irrelevant" in value["classes"]]
+    if args.outcome == "supported" and (not supports or limits):
         print("supported требует support и запрещает непринятое ограничение", file=sys.stderr)
         return 2
-    if args.outcome == "qualified" and (not args.supports or not args.limits):
+    if args.outcome == "qualified" and (not supports or not limits):
         print("qualified требует и support, и limit", file=sys.stderr)
         return 2
     if args.outcome != "unknown" and not candidates:
         print("без кандидатов допустим только unknown", file=sys.stderr)
         return 2
     incomplete_git = old_coverage.get("unmerged_refs_unchecked_reason")
-    if (old_coverage.get("fingerprint_errors")
+    if (old_coverage.get("fingerprint_errors") or old_coverage.get("search_errors")
             or (incomplete_git and incomplete_git != "репозитория нет")):
         if args.outcome != "unknown":
             print("неполный охват допускает только unknown", file=sys.stderr)
@@ -434,17 +469,18 @@ def finalize_evidence(args, root):
     receipt["review"] = {
         "outcome": args.outcome,
         "reason": args.reason,
-        "support_ids": args.supports,
-        "limit_ids": args.limits,
-        "irrelevant_ids": args.irrelevant,
+        "support_ids": supports,
+        "limit_ids": limits,
+        "irrelevant_ids": irrelevant,
+        "unreviewed_ids": missing_ids,
     }
     try:
-        write_json(args.finalize, receipt)
+        write_json(receipt_path, receipt)
     except OSError as exc:
         print(f"receipt не закрыт: {exc}", file=sys.stderr)
         return 2
     print(f"EVIDENCE_GATE={args.outcome.upper()}")
-    print(f"Receipt: {os.path.abspath(args.finalize)}")
+    print(f"Receipt: {os.path.abspath(receipt_path)}")
     if args.outcome == "unknown":
         print("Вывод остаётся UNKNOWN: не записывай его как current-state fact.")
         return 1
@@ -457,7 +493,18 @@ def main():
     if not os.path.isdir(root):
         print(f"нет такой папки: {root}")
         return 2
-    if args.finalize:
+    if args.page:
+        try:
+            with open(args.page, encoding="utf-8") as stream:
+                receipt = json.load(stream)
+            if receipt.get("root") != os.path.realpath(root) or receipt.get("tool") != "kb_lookup.py":
+                raise ValueError("receipt belongs to a different root/tool")
+            print("Snapshot page; freshness is checked when recording review or finalizing.")
+            return print_page(receipt, args.offset)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"invalid receipt: {exc}", file=sys.stderr)
+            return 2
+    if args.finalize or args.review:
         return finalize_evidence(args, root)
     if args.claim or args.receipt or args.support or args.challenge:
         return begin_evidence(args, root)
@@ -469,11 +516,12 @@ def main():
     print(f"База: {root} — {gde}\n")
 
     found_any = False
+    errors = []
     for topic in args.topics:
         variants = topic.split("|")
-        hits = search(files, root, variants)
+        hits = search(files, root, variants, errors)
         shown = " / ".join(v.strip() for v in variants)
-        vne = search_refs(root, refs, variants) if refs else []
+        vne = search_refs(root, refs, variants, errors) if refs else []
 
         if not hits and not vne:
             print(f"── {shown}")
@@ -510,6 +558,9 @@ def main():
         print("По темам с находками вывод «вопрос открыт» делать нельзя,")
         print("не прочитав найденное. Обрыв сюжета внутри источника означает")
         print("«не было в этом канале», а не «не было».")
+    if errors:
+        print("COVERAGE=UNKNOWN: " + "; ".join(sorted(set(errors))))
+        return 1
     return 0
 
 

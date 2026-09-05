@@ -10,7 +10,7 @@ kb_apply.py — что новая редакция значит для ЭТОЙ 
 знаний» вызывающий агент после кода 1 продолжает обратимые локальные изменения по
 `references/migration.md`; в явном audit/read-only режиме он только сообщает итог.
 Post-results acceptance, secrets/private runtime и push остаются отдельными gates.
-Migration unit is the minimum compatible project level (currently 6.4.0);
+Migration unit is the minimum compatible project level (currently 7.0.0);
 a future patch does not reopen a project already accepted there.
 
 Код 1 означает `NEEDS_APPLICATION` либо `APPLICATION_UNPROVEN`: проект отстаёт

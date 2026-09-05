@@ -157,9 +157,9 @@ python3 <путь к скиллу>/scripts/kb_check.py <корень>
 `PROJECT_ROLES.json`, `KNOWLEDGE_INDEX.json`, физический канон, обе discovery-точки,
 границы полномочий, quality owner/review, оба validator, обычные и all-roles costs и
 fresh-clone recovery. Для каждого active runtime root сохранить найденные
-`id/path/hash/version`; symlink означает только structural state. Accepted
-`ROLE_ACCEPTANCE.json` отдельно доказывает structural, unforced fresh-session discovery,
-synthetic-first behavior и post-results owner acceptance. Старый
+`id/path/hash/version`; symlink означает только structural state. Текущая compact
+приёмка и исходы определены только в `project-roles.md`; отдельный
+`ROLE_ACCEPTANCE.json` для нового candidate не требуется. Старый
 `.kb-skills.json` принимается как legacy до интерактивной миграции. Запустить:
 
 ```bash

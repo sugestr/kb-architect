@@ -45,6 +45,30 @@ REVIEW_DAYS = 30            # журнал и вопросы: давно не р
 DATE_RE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 
 
+def correction_status(text):
+    """Read explicit status, never a word inside a description or quotation."""
+    status = "unknown"
+    fenced = False
+    for line in text.splitlines():
+        value = re.sub(r"^\s*[-*]\s+", "", line).strip()
+        if value.startswith("```"):
+            fenced = not fenced
+        if fenced or value.startswith((">", "`")):
+            continue
+        if re.match(r"(?:\[x\](?:\s|$)|✔\s*(?:закрыт\w*|closed|решено|учтено|применено)\b)", value, re.I):
+            status = "closed"
+        elif re.match(r"(?:\[ \]|(?:status|статус):\s*(?:open|pending|открыт\w*))", value, re.I):
+            status = "open"
+        elif re.match(r"(?:status|статус):\s*(?:closed|resolved|закрыт\w*|применено)\b", value, re.I):
+            status = "closed"
+    return status
+
+
+def correction_entry_synced(text):
+    return any(re.match(r"^\s*✔\s*Вход\s+учт[её]н\b", line, re.I)
+               for line in text.splitlines())
+
+
 def contract_line(version):
     try:
         parts = tuple(int(value) for value in version.split("."))
@@ -218,7 +242,6 @@ def main():
     # случай: «предложение обновить NOW» лежало в канале, а вход утверждал
     # обратное. Правило про то, чего в файлах нет, машина выводить не должна:
     # проект без отметок о разборе получает не тревогу, а объяснение.
-    CLOSED = re.compile(r"✔|закрыт|closed|решено|учтено|применено", re.IGNORECASE)
     corrections = kb_paths.locate(root, "corrections")
     # Раньше весь разбор канала висел на одном условии, а всех прочих
     # исходов не существовало вовсе: битый объявленный путь и полное
@@ -268,19 +291,21 @@ def main():
         # шаблон отчёта сам называет постоянно горящий сигнал классом дефекта.
         # Порог взят с потолка: половина. Ниже — справка, выше — тревога.
         DOLYA_OTMETOK = 0.5
-        zakryto = [ln for ln in lines if CLOSED.search(ln)]
+        zakryto = [ln for ln in lines if correction_status(ln) == "closed" or correction_entry_synced(ln)]
         dolya = (len(zakryto) / len(lines)) if lines else 0.0
         entry_name = os.path.basename(entry.path) if entry.path else ""
         about_entry = re.compile(
             (re.escape(entry_name) + r"|" if entry_name else "") + r"\bвход\b|\bNOW\b|\bSTATUS\b",
             re.IGNORECASE)
-        pending = [ln for ln in lines if not CLOSED.search(ln) and about_entry.search(ln)]
+        pending = [ln for ln in lines if correction_status(ln) != "closed"
+                   and not correction_entry_synced(ln) and about_entry.search(ln)]
+        explicitly_open = [ln for ln in pending if correction_status(ln) == "open"]
         if not lines:
             ok.append(f"канал правок ({where_c}) пуст")
-        elif dolya < DOLYA_OTMETOK:
+        elif dolya < DOLYA_OTMETOK and not explicitly_open:
             skolko = ("ни одной" if not zakryto
                       else f"{len(zakryto)} из {len(lines)} ({dolya:.0%})")
-            ok.append(f"канал правок ({where_c}): {len(lines)} записей, отметку о разборе "
+            ok.append(f"UNKNOWN: канал правок ({where_c}): {len(lines)} записей, отметку о разборе "
                       f"несут {skolko} — разобранность отсюда не видна, и записей про вход "
                       f"({len(pending)}) я по этой причине в находки не выношу: непомеченное "
                       f"здесь не значит неразобранное. Помечай применённое "
@@ -636,41 +661,11 @@ def main():
                        f"{len([l for l in src.splitlines() if l.strip()])}. Установленная копия "
                        f"({skill_version_now}) и репозиторий разошлись — выводы о поведении "
                        f"скриптов делай по установленной")
-        # Старый локальный probe сохранён для совместимости с repo-backed
-        # установками. Стабильный проектный канал — PUBLIC GitHub через
-        # kb_update.py; development-symlink не считается distribution source.
-        _, behind, src_why = kb_paths.published_version()
-        auto, _src = kb_paths.declared_value(root, ("обновление скилла", "skill_update"))
-        if behind and auto and auto.strip().lower().startswith(("авто", "auto", "да", "yes")):
-            was, now_v = kb_paths.pull_skill()
-            if was:
-                due.append(f"скилл обновлён автоматически: {was} → {now_v}. "
-                           f"**Загруженные в эту сессию инструкции не перечитались** — горячей "
-                           f"перезагрузки нет. Примени редакцию по таблице выпусков "
-                           f"(`python3 scripts/kb_apply.py .` — он покажет строки между {was} и {now_v} и чего они касаются здесь), обнови "
-                           f"kb_standard_version и запиши в «Соответствие», что взял и от чего "
-                           f"отказался. Со следующего входа будет уже новая")
-            else:
-                due.append(f"источник ушёл вперёд на {behind}, автообновление не выполнено: "
-                           f"{now_v}. Обнови вручную")
-        elif behind:
-            due.append(f"источник скилла ушёл вперёд на {behind} коммит(ов) — вышла редакция "
-                       f"новее установленной {skill_version_now}. Обнови, затем **примени**: "
-                       f"запусти `python3 scripts/kb_apply.py .`, возьми применимое, "
-                       f"обнови kb_standard_version и запиши "
-                       f"в «Соответствие», что взял и от чего отказался. Установка без "
-                       f"применения — это новый код при старых соглашениях")
-        elif behind == 0:
-            ok.append("источник скилла: новее ничего не опубликовано (источник опрошен "
-                      "сейчас, не по прошлому слепку)")
-        elif src_why and "не из репозитория" not in src_why:
-            ok.append(f"отставание от источника неизвестно — {src_why}. Это не ноль: "
-                      f"установлена {skill_version_now}, что вышло позже — не проверено")
-        else:
-            ok.append("локальный git-источник установки не виден — это штатно для "
-                      "управляемой копии. Стабильный public проверяет команда "
-                      "`python3 <установленный-скилл>/scripts/kb_update.py --public`; "
-                      "сервисный контур запускает её автоматически")
+        # Diagnostics never fetch or pull the tree whose code is executing.
+        # Stable updates have one owner, kb_update.py, at a safe service boundary.
+        ok.append("public freshness здесь НЕ ПРОВЕРЕНА; kb_due read-only. "
+                  "Принятый сервисный контур использует kb_update.py --public "
+                  "на безопасной границе, без hot reload и поднятия project marker.")
         ok.append("загруженная в сессию редакция отсюда не видна: инструкции не "
                   "перечитываются на лету. Разошлась с установленной — узнать об этом "
                   "нельзя, поэтому опровергая собственное недавнее наблюдение, сначала "
@@ -682,11 +677,12 @@ def main():
             print(f"  • {x}")
         print()
     if ok:
-        print("в порядке:")
+        print("Сведения и границы проверки:")
         for x in ok:
             print(f"  · {x}")
     if not due:
-        print("\nничего не просрочено.")
+        print("\nЯвных сигналов просрочки в проверенном охвате нет; UNKNOWN остаётся непроверенным.")
+    print("DIAGNOSTIC_REPORT: exit 0 означает сформированный отчёт, не готовность проекта.")
     return 0
 
 

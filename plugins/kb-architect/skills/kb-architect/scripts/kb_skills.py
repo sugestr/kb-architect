@@ -1229,6 +1229,52 @@ def execute_compact_project_check(root: Path, data: dict, registry: Path,
         notes.append("PROJECT_CHECK_EXECUTED_PASS: explicit narrow validator exit 0")
 
 
+def role_closure(roles: dict[str, dict], selected: list[str]) -> tuple[list[str], list[str]]:
+    """Parents before specializations, deduplicated; siblings never implied."""
+    ordered, visiting, errors = [], set(), []
+
+    def visit(role_id):
+        if not isinstance(role_id, str) or role_id not in roles:
+            errors.append(f"unknown parent/selected role: {role_id}")
+            return
+        if role_id in visiting:
+            errors.append(f"role inheritance cycle: {role_id}")
+            return
+        if role_id in ordered:
+            return
+        visiting.add(role_id)
+        parent = roles[role_id].get("extends")
+        if parent is not None:
+            visit(parent)
+        visiting.remove(role_id)
+        ordered.append(role_id)
+
+    for role_id in selected:
+        visit(role_id)
+    return ordered, list(dict.fromkeys(errors))
+
+
+def selection_plan(data: dict, selected: list[str]) -> dict:
+    roles = {role["id"]: role for role in data.get("roles", [])
+             if isinstance(role, dict) and isinstance(role.get("id"), str)}
+    ordered, errors = role_closure(roles, selected)
+    names = list(dict.fromkeys(roles[key].get("skill") for key in ordered))
+    skills = {item.get("name"): item for item in data.get("skills", []) if isinstance(item, dict)}
+    for name in names:
+        if name not in skills:
+            errors.append(f"undeclared skill: {name}")
+    return {
+        "status": "ROUTE_PLAN" if not errors else "UNKNOWN",
+        "roles": ordered,
+        "skills": [{"name": name, "canonical": skills[name].get("canonical")}
+                   for name in names if name in skills],
+        "knowledge_routes": list(dict.fromkeys(route for key in ordered
+                                  for route in roles[key].get("knowledge_routes", []))),
+        "errors": errors,
+        "scope": "declared selection only; no semantic selection, acceptance or action authority proved",
+    }
+
+
 def validate_visible(root: Path, data: dict, registry: Path,
                      runtime_roots: list[Path] | None = None,
                      execute_project_check: bool = False,
@@ -1296,6 +1342,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
             errors.append(f"{role_id}: knowledge_routes must be a non-empty string array")
         role_by_id[role_id] = role
 
+    _, hierarchy_errors = role_closure(role_by_id, list(role_by_id))
+    errors.extend(hierarchy_errors)
     roots = runtime_roots if runtime_roots is not None else default_runtime_roots()
     notes.append("runtime discovery roots checked: " +
                  (", ".join(str(path) for path in roots) if roots else "none"))
@@ -1392,6 +1440,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                     errors.append(f"{scenario_id}: unknown roles {', '.join(unknown)}")
                     continue
                 covered_roles.update(selected)
+                selected, _ = role_closure(role_by_id, selected)
                 unique_skills = {str(role_by_id[role]["skill"]) for role in selected}
                 entry_bytes = sum(skill_sizes.get(name, 0) for name in unique_skills)
                 support_paths = {path for name in unique_skills
@@ -1400,7 +1449,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 required_routes = {route for role in selected
                                    for route in role_by_id[role].get("knowledge_routes", [])}
                 required_paths = {path for route in required_routes
-                                  for path in index_routes.get(route, {}).get("paths", [])}
+                                  for path in kb_index.local_paths(index_routes.get(route, {}))}
                 declared_files = scenario.get("route_files")
                 if not isinstance(declared_files, list) or not all(
                         isinstance(item, str) and item for item in declared_files):
@@ -1840,11 +1889,11 @@ def current_contract_line() -> str:
     skill_file = Path(__file__).resolve().parent.parent / "SKILL.md"
     version = (frontmatter_value(skill_file, "minimum_project_version")
                or frontmatter_value(skill_file, "contract_line")
-               or frontmatter_value(skill_file, "version") or "6.4.0")
+               or frontmatter_value(skill_file, "version") or "7.0.0")
     try:
         return kb_apply.line_text(version)
     except (AttributeError, ValueError):
-        return "6.4.0"
+        return "7.0.0"
 
 
 def current_marker(root: Path) -> tuple[str | None, str | None]:
@@ -2256,6 +2305,8 @@ def main() -> int:
     actions.add_argument(
         "--prepare-candidate", action="store_true",
         help="print a deterministic read-only candidate prefill; write nothing")
+    actions.add_argument("--select", action="append", metavar="ROLE",
+                         help="resolve selected roles and ancestors; does not infer relevance")
     parser.add_argument(
         "--project-check-timeout", type=int, default=300,
         help="seconds allowed for --execute-project-check (default: 300)")
@@ -2267,6 +2318,14 @@ def main() -> int:
             indent=2, sort_keys=True))
         return 0
     registry = choose_registry(root, args.registry)
+    if args.select:
+        data = load_json_object(registry)
+        if data is None:
+            print("role registry unreadable", file=sys.stderr)
+            return 1
+        result = selection_plan(data, args.select)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1 if result["errors"] else 0
     runtime_roots = default_runtime_roots()
     runtime_roots.extend(path.expanduser().resolve() for path in args.runtime_root)
     # Preserve order while making the stated coverage exact.

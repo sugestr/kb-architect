@@ -38,7 +38,7 @@ EXTRA = {
 }
 
 OPTIONAL_DIRS = {
-    "sources": "чужое и сырое, читать только по прямому запросу",
+    "sources": "первичные источники, читать по предметному маршруту и границам доступа",
     "documents": "оригиналы: сканы, PDF, фото",
     "output": "производимое наружу",
     "decisions": "решения, неизменяемые",
@@ -73,6 +73,11 @@ def main() -> int:
     args = ap.parse_args()
 
     root = os.path.abspath(args.root)
+    kdir = args.knowledge_dir
+    destination = os.path.realpath(os.path.join(root, kdir))
+    if (os.path.isabs(kdir) or destination == os.path.realpath(root)
+            or os.path.commonpath([os.path.realpath(root), destination]) != os.path.realpath(root)):
+        ap.error("--knowledge-dir must be a directory inside the project")
     os.makedirs(root, exist_ok=True)
 
     created, skipped = [], []
@@ -89,15 +94,13 @@ def main() -> int:
         os.symlink("CLAUDE.md", agents)
         created.append("AGENTS.md -> CLAUDE.md")
 
-    kdir = args.knowledge_dir
     os.makedirs(os.path.join(root, kdir), exist_ok=True)
     created.append(f"{kdir}/")
 
-    cfg = None
-    if kdir != "knowledge" and os.path.exists(cfg):
-        text = open(cfg, encoding="utf-8").read()
-        text = text.replace("  knowledge: [knowledge]", f"  knowledge: [{kdir}]")
-        open(cfg, "w", encoding="utf-8").write(text)
+    if kdir != "knowledge" and "CLAUDE.md" in created:
+        rules = os.path.join(root, "CLAUDE.md")
+        with open(rules, "a", encoding="utf-8") as stream:
+            stream.write(f"\nЗнания проекта: [{kdir}/]({kdir}/).\n")
 
     for d in OPTIONAL_DIRS:
         if getattr(args, d.lstrip("_"), False):
