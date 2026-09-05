@@ -227,6 +227,8 @@ major — смену operating model. Совместимый patch устана�
 
 | 7.0.2 | Pilot correction: inbox diagnostics compare exact normalized project identities; similar project names no longer create false outgoing-message findings. Optional explicit project_aliases preserves renamed-project routing. Project level remains 7.0.0. ⟦MIN_PROJECT: 7.0.0⟧ | inbox diagnostics, compatible patch |
 
+| 7.0.3 | Pilot correction: local file:line citations resolve to their files; diagnostics distinguish missing targets, unmatched identities and unintegrated versions from unproved knowledge loss or non-delivery. Project level remains 7.0.0. ⟦MIN_PROJECT: 7.0.0⟧ | citation locators, truthful diagnostics, compatible patch |
+
 ### Чем вызван каждый выпуск — и почему это считается, а не обсуждается
 
 Внешняя критика обвинила стандарт в том, что темп выпусков — та самая болезнь, от которой он себя лечил: «артефакт, конвертирующий любую критику в новую версию». Владелец возразил: темп — следствие того, что несколько проектов работали интенсивно и прислали диагностику.

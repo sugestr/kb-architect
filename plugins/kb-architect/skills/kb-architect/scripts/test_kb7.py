@@ -23,6 +23,70 @@ HERE = Path(__file__).resolve().parent
 
 
 class RedesignTests(unittest.TestCase):
+    def test_existing_file_line_locators_resolve_without_false_missing_links(self):
+        self.save("NOW.md", "Current source.\n")
+        self.save("src/module.py", "# source\n" * 200)
+        self.save("literal:141", "A filename containing a colon.\n")
+        links = [f"[source {line}](../src/module.py:{line})" for line in range(141, 173)]
+        links.extend([
+            "[root path](src/module.py:1)",
+            "[root anchored](/src/module.py:4)",
+            "[fragment](../src/module.py:2#context)",
+            "[query](../src/module.py:3?view=source)",
+            "[positive with leading zeros](../src/module.py:001)",
+            "[literal filename](../literal:141)",
+            "[external](https://example.invalid/module.py:141)",
+        ])
+        self.save("notes/review.md", "\n".join(links))
+        result = self.run_tool("kb_check.py")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("БИТЫЕ ССЫЛКИ", result.stdout)
+
+    def test_invalid_line_suffixes_and_directory_locators_remain_findings(self):
+        self.save("NOW.md", "Current source.\n")
+        self.save("src/module.py", "# source\n")
+        targets = ("src/module.py:0", "src/module.py:-1", "src/module.py:1:2", "src:1")
+        self.save("review.md", "\n".join(f"[source]({target})" for target in targets))
+        result = self.run_tool("kb_check.py")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for target in targets:
+            self.assertIn(f"review.md → {target}", result.stdout)
+
+    def test_missing_file_locator_is_a_finding_without_claiming_lost_knowledge(self):
+        self.save("NOW.md", "Current source.\n")
+        self.save("review.md", "[source](missing.py:141)\n[plain](absent.md)\n")
+        result = self.run_tool("kb_check.py")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("review.md → missing.py:141", result.stdout)
+        self.assertIn("review.md → absent.md", result.stdout)
+        self.assertNotIn("уже потеряно", result.stdout)
+
+    def test_unknown_inbox_recipient_does_not_prove_the_recipient_never_saw_it(self):
+        self.save("NOW.md", "Current source.\n")
+        self.save("_inbox/incoming.md", "---\ntype: agent-message\nmessage_id: m1\n"
+                  "from_project: collector\nto_project: old-project\n"
+                  "delivery_state: delivered\n---\nIncoming.\n")
+        self.save("_inbox/INDEX.md", "m1: accepted by this project.\n")
+        result = self.run_tool("kb_check.py")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("incoming.md", result.stdout)
+        self.assertNotIn("адресат этого не видел", result.stdout)
+        self.assertNotIn("не доставлено", result.stdout)
+        self.save("CLAUDE.md", "project_aliases: old-project\n")
+        resolved = self.run_tool("kb_check.py")
+        self.assertEqual(resolved.returncode, 0, resolved.stdout + resolved.stderr)
+
+    def test_outgoing_inbox_copy_does_not_establish_delivery_outcome(self):
+        self.save("NOW.md", "Current source.\n")
+        self.save("_inbox/outgoing.md", "---\ntype: agent-message\nmessage_id: m1\n"
+                  "from_project: project\nto_project: another-project\n"
+                  "delivery_state: delivered\n---\nOutgoing copy.\n")
+        result = self.run_tool("kb_check.py")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("outgoing.md", result.stdout)
+        self.assertNotIn("не доставлено", result.stdout)
+        self.assertNotIn("До этого состояние — prepared", result.stdout)
+
     def test_inbox_identity_does_not_confuse_related_project_names(self):
         self.init_git()
         self.git('remote', 'add', 'origin', 'https://example.invalid/owner/shop.git')
@@ -103,6 +167,8 @@ class RedesignTests(unittest.TestCase):
         output = self.run_tool("kb_check.py")
         self.assertIn("НЕ СЛИТО В КАНОН", output.stdout)
         self.assertNotIn("СОДЕРЖИМОЕ УЖЕ В КАНОНЕ", output.stdout)
+        self.assertNotIn("работа доставлена во второй контур", output.stdout)
+        self.assertNotIn("поиск по базе честно врёт", output.stdout)
         result = self.run_tool("kb_lookup.py", "--finalize", receipt, "--outcome", "supported",
                                "--supports", "c1", "--reason", "old state only")
         self.assertEqual(result.returncode, 2)
