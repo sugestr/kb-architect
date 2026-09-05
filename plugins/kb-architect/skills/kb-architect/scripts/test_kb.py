@@ -2658,7 +2658,7 @@ def t_58_unmerged_branch_is_a_finding():
     d = vetka_fixture({"dokazatelstva/CLAIMS.md": "# требования\n\nRTA-EXCESS 1580\n"})
     out = run("kb_check.py", d)
     check("неслитая ветка с содержимым вне канона становится находкой",
-          "НЕ СЛИТО В КАНОН" in out and "oblachnaya" in out
+          "РАЗЛИЧАЮТСЯ ВЕРСИИ В ВЕТКАХ" in out and "oblachnaya" in out
           and "dokazatelstva/CLAIMS.md" in out
           and "неслитые ветки (1)" in out, out,
           "чистое рабочее дерево не доказывает, что работа в каноне")
@@ -2673,7 +2673,7 @@ def t_58_moved_directory_is_not_a_loss():
                       also_on_main={"kanon/policy-document.md": polis})
     out = run("kb_check.py", d)
     check("переезд и переименование не выдаются за потерю содержимого",
-          "НЕ СЛИТО В КАНОН" not in out
+          "РАЗЛИЧАЮТСЯ ВЕРСИИ В ВЕТКАХ" not in out
           and "СОДЕРЖИМОЕ УЖЕ В КАНОНЕ" in out, out,
           "тот же документ под другим именем — не потеря; путь и имя этого не показывают")
     shutil.rmtree(d, ignore_errors=True)
@@ -2939,7 +2939,7 @@ def t_branches_with_unmerged_work():
     g("checkout", "-q", "main")
     out = run("kb_due.py", d)
     check("ветка с невлитой работой названа",
-          "s-rabotoy" in out and "невлитой" in out, out,
+          "s-rabotoy" in out and "коммитами вне истории" in out, out,
           "для следующей сессии этой работы не существует")
     check("пустая ветка отделена от ветки с работой",
           "pustaya" in out and "уникального коммита" in out, out,
@@ -5195,7 +5195,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.0.0 as the minimum project level",
-          kb_paths.skill_version() == "7.0.4"
+          kb_paths.skill_version() == "7.0.5"
           and kb_paths.skill_contract_line() == "7.0.0"
           and kb_skills.current_contract_line() == "7.0.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

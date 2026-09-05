@@ -525,13 +525,8 @@ def main():
             elif not dirty:
                 ok.append("git: всё закоммичено и запушено")
 
-        # Ветки. Ветка — это второй источник состояния: работа существует,
-        # но её нет в линии, которую читает следующая сессия. Отличить ветку
-        # с работой от пустой можно только счётом коммитов, поэтому глазами
-        # это не ловится и накапливается молча: в отчёте проекта ВНЖ семь
-        # веток, пять пустых, две с невлитым, обнаружено вопросом владельца.
-        # Проверка точная, не эвристическая: замер на пяти живых базах дал
-        # одну находку.
+        # Commit ancestry identifies refs to inspect; it does not prove that
+        # their knowledge is absent after cherry-pick or later canonical edits.
         head = git("symbolic-ref", "--short", "HEAD")
         vetki_raw = git("for-each-ref", "--format=%(refname:short)", "refs/heads/")
         if head is None or vetki_raw is None:
@@ -552,9 +547,9 @@ def main():
                     pusto.append((b, 0))
             if rabota:
                 spisok = ", ".join(f"{b} ({c})" for b, c in rabota[:6])
-                due.append(f"веток с невлитой работой: {len(rabota)} — {spisok}. "
-                           f"Для следующей сессии, читающей {head}, этой работы не "
-                           f"существует: влей или удали, но не оставляй")
+                due.append(f"веток с коммитами вне истории {head}: {len(rabota)} — {spisok}. "
+                           "Это не доказывает отсутствие работы в каноне: проверь "
+                           "перенос patches, последующие правки и отмены до нового слияния.")
             if pusto:
                 ok.append(f"веток без единого уникального коммита: {len(pusto)} "
                           f"({', '.join(b for b, _ in pusto[:6])}) — работа уже в {head}, "

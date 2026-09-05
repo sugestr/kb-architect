@@ -185,13 +185,49 @@ class RedesignTests(unittest.TestCase):
         self.assertEqual({(c["ref"], c["path"]) for c in data["candidates"]},
                          {(None, "state.md"), ("case", "state.md")})
         output = self.run_tool("kb_check.py")
-        self.assertIn("НЕ СЛИТО В КАНОН", output.stdout)
+        self.assertIn("РАЗЛИЧАЮТСЯ ВЕРСИИ В ВЕТКАХ", output.stdout)
         self.assertNotIn("СОДЕРЖИМОЕ УЖЕ В КАНОНЕ", output.stdout)
         self.assertNotIn("работа доставлена во второй контур", output.stdout)
         self.assertNotIn("поиск по базе честно врёт", output.stdout)
         result = self.run_tool("kb_lookup.py", "--finalize", receipt, "--outcome", "supported",
                                "--supports", "c1", "--reason", "old state only")
         self.assertEqual(result.returncode, 2)
+
+    def test_cherry_pick_then_edit_is_not_reported_as_proven_missing_work(self):
+        self.init_git()
+        self.save("NOW.md", "Current.\n")
+        self.save("state.md", "Initial evidence.\n")
+        self.commit("NOW.md", "state.md")
+        self.git("checkout", "-qb", "case")
+        self.save("state.md", "Retained evidence.\n")
+        self.commit("state.md")
+        tip = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-q", "main")
+        self.save("other.md", "Independent work.\n")
+        self.commit("other.md")
+        self.git("cherry-pick", tip)
+        self.save("state.md", "Retained evidence.\nLater clarification.\n")
+        self.commit("state.md")
+        self.assertTrue(self.git("cherry", "HEAD", "case").startswith("-"))
+        for tool in ("kb_check.py", "kb_due.py"):
+            result = self.run_tool(tool)
+            self.assertIn("case", result.stdout)
+            self.assertNotIn("НЕ СЛИТО В КАНОН", result.stdout)
+            self.assertNotIn("этой работы не существует", result.stdout)
+        # Reversal stays visible: patch equivalence must not suppress a loss.
+        self.save("state.md", "Initial evidence.\n")
+        self.commit("state.md")
+        refs, why = kb_paths.unmerged_refs(str(self.root))
+        self.assertIsNone(why)
+        self.assertIn("state.md", refs[0].outside_name)
+        # A new branch-only addition must remain discoverable as evidence.
+        self.git("checkout", "-q", "case")
+        self.save("new.md", "Unique source receipt.\n")
+        self.commit("new.md")
+        self.git("checkout", "-q", "main")
+        refs, why = kb_paths.unmerged_refs(str(self.root))
+        self.assertIsNone(why)
+        self.assertIn("new.md", refs[0].outside_name)
 
     def test_role_selection_follows_legacy_pointer_and_rejects_cycles(self):
         self.save('.kb-skills.json', {'status': 'superseded', 'superseded_by': 'PROJECT_ROLES.json'})
