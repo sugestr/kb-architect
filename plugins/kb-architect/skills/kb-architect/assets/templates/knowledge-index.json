@@ -1,6 +1,14 @@
 {
   "schema": 1,
+  "current": "project-current",
   "routes": [
+    {
+      "id": "project-current",
+      "description": "Current priorities, next actions, waiting items and open questions",
+      "load_when": ["orientation or a permitted current-state summary"],
+      "aliases": ["current", "now"],
+      "paths": ["NOW.md"]
+    },
     {
       "id": "subject-authority",
       "description": "Applicable authoritative sources and recorded source hierarchy for this project",
@@ -13,7 +21,7 @@
       "description": "Current facts, evidence, decisions, hypotheses and open questions for the active case",
       "load_when": ["a conclusion depends on the current project or case"],
       "aliases": ["current case", "project facts", "case evidence"],
-      "paths": ["CLAUDE.md", "knowledge/INDEX.md"]
+      "paths": ["NOW.md", "knowledge/INDEX.md"]
     }
   ]
 }

@@ -23,6 +23,26 @@ HERE = Path(__file__).resolve().parent
 
 
 class RedesignTests(unittest.TestCase):
+    def test_relative_current_alias_is_one_owner_but_copies_and_unsafe_links_are_not(self):
+        self.save("NOW.md", "The only source.\n")
+        self.save("CLAUDE.md", "entry: NOW.md\n")
+        alias = self.root / "ops" / "STATUS.md"
+        alias.parent.mkdir()
+        alias.symlink_to("../NOW.md")
+        self.assertEqual(kb_paths.locate(str(self.root), "entry").others, [])
+        self.assertEqual(self.run_tool("kb_check.py").returncode, 0)
+        (self.root / "CLAUDE.md").unlink()
+        self.assertEqual(kb_paths.locate(str(self.root), "entry").others, [])
+        for target in (str(self.root / "NOW.md"), "STATUS.md", "missing.md", "../../outside.md"):
+            with self.subTest(target=target):
+                alias.unlink()
+                alias.symlink_to(target)
+                self.assertEqual(kb_paths.locate(str(self.root), "entry").others, [str(alias)])
+        alias.unlink()
+        alias.write_bytes((self.root / "NOW.md").read_bytes())
+        self.assertEqual(kb_paths.locate(str(self.root), "entry").others, [str(alias)])
+        self.assertEqual(self.run_tool("kb_check.py").returncode, 1)
+
     def test_existing_file_line_locators_resolve_without_false_missing_links(self):
         self.save("NOW.md", "Current source.\n")
         self.save("src/module.py", "# source\n" * 200)
@@ -308,6 +328,66 @@ class RedesignTests(unittest.TestCase):
         endpoint = json.loads(result.stdout)["resolved"][0]
         self.assertEqual(endpoint["section"], "Current")
         self.assertEqual(endpoint["execution"], "NOT_READ")
+
+    def test_init_extended_has_one_resolvable_current_and_preserves_it_on_repeat(self):
+        self.init_git()
+        result = self.run_tool("kb_init.py", "--extended")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.root / "NOW.md").is_file())
+        self.assertFalse((self.root / "STATUS.md").exists())
+        self.git("add", "--", "CLAUDE.md", "AGENTS.md", "NOW.md", "KNOWLEDGE_INDEX.json")
+        result = self.run_tool("kb_index.py", "--require-now", "--json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([x["path"] for x in json.loads(result.stdout)["resolved"]],
+                         [str(self.root / "NOW.md")])
+        self.save("NOW.md", "Important owner decision remains open.\n")
+        before = (self.root / "NOW.md").read_bytes()
+        index_before = (self.root / "KNOWLEDGE_INDEX.json").read_bytes()
+        self.assertEqual(self.run_tool("kb_init.py", "--extended").returncode, 0)
+        self.assertEqual((self.root / "NOW.md").read_bytes(), before)
+        self.assertEqual((self.root / "KNOWLEDGE_INDEX.json").read_bytes(), index_before)
+
+    def test_existing_current_requires_adoption_before_init_writes_anything(self):
+        self.save("CURRENT.md", "Only original state.\n")
+        result = self.run_tool("kb_init.py", "--force", "--extended")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([x.name for x in self.root.iterdir()], ["CURRENT.md"])
+        self.assertEqual((self.root / "CURRENT.md").read_text(), "Only original state.\n")
+        self.assertIn("CURRENT_ADOPTION_REQUIRED", result.stdout)
+
+    def test_current_standard_accepts_only_now_and_keeps_legacy_reader(self):
+        self.init_git()
+        self.save("NOW.md", "The current owner.\n")
+        self.save("CURRENT.md", "Legacy state.\n")
+        self.git("add", "--", "NOW.md", "CURRENT.md")
+        self.index([self.route("attention", [{"kind": "file", "path": "CURRENT.md"}])], "attention")
+        self.assertEqual(self.run_tool("kb_index.py", "--current").returncode, 0)
+        self.assertEqual(self.run_tool("kb_index.py", "--require-now").returncode, 1)
+        self.index([self.route("attention", [{"kind": "file", "path": "NOW.md"},
+                                              {"kind": "file", "path": "CURRENT.md"}])], "attention")
+        self.assertEqual(self.run_tool("kb_index.py", "--require-now").returncode, 1)
+        self.index([self.route("attention", [{"kind": "file", "path": "NOW.md"}])], "attention")
+        self.assertEqual(self.run_tool("kb_index.py", "--require-now").returncode, 0)
+        (self.root / "NOW.md").unlink()
+        (self.root / "NOW.md").symlink_to("CURRENT.md")
+        self.git("add", "--", "NOW.md")
+        self.assertEqual(self.run_tool("kb_index.py", "--require-now").returncode, 1)
+        (self.root / "NOW.md").unlink()
+        (self.root / "CURRENT.md").rename(self.root / "NOW.md")
+        (self.root / "CURRENT.md").symlink_to("NOW.md")
+        self.git("add", "--", "NOW.md", "CURRENT.md")
+        result = self.run_tool("kb_index.py", "--require-now")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("legacy current alias remains: CURRENT.md", result.stdout)
+        (self.root / "CURRENT.md").unlink()
+        self.assertEqual(self.run_tool("kb_index.py", "--require-now").returncode, 0)
+        (self.root / "ops").mkdir()
+        (self.root / "ops" / "STATUS.md").symlink_to("../NOW.md")
+        result = self.run_tool("kb_index.py", "--require-now")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("legacy current alias remains: ops/STATUS.md", result.stdout)
+        (self.root / "ops" / "STATUS.md").unlink()
+        self.assertEqual(self.run_tool("kb_index.py", "--require-now").returncode, 0)
 
     def test_database_route_is_a_recipe_not_automatic_execution(self):
         self.init_git()

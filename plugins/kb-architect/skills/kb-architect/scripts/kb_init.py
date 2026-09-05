@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import shutil
 import sys
@@ -21,19 +22,19 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES = os.path.normpath(os.path.join(HERE, "..", "assets", "templates"))
 
-# Минимум по контракту: единый rules/current вход, канал плохих новостей,
-# эксплуатационный журнал и проверка. Отдельный NOW.md — опция, не второй default.
+# Правила и единый NOW.md, его адрес, канал плохих новостей, журнал и проверка.
 CORE = {
     "CORRECTIONS.md": "CORRECTIONS.md",
     "SLOMALOS.md": "SLOMALOS.md",
     "QUESTIONS.md": "QUESTIONS.md",
     "CLAUDE.md": "CLAUDE.md",
+    "NOW.md": "NOW.md",
+    "KNOWLEDGE_INDEX.json": "knowledge-index.json",
 }
 
 # Сверх минимума — только по флагам, из справочника.
 EXTRA = {
     "INDEX.md": "INDEX.md",
-    "STATUS.md": "STATUS.md",
     "CHANGELOG.md": "CHANGELOG.md",
 }
 
@@ -49,11 +50,18 @@ OPTIONAL_DIRS = {
 
 def copy_template(name: str, dest: str, created: list, skipped: list) -> None:
     src = os.path.join(TEMPLATES, {**CORE, **EXTRA}[name])
-    if os.path.exists(dest):
+    if os.path.lexists(dest):
         skipped.append(os.path.basename(dest))
         return
     shutil.copyfile(src, dest)
     text = open(dest, encoding="utf-8").read().replace("YYYY-MM-DD", dt.date.today().isoformat())
+    if name == "KNOWLEDGE_INDEX.json":
+        # Domain examples are not real files in a new project. Declare only
+        # the current route whose source this initializer actually creates.
+        data = json.loads(text)
+        data["routes"] = [route for route in data["routes"]
+                          if route["id"] == data["current"]]
+        text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     open(dest, "w", encoding="utf-8").write(text)
     created.append(os.path.basename(dest))
 
@@ -65,7 +73,7 @@ def main() -> int:
     ap.add_argument("--knowledge-dir", default="knowledge",
                     help="имя папки знания в этом проекте (по умолчанию knowledge)")
     ap.add_argument("--extended", action="store_true",
-                    help="добавить INDEX/STATUS/CHANGELOG из справочника")
+                    help="добавить INDEX/CHANGELOG из справочника")
     ap.add_argument("--force", action="store_true",
                     help="разрешить дописывать в уже существующие файлы проекта")
     for d in OPTIONAL_DIRS:
@@ -78,6 +86,13 @@ def main() -> int:
     if (os.path.isabs(kdir) or destination == os.path.realpath(root)
             or os.path.commonpath([os.path.realpath(root), destination]) != os.path.realpath(root)):
         ap.error("--knowledge-dir must be a directory inside the project")
+    if not os.path.lexists(os.path.join(root, "NOW.md")) and any(
+            os.path.lexists(os.path.join(root, name)) for name in
+            ("CLAUDE.md", "AGENTS.md", "PROJECT_RULES.md", "KNOWLEDGE_INDEX.json",
+             "STATUS.md", "CURRENT.md")):
+        print("CURRENT_ADOPTION_REQUIRED: existing project has no root NOW.md; "
+              "use adopt-existing/migration to preserve its current state. No files changed.")
+        return 1
     os.makedirs(root, exist_ok=True)
 
     created, skipped = [], []
@@ -143,7 +158,7 @@ def main() -> int:
         print("Пропущено (уже есть): " + ", ".join(skipped))
     print(
         "\nДальше:\n"
-        "  1. Заполни раздел «Сейчас» в CLAUDE.md — где мы, что дальше, чего ждём, что запрещено.\n"
+        "  1. Заполни NOW.md — где мы, что дальше, чего ждём, что не знаем.\n"
         "  2. Впиши в QUESTIONS.md пять вопросов проекта, один из них злой.\n"
         "  3. Заполни остальной CLAUDE.md: язык, вход в сессию, границы, блок «Соответствие».\n"
         "  4. git init + приватный remote + первый коммит.\n"

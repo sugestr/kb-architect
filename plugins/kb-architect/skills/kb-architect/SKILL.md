@@ -3,15 +3,15 @@ name: kb-architect
 description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "7.0.3"
+  version: "7.0.4"
   minimum_project_version: "7.0.0"
   author: "sugestr"
 ---
 
 # kb-architect
 
-Инфраструктура знаний: сохранить, найти и применить с нужной ролью, видимыми
-ограничениями и соразмерной ценой. Предметную структуру и методы выбирает проект.
+Инфраструктура знаний: хранить и применять с нужной ролью и соразмерной ценой.
+Предметную структуру и методы выбирает проект.
 
 ## Выбери маршрут
 
@@ -46,7 +46,7 @@ metadata:
 
 ## Общие границы
 
-- Один owner/source текущего знания. Файл, раздел, SQL и вложенная область —
+- Один owner/source; current — корневой `NOW.md`. Файл, раздел, SQL и вложенная область —
   допустимые формы; индекс хранит адреса, роль — метод, hub — координацию.
 - `PROJECT_ROLES.json` задаёт triggers; непокрытая существенная работа = stop.
   Matching required-роли загружаются все, предки/общие методы — один раз.

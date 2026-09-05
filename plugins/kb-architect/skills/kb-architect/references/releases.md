@@ -229,6 +229,8 @@ major — смену operating model. Совместимый patch устана�
 
 | 7.0.3 | Pilot correction: local file:line citations resolve to their files; diagnostics distinguish missing targets, unmatched identities and unintegrated versions from unproved knowledge loss or non-delivery. Project level remains 7.0.0. ⟦MIN_PROJECT: 7.0.0⟧ | citation locators, truthful diagnostics, compatible patch |
 
+| 7.0.4 | Единый текущий вход: корневой NOW.md и отдельные правила; initializer создаёт реальный current route и не подменяет старое состояние пустым шаблоном. Завершённый перенос обновляет потребителей и удаляет старые адреса без legacy-симлинков; история и откат сохраняются. --require-now проверяет физический файл, один маршрут и видимые Git aliases, обычный --current читает прежние адреса до миграции. Диагностика различает ссылку и вторую копию. Установка patch сама не меняет проект и не переоткрывает принятые роли. ⟦MIN_PROJECT: 7.0.0⟧ | uniform current entry, complete migration, compatible reader |
+
 ### Чем вызван каждый выпуск — и почему это считается, а не обсуждается
 
 Внешняя критика обвинила стандарт в том, что темп выпусков — та самая болезнь, от которой он себя лечил: «артефакт, конвертирующий любую критику в новую версию». Владелец возразил: темп — следствие того, что несколько проектов работали интенсивно и прислали диагностику.

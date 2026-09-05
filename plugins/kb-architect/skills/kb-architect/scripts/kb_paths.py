@@ -257,6 +257,36 @@ def find_section(root, headings, docs=None):
     return None, None
 
 
+def same_source_or_safe_alias(left, right, root):
+    """Only an in-project relative symlink is an alias, not an editable copy."""
+    if os.path.abspath(left) == os.path.abspath(right):
+        return True
+    if not (os.path.islink(left) or os.path.islink(right)):
+        return False
+    identities = []
+    try:
+        for path in (left, right):
+            probe, seen = os.path.abspath(path), set()
+            while os.path.islink(probe):
+                if probe in seen:
+                    return False
+                seen.add(probe)
+                target = os.readlink(probe)
+                if os.path.isabs(target):
+                    return False
+                probe = os.path.abspath(os.path.join(os.path.dirname(probe), target))
+                if os.path.commonpath([root, probe]) != root:
+                    return False
+            identity = os.path.realpath(path)
+            if (not os.path.isfile(path)
+                    or os.path.commonpath([os.path.realpath(root), identity]) != os.path.realpath(root)):
+                return False
+            identities.append(identity)
+    except (OSError, ValueError):
+        return False
+    return identities[0] == identities[1]
+
+
 def locate(root, kind):
     spec = KINDS[kind]
     root = os.path.abspath(root)
@@ -266,14 +296,17 @@ def locate(root, kind):
     # Ранний возврат на объявлении прятал второй вход: объявили `NOW.md`,
     # рядом лежит `STATUS.md`, дубль не находился. Инвариант входа — один,
     # и проверять это надо независимо от того, что записано в правилах.
-    files = by_name(root, spec["names"])
+    files = []
+    for path in by_name(root, spec["names"]):
+        if not any(same_source_or_safe_alias(path, old, root) for old in files):
+            files.append(path)
 
     raw, _ = declared_value(root, spec["keys"], docs)
     if raw:
         token = raw.split()[0].strip("«»\"'`,;")
         cand = os.path.join(root, token)
         if os.path.isfile(cand):
-            extra = [f for f in files if os.path.abspath(f) != os.path.abspath(cand)]
+            extra = [f for f in files if not same_source_or_safe_alias(f, cand, root)]
             return Located(kind, path=cand, others=extra,
                            how="объявлен в правилах проекта", declared=raw)
         sec, where = find_section(root, spec["headings"], docs)

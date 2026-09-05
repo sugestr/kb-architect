@@ -14,6 +14,25 @@ import sys
 DEFAULT_INDEX = "KNOWLEDGE_INDEX.json"
 
 
+def current_alias_errors(root: Path) -> list[str]:
+    """Check visible project paths only at the explicit NOW migration gate."""
+    listed = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        capture_output=True, text=True)
+    if listed.returncode:
+        return ["cannot inspect current aliases: Git-visible paths unavailable"]
+    errors = []
+    for relative in sorted(set(listed.stdout.split("\0")) - {"", "NOW.md"}):
+        candidate = root / relative
+        if candidate.is_symlink():
+            try:
+                if candidate.resolve(strict=True) == root / "NOW.md":
+                    errors.append(f"legacy current alias remains: {relative}; migrate consumers and remove it")
+            except (OSError, RuntimeError):
+                pass  # Unrelated broken links do not establish a current alias.
+    return errors
+
+
 def targets(route: dict) -> list[dict]:
     """Legacy file addresses and typed targets share one interface."""
     paths = route.get("paths", [])
@@ -196,11 +215,15 @@ def main() -> int:
     parser.add_argument("--index", type=Path)
     parser.add_argument("--require", action="append", default=[])
     parser.add_argument("--current", action="store_true", help="resolve the declared current route")
+    parser.add_argument("--require-now", action="store_true",
+                        help="check physical root NOW.md, one current route and no aliases; implies --current")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     path = args.index.resolve() if args.index else root / DEFAULT_INDEX
     current_errors = []
+    args.current = args.current or args.require_now
+    current = None
     if args.current:
         data, _ = load_index(path)
         current = data.get("current") if data else None
@@ -210,6 +233,13 @@ def main() -> int:
             current_errors.append("current route is not declared; coverage UNKNOWN (do not guess NOW.md)")
     routes, errors, notes = validate(root, path, only=set(args.require) if args.require else None)
     errors.extend(current_errors)
+    if args.require_now:
+        route = routes.get(current, {})
+        if targets(route) != [{"kind": "file", "path": "NOW.md"}]:
+            errors.append("current route must address only root NOW.md; migrate the existing current owner")
+        if (root / "NOW.md").is_symlink():
+            errors.append("root NOW.md must be the regular current file, not a symlink")
+        errors.extend(current_alias_errors(root))
     resolved = []
     for route_id in args.require:
         if route_id not in routes:

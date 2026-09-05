@@ -170,7 +170,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "7.0.3"
+          and data.get("baseline_version") == "7.0.4"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 6_144
@@ -203,9 +203,9 @@ def t_640_project_entry_allows_one_physical_owner_and_keeps_stop_gates():
     tpl = skill_text("assets/templates/CLAUDE.md")
     out = Vyvod(tpl, 0)
     check("project boot/current entry is single-owner, routed and fail-closed",
-          "один физический boot/current canon" in tpl
-          and "текущее состояние: раздел «Сейчас»" in tpl
-          and "Отдельный `NOW.md` нужен только" in tpl
+          "один физический канон правил" in tpl
+          and "вход: NOW.md" in tpl
+          and "## Сейчас" not in tpl
           and "подробные правила" in tpl
           and "Authority и stop-gates" in tpl
           and "Required role" in tpl
@@ -214,7 +214,7 @@ def t_640_project_entry_allows_one_physical_owner_and_keeps_stop_gates():
           and "measure-route-costs.py" not in tpl
           and "`UNKNOWN`, не PASS" in tpl
           and "без него размер измеряется информационно" in tpl,
-          out, "one file is first-class; optional routing cannot lose safety semantics")
+          out, "one rules owner routes to NOW; routing cannot lose safety semantics")
 
 
 def t_interactive_result_precedes_durable_tail():
@@ -2424,13 +2424,13 @@ def t_640_init_creates_one_physical_boot_current_owner():
     with open(claude, encoding="utf-8") as stream:
         generated = stream.read()
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("new project has one physical boot/current owner for both agents",
+    check("new project shares rules across agents and has one root current file",
           p.returncode == 0 and os.path.isfile(claude)
           and os.path.islink(agents) and os.path.samefile(claude, agents)
-          and not os.path.exists(now)
-          and "текущее состояние: раздел «Сейчас»" in generated
-          and "Обновлено:" in generated,
-          out, "CLAUDE/AGENTS share bytes; inline current is default; NOW remains optional")
+          and os.path.isfile(now) and not os.path.samefile(claude, now)
+          and "вход: NOW.md" in generated
+          and "## Сейчас" not in generated,
+          out, "CLAUDE/AGENTS share rules; NOW is the single separate current owner")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -5195,7 +5195,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.0.0 as the minimum project level",
-          kb_paths.skill_version() == "7.0.3"
+          kb_paths.skill_version() == "7.0.4"
           and kb_paths.skill_contract_line() == "7.0.0"
           and kb_skills.current_contract_line() == "7.0.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
