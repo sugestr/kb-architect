@@ -1358,12 +1358,12 @@ def t_capability_registry_expresses_role_not_only_location():
           and all(key in scenario for key in
                   ("accepted_end_to_end_bytes", "route_files"))
           and acceptance.get("protocol") == "kb-role-acceptance/v3"
-          and acceptance["live_test"].get("fresh_context") is True
-          and acceptance["live_test"].get("unforced") is True
+          and acceptance["live_test"].get("fresh_context") is None
+          and acceptance["live_test"].get("unforced") is None
           and set(acceptance["live_test"].get("observation", {})) == {
               "observed_at", "run_id"}
           and acceptance["project_check"].get("execution") is None
-          and acceptance["agents"]["codex"]["status"] == "TESTED"
+          and acceptance["agents"]["codex"]["status"] == "UNKNOWN"
           and acceptance["agents"]["claude"]["status"] == "UNKNOWN",
           out, "method stays in one SKILL; registry carries split gates and costs")
 
@@ -5195,7 +5195,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.0.0 as the minimum project level",
-          kb_paths.skill_version() == "7.0.5"
+          kb_paths.skill_version() == "7.0.6"
           and kb_paths.skill_contract_line() == "7.0.0"
           and kb_skills.current_contract_line() == "7.0.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

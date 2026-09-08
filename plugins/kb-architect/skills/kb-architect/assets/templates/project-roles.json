@@ -84,9 +84,9 @@
     },
     "live_test": {
       "status": "PENDING",
-      "agent": "codex",
-      "fresh_context": true,
-      "unforced": true,
+      "agent": null,
+      "fresh_context": null,
+      "unforced": null,
       "covers": ["role-selection", "knowledge-recall", "authority-stop"],
       "summary": "Replace with one short observed result",
       "observation": {
@@ -95,7 +95,7 @@
       }
     },
     "agents": {
-      "codex": {"status": "TESTED", "basis": "live_test"},
+      "codex": {"status": "UNKNOWN", "basis": "Not tested yet"},
       "claude": {"status": "UNKNOWN", "basis": "Not tested yet"}
     },
     "owner": {

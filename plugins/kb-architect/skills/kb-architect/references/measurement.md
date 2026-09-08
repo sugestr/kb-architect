@@ -45,16 +45,17 @@ Timestamps, длительности инструментов, exit codes, ве�
 
 ### Статический бюджет
 
-`kb_cost.py --check` измеряет entry, routed Markdown/секции и вывод --help,
-сравнивая с `assets/route-cost-baseline.json`. Bytes/3.3 — только приближённые
-токены; это не биллинг. Entry скилла ограничен 8 КиБ. У проекта универсального
-лимита файла нет; `project_boot_budget_bytes` действует только после принятия.
+`kb_cost.py --check`: entry, routed Markdown/секции и --help против
+`assets/route-cost-baseline.json`. Bytes/3.3 — оценка токенов, не биллинг.
+Entry ограничен 8 КиБ; проектный `project_boot_budget_bytes` требует принятия,
+универсального лимита project-файла нет.
 
-`kb_skills.py` отдельно считает entry методов и static end-to-end route с
-дедупликацией. Вложенный метод добавляет предков, не соседние роли. Для query
-считается рецепт; объём результатов БД и внешних project routes — переменный,
-его надо измерить в сценарии. Control-plane bytes не заменяют actual
-input/cached-input/output/orchestration tokens. Последние могут быть UNKNOWN.
+`kb_skills.py` дедуплицирует методы/маршруты, включая предков, но не соседние роли.
+`role-entry` и `linked-role-support` входят в `static-route`; итог = `static-route +
+control-plane`, без повторного сложения подмножеств. All-roles — верхний сценарий,
+обычный измеряется отдельно. Query считает рецепт; результаты БД и внешние project
+routes измеряют в сценарии. Actual input/cached-input/output/orchestration tokens —
+квитанция либо UNKNOWN.
 
 Baseline — потолок с запасом, не точное равенство каждому текущему файлу.
 `OPTIMIZATION_REQUIRED` требует сократить маршрут либо обосновать новую цену.

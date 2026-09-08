@@ -23,6 +23,48 @@ HERE = Path(__file__).resolve().parent
 
 
 class RedesignTests(unittest.TestCase):
+    def test_live_observation_binds_the_tested_agent_without_erasing_other_evidence(self):
+        data = kb_skills.neutral_project_roles_template({"supported_agents": ["codex", "claude"]})
+        acceptance = data["acceptance"]
+        acceptance["live_test"].update(
+            status="PASS", agent="codex", fresh_context=True, unforced=True,
+            summary="Observed answer", observation={"observed_at": "2026-09-08T00:00:00Z",
+                                                     "run_id": "fixture-observation"})
+        def errors():
+            return kb_skills.light_acceptance_errors(self.root, data, {}, ["codex", "claude"], [])
+        acceptance["agents"]["claude"] = {"status": "TESTED", "basis": "live_test"}
+        self.assertIn("live_test PASS requires its observed agent to be TESTED", errors())
+        self.assertIn("acceptance.agents.claude cannot claim another agent's live_test", errors())
+        acceptance["agents"]["codex"] = {"status": "TESTED"}
+        self.assertIn("acceptance.agents.codex TESTED needs observed basis", errors())
+        acceptance["agents"]["codex"]["basis"] = "live_test"
+        acceptance["agents"]["claude"]["basis"] = "Separate historical native observation"
+        self.assertFalse(any("TESTED" in e or "another agent" in e for e in errors()))
+
+    def test_unobserved_candidate_cannot_claim_live_pass_by_status_alone(self):
+        candidates = [
+            kb_skills.neutral_project_roles_template({"supported_agents": ["codex"]}),
+            json.loads((HERE.parent / "assets/templates/project-roles.json").read_text()),
+        ]
+        for data in candidates:
+            with self.subTest(source=data["acceptance"]["live_test"].get("agent")):
+                acceptance = data["acceptance"]
+                live = acceptance["live_test"]
+                self.assertIsNone(live["fresh_context"])
+                self.assertIsNone(live["unforced"])
+                self.assertTrue(all(x["status"] == "UNKNOWN"
+                                    for x in acceptance["agents"].values()))
+                live.update(status="PASS", agent="codex", summary="Observed answer",
+                            observation={"observed_at": "2026-09-08T00:00:00Z",
+                                         "run_id": "external-fixture-run"})
+                errors = kb_skills.light_acceptance_errors(
+                    self.root, data, {}, ["codex"], [])
+                self.assertIn("live_test PASS requires fresh_context and unforced", errors)
+                live.update(fresh_context=True, unforced=True)
+                errors = kb_skills.light_acceptance_errors(
+                    self.root, data, {}, ["codex"], [])
+                self.assertNotIn("live_test PASS requires fresh_context and unforced", errors)
+
     def test_relative_current_alias_is_one_owner_but_copies_and_unsafe_links_are_not(self):
         self.save("NOW.md", "The only source.\n")
         self.save("CLAUDE.md", "entry: NOW.md\n")

@@ -54,13 +54,11 @@ skill и вечной тревоги. Предложение не означае
 
 ## Приёмка
 
-`kb_skills.py <root> --prepare-candidate` — read-only prefill из legacy/tracked
-skills: смысловые `UNRESOLVED` и bounded prompt. Он не назначает профессию.
-Принятый проект получает `action: none`.
+`kb_skills.py <root> --prepare-candidate` даёт read-only prefill из legacy/tracked
+skills, `UNRESOLVED` и bounded prompt, без назначения профессии; принятому — `action: none`.
 
-Новый candidate хранит `kb-role-acceptance/v3` в PROJECT_ROLES.json. Отдельный
-receipt tree, ROLE_ACCEPTANCE.json и mutation suite не нужны. Accepted schema 2–5,
-compact v1/v2 и runner v1 остаются legacy-readable без patch-миграции.
+Candidate: `kb-role-acceptance/v3` в PROJECT_ROLES.json, без отдельного receipt tree.
+Accepted schema 2–5, compact v1/v2 и runner v1 читаются без patch-миграции.
 
 Нужны четыре разных результата:
 
@@ -69,13 +67,16 @@ compact v1/v2 и runner v1 остаются legacy-readable без patch-миг�
 3. Fresh-context вопрос без имени роли: selection, indexed recall и реальный stop/conflict.
 4. Приёмка показанного результата с честными OPEN по полномочиям из migration.md.
 
-Candidate ставит `PENDING`; `--execute-project-check` запускает объявленный
-tracked project-local validator и сам записывает PASS/FAIL, связывая command,
-validator bytes, skill trees и wiring. Validator должен быть назван в command;
-скрытый global code невоспроизводим. После изменения входов верни PENDING и
-выполни один новый run. Поля runner не заполняют успехом вручную.
+`--execute-project-check` запускает названный в command tracked project-local
+validator из PENDING и сам записывает PASS/FAIL с command, validator bytes, skill
+trees и wiring. После изменения входов верни PENDING и повтори run; успех не заполняй вручную.
 
-Fresh-context observation ссылается на native task/turn или tracked evidence.
+Fresh-context — отдельная сессия без истории миграции: обычный вопрос и исходники,
+без ожидаемого ответа, имени роли и подсказки stop. Selection/recall/stop оценивают
+по ответу и следу чтения. Новый вопрос в миграционной задаче — self-check.
+`fresh_context`, `unforced`, TESTED заполняют по наблюдению; observation хранит точный
+native run id проверки и observed_at, в том числе через tracked evidence.
+Checker проверяет форму, не изоляцию истории.
 Один агент получает TESTED; другой — INHERITED при тех же bytes/wiring и доказанной
 способности runtime либо UNKNOWN. Изменение входа/метода требует относящегося
 теста; patch сам по себе не требует model-turn. Owner/live не протухляют binding.
@@ -87,11 +88,10 @@ Core suite выполняют при выпуске скилла, не в каж
 
 ## Качество и цена
 
-В compact `quality` manifest записаны владелец метода, состояние профессионального
-review, knowledge_boundary и причина. Deferred требует условия возврата.
-Packaging-only review не является профессиональным PASS. Подробный quality-файл
-нужен предметной команде по потребности, не для удовлетворения ядра. Community-метод
-принимают/адаптируют с provenance/licence; внешний обзор не повторяют на каждую правку.
+`quality` хранит владельца метода, профессиональный review, knowledge_boundary
+и причину; Deferred — условие возврата. Packaging-only не даёт профессиональный PASS.
+Отдельный quality-файл — по потребности команды. Community-метод принимают с
+provenance/licence, без внешнего обзора каждой правки.
 
 `accepted_end_to_end_bytes` — единый бюджет entry, supporting files, routed knowledge
 и control plane с запасом. Обязателен all_roles_scenario; 8 КиБ — review threshold.
@@ -107,6 +107,5 @@ source commit даёт rollback. После переключения .kb-skills.
 tombstone. Заимствованный метод имеет owner repository, exact pin и recovery;
 изменение возвращают владельцу, knowledge routes потребитель объявляет у себя.
 
-Проекты принимают по одному по `migration.md`: источник → candidate → относящиеся
-проверки → решение → marker последним. Индексы и recovery pointers tracked. Успех — полезный
-ответ, обнаруженное знание, правильный stop и меньшая цена работы.
+Проекты принимают по одному по `migration.md`, marker последним. Индексы/recovery
+tracked. Успех — полезный ответ, найденное знание, правильный stop и меньшая цена.

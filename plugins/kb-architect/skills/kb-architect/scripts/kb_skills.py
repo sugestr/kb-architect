@@ -1035,8 +1035,17 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
             continue
         if result.get("status") == "TESTED":
             tested += 1
+            if protocol == CURRENT_LIGHT_PROTOCOL:
+                if not isinstance(result.get("basis"), str) or not result["basis"].strip():
+                    errors.append(f"acceptance.agents.{agent} TESTED needs observed basis")
+                elif result["basis"].strip() == "live_test" and agent != live.get("agent"):
+                    errors.append(f"acceptance.agents.{agent} cannot claim another agent's live_test")
         elif not result.get("basis"):
             errors.append(f"acceptance.agents.{agent} {result.get('status')} needs basis")
+    if protocol == CURRENT_LIGHT_PROTOCOL and live.get("status") == "PASS":
+        observed_agent = runtime.get(live.get("agent")) if isinstance(live.get("agent"), str) else None
+        if not isinstance(observed_agent, dict) or observed_agent.get("status") != "TESTED":
+            errors.append("live_test PASS requires its observed agent to be TESTED")
     if accepted and tested < 1:
         errors.append("accepted role manifest requires one actually TESTED agent")
 
@@ -1529,7 +1538,9 @@ def validate_visible(root: Path, data: dict, registry: Path,
                              f"linked-role-support={support_bytes}; "
                              f"static-route={static_bytes}; "
                              f"control-plane={control_plane_bytes}; "
-                             f"static-end-to-end={end_to_end_bytes}")
+                             f"static-end-to-end={end_to_end_bytes}; "
+                             "role-entry and linked-role-support are included in static-route; "
+                             "static-end-to-end = static-route + control-plane")
             missing = sorted(set(role_by_id) - covered_roles)
             if missing:
                 errors.append("roles absent from cost scenarios: " + ", ".join(missing))
@@ -2167,8 +2178,8 @@ def neutral_project_roles_template(prefill: dict) -> dict:
                 "status": "PENDING", "command": None, "execution": None,
             },
             "live_test": {
-                "status": "PENDING", "agent": None, "fresh_context": True,
-                "unforced": True,
+                "status": "PENDING", "agent": None, "fresh_context": None,
+                "unforced": None,
                 "covers": ["role-selection", "knowledge-recall", "authority-stop"],
                 "summary": "Replace with one short observed result",
                 "observation": {"observed_at": None, "run_id": None},
@@ -2275,9 +2286,9 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
             "Run one ordinary fresh-context question, then obtain owner acceptance",
         ],
         "fresh_context_prompt": (
-            "Answer one ordinary project question without naming a role in the question. "
-            "In the answer record selected role IDs, used knowledge route IDs, and one "
-            "real stop or source conflict. After the substantive answer, stop: do not run "
+            "In a separate session with no inherited conversation, answer the ordinary "
+            "project question supplied by the evaluator using the project's normal entry "
+            "and sources. After the substantive answer, stop: do not run "
             "audits, tests, Git commands, or make file changes."
         ),
     }
