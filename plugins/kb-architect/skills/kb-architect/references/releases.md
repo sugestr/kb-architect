@@ -283,3 +283,5 @@ major — смену operating model. Совместимый patch устана�
 ---
 
 | 7.0.7 | Project boot явно читает установленный entry один раз на новую task, включая CURRENT; принятым проектам достаточно точечного ремонта boot без повторной миграции. Runner считает бюджет по сохранённой execution receipt и не запускает validator второй раз. ⟦MIN_PROJECT: 7.0.0⟧ | explicit cold start, measured persisted receipt |
+
+| 7.0.8 | Подготовка миграции учитывает принятие проекта с обоснованным not-applicable: валидные registry, текущая версия и finalized application дают no-op без искусственных ролей. Непринятый или повреждённый проект продолжает требовать review. ⟦MIN_PROJECT: 7.0.0⟧ | accepted role-free project no-op |

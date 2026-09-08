@@ -5156,6 +5156,70 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def t_708_prepare_candidate_respects_accepted_not_applicable():
+    """A role-free accepted project needs no synthetic role acceptance receipt."""
+    import copy
+    import json
+    from pathlib import Path
+    import kb_skills
+    d = base({"CLAUDE.md": "kb_standard_version: 6.3.0\n"})
+    root = Path(d)
+    def git(*args):
+        return subprocess.run(["git", "-C", d, *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    git("init", "-q")
+    git("add", "CLAUDE.md")
+    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "-qm", "before")
+    registry = {"schema": 1, "supported_agents": ["codex", "claude"],
+                "role_posture": {"status": "not-applicable", "rationale": "Control only"},
+                "roles": [], "skills": []}
+    receipt = {"schema": 3, "application": {
+        "from_version": "6.3.0", "to_version": "7.0.0", "status": "finalized",
+        "source": {"commit": git("rev-parse", "HEAD"), "version_source": "CLAUDE.md"},
+        "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-09-08"},
+        "finalized_at": "2026-09-08", "open": []}}
+    def write(reg=registry, app=receipt, marker="7.0.0"):
+        (root / "CLAUDE.md").write_text("kb_standard_version: " + marker + "\n")
+        (root / "PROJECT_ROLES.json").write_text(json.dumps(reg))
+        (root / "KB_RELEASE_APPLICATION.json").write_text(json.dumps(app))
+    write()
+    git("add", "CLAUDE.md", "PROJECT_ROLES.json", "KB_RELEASE_APPLICATION.json")
+    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "-qm", "accepted")
+    before = {p.name: p.read_bytes() for p in root.iterdir() if p.is_file()}
+    first = kb_skills.prepare_candidate(root)
+    second = kb_skills.prepare_candidate(root)
+    check("accepted not-applicable project preparation is deterministic read-only no-op",
+          first == second and first.get("action") == "none" and first.get("templates") == {}
+          and before == {p.name: p.read_bytes() for p in root.iterdir() if p.is_file()},
+          Vyvod(json.dumps(first), 0), "do not require synthetic roles or role acceptance")
+    cases = []
+    for label, mutate in (
+        ("candidate receipt", lambda r: r["application"].update(status="candidate")),
+        ("missing owner", lambda r: r["application"].update(owner={})),
+        ("unavailable source", lambda r: r["application"]["source"].update(commit="0" * 40)),
+        ("malformed receipt", lambda r: r.update(application=[])),
+    ):
+        app = copy.deepcopy(receipt); mutate(app); write(app=app)
+        cases.append((label, kb_skills.prepare_candidate(root).get("action")))
+    for label, mutate in (
+        ("empty rationale", lambda r: r["role_posture"].update(rationale="")),
+        ("nonempty skills", lambda r: r.update(skills=[{"name": "unexpected"}])),
+        ("unsupported agent", lambda r: r.update(supported_agents=["unknown"])),
+    ):
+        reg = copy.deepcopy(registry); mutate(reg); write(reg=reg)
+        cases.append((label, kb_skills.prepare_candidate(root).get("action")))
+    write(); (root / "KB_RELEASE_APPLICATION.json").unlink()
+    cases.append(("missing receipt", kb_skills.prepare_candidate(root).get("action")))
+    write(marker="6.3.0")
+    cases.append(("old marker", kb_skills.prepare_candidate(root).get("action")))
+    check("unproved or invalid not-applicable project is not accepted by preparation",
+          all(action != "none" for _, action in cases), Vyvod(json.dumps(cases), 0),
+          "a declaration alone never proves accepted current project state")
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def t_640_has_one_current_version_and_a_640_project_floor():
     """The current skill is 7.0.0; projects below 7.0.0 update once."""
     import json
@@ -5195,7 +5259,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.0.0 as the minimum project level",
-          kb_paths.skill_version() == "7.0.7"
+          kb_paths.skill_version() == "7.0.8"
           and kb_paths.skill_contract_line() == "7.0.0"
           and kb_skills.current_contract_line() == "7.0.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

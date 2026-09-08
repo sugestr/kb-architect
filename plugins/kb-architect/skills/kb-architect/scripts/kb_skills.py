@@ -2206,6 +2206,23 @@ def neutral_project_roles_template(prefill: dict) -> dict:
     }
 
 
+def accepted_without_roles(root: Path, registry: Path, source: dict) -> bool:
+    """Reuse project acceptance for a valid, explicitly role-free current project."""
+    policy = source.get("role_posture")
+    if not isinstance(policy, dict) or policy.get("status") != "not-applicable" \
+            or source.get("roles") != [] or source.get("skills") != []:
+        return False
+    marker, _ = current_marker(root)
+    if marker != current_contract_line():
+        return False
+    try:
+        errors, _, _ = validate_visible(root, source, registry)
+        return not errors and not kb_apply.application_receipt_errors(root, marker)
+    except (OSError, TypeError, ValueError, AttributeError):
+        # A malformed declaration/receipt is not evidence of acceptance.
+        return False
+
+
 def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
     """Return a deterministic read-only preparation envelope for one migration."""
     registry = choose_registry(root, explicit)
@@ -2219,15 +2236,18 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
         if target_data:
             source, registry = target_data, target
             source_registry = registry.relative_to(root).as_posix()
-    if source and isinstance(source.get("acceptance"), dict) \
-            and source["acceptance"].get("status") == "accepted":
+    accepted_roles = source and isinstance(source.get("acceptance"), dict) \
+        and source["acceptance"].get("status") == "accepted"
+    role_free = source and accepted_without_roles(root, registry, source)
+    if accepted_roles or role_free:
         return {
             "schema": 1,
             "protocol": "kb-candidate-preparation/v1",
             "read_only": True,
             "action": "none",
-            "reason": ("An accepted PROJECT_ROLES.json already exists; a patch build "
-                       "does not reopen project migration"),
+            "reason": (("A valid not-applicable registry and finalized project application"
+                        if role_free else "An accepted PROJECT_ROLES.json")
+                       + " already exist; a patch build does not reopen project migration"),
             "project_root": str(root),
             "source_registry": source_registry,
             "templates": {},
