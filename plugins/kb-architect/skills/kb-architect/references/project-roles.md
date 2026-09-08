@@ -69,7 +69,9 @@ Accepted schema 2–5, compact v1/v2 и runner v1 читаются без patch-
 
 `--execute-project-check` запускает названный в command tracked project-local
 validator из PENDING и сам записывает PASS/FAIL с command, validator bytes, skill
-trees и wiring. После изменения входов верни PENDING и повтори run; успех не заполняй вручную.
+trees и wiring. До запуска он сохраняет недостающие SHA в PENDING candidate
+и проверяет бюджет; чужой hash не заменяет. Это не приёмка owner/live.
+Изменив входы, верни PENDING; не вписывай успех.
 
 Fresh-context — отдельная сессия без истории миграции: обычный вопрос и исходники,
 без ожидаемого ответа, имени роли и подсказки stop. Selection/recall/stop оценивают
@@ -78,13 +80,11 @@ Fresh-context — отдельная сессия без истории мигр
 native run id проверки и observed_at, в том числе через tracked evidence.
 Checker проверяет форму, не изоляцию истории.
 Один агент получает TESTED; другой — INHERITED при тех же bytes/wiring и доказанной
-способности runtime либо UNKNOWN. Изменение входа/метода требует относящегося
-теста; patch сам по себе не требует model-turn. Owner/live не протухляют binding.
+способности runtime либо UNKNOWN. Изменив вход/метод, повтори нужный тест; patch не требует model-turn. Owner/live не протухляют binding.
 
 Compact acceptance связывает SKILL.md SHA-256; Git хранит остальные bytes и rollback.
-Одноимённая active copy с другими bytes блокирует приёмку; retired вне active roots —
-нет. `kb_behavior.py`, mutation и повторы по runtime нужны только для найденного риска.
-Core suite выполняют при выпуске скилла, не в каждом проекте.
+Иная active copy блокирует приёмку; retired вне active roots — нет. `kb_behavior.py`, mutation и повторы по runtime нужны только для найденного риска.
+Core suite — при выпуске скилла.
 
 ## Качество и цена
 

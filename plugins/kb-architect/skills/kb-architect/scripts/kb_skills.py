@@ -14,6 +14,7 @@ prefill and leaves domain decisions unresolved.
 from __future__ import annotations
 
 import argparse
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -1174,7 +1175,7 @@ def write_registry_atomic(registry: Path, data: dict) -> None:
 
 def execute_compact_project_check(root: Path, data: dict, registry: Path,
                                   skill_by_name: dict[str, dict], timeout: int,
-                                  errors: list[str], notes: list[str]) -> bool:
+                                  errors: list[str], notes: list[str]) -> bool | str:
     """Run one pending v3 check and record the observed result without a shell."""
     acceptance = data.get("acceptance")
     if not isinstance(acceptance, dict) \
@@ -1198,6 +1199,35 @@ def execute_compact_project_check(root: Path, data: dict, registry: Path,
     validator, validator_error = project_validator_binding(root, command)
     if validator_error:
         errors.append(validator_error)
+        return False
+    bindings = acceptance.get("accepted_skill_sha256", {})
+    if not isinstance(bindings, dict):
+        errors.append("PROJECT_CHECK_HASH_PIN_BLOCKED: accepted_skill_sha256 must be an object")
+        return False
+    pinned = dict(bindings)
+    try:
+        for name, entry in skill_by_name.items():
+            raw = Path(str(entry["canonical"])).expanduser()
+            canonical = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
+            actual = file_sha256(canonical / "SKILL.md")
+            if name in bindings and bindings[name] != actual:
+                errors.append(f"PROJECT_CHECK_HASH_PIN_BLOCKED: {name} has a conflicting hash; "
+                              "review the changed method before replacing its binding")
+                return False
+            pinned[name] = actual
+        if pinned != bindings:
+            live = acceptance.get("live_test", {})
+            if acceptance.get("status") != "candidate" or not isinstance(live, dict) \
+                    or live.get("status") != "PENDING":
+                errors.append("PROJECT_CHECK_HASH_PIN_BLOCKED: missing hashes can be pinned "
+                              "only before candidate live acceptance")
+                return False
+            acceptance["accepted_skill_sha256"] = pinned
+            write_registry_atomic(registry, data)
+            notes.append("PROJECT_CHECK_HASHES_PINNED: candidate bytes recorded before execution")
+            return "pinned"
+    except OSError as exc:
+        errors.append(f"PROJECT_CHECK_HASH_PIN_FAILED: {exc}")
         return False
     argv = shlex.split(command)
     input_sha256 = compact_project_check_input_sha256(root, data, validator)
@@ -1421,6 +1451,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
     control_plane_bytes = registry.stat().st_size + (
         index_path.stat().st_size if index_path.is_file() else 0)
     if status in ("required", "transitioning"):
+        notes.append("cost scope: declared role/routes and control plane; project boot, "
+                     "global instructions and installed entry are extra unless included in route_files")
         cost = data.get("cost_policy")
         covered_roles: set[str] = set()
         if not isinstance(cost, dict) or not isinstance(cost.get("scenarios"), list):
@@ -1574,10 +1606,11 @@ def validate_visible(root: Path, data: dict, registry: Path,
                         root, data, registry, skill_by_name,
                         project_check_timeout, execution_errors, execution_notes)
                     if written:
-                        # The receipt changes control-plane bytes. Validate the written
-                        # registry, including its budget, without executing the command again.
+                        # Revalidate persisted pins before execution, and persisted
+                        # result cost after execution. The validator runs only once.
                         final_errors, final_notes, count = validate(
-                            root, registry, runtime_roots, False, project_check_timeout)
+                            root, registry, runtime_roots, written == "pinned",
+                            project_check_timeout)
                         return execution_errors + final_errors, execution_notes + final_notes, count
                     errors.extend(execution_errors)
                     notes.extend(execution_notes)
@@ -2260,10 +2293,17 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
         template_root / "release-application.json") or {}
     legacy = source if source and source.get("schema") in (1, 2) \
         and isinstance(source.get("skills"), list) else None
+    visible = source is not None and (registry.name == VISIBLE_REGISTRY
+                                     or "role_posture" in source)
     prefill = legacy_candidate_prefill(root, legacy) if legacy \
         else tracked_candidate_prefill(root)
     mechanical_preflight = prefill.pop("mechanical_preflight")
-    project_template = neutral_project_roles_template(prefill)
+    if visible:
+        prefill.update(role_policy=copy.deepcopy(source.get("role_posture")),
+                       role_selectors=copy.deepcopy(source.get("roles")),
+                       implicit_required_skills=[])
+    project_template = copy.deepcopy(source) if visible \
+        else neutral_project_roles_template(prefill)
 
     existing_index = load_json_object(root / "KNOWLEDGE_INDEX.json")
     marker, marker_source = current_marker(root)
@@ -2293,7 +2333,7 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
         "source_registry": source_registry if source else None,
         "source_commit": source_commit,
         "templates_are_unapplied": True,
-        "prefill_source": ("legacy-registry" if legacy else
+        "prefill_source": ("visible-registry" if visible else "legacy-registry" if legacy else
                            "tracked-project-skills" if prefill["skills"] else "none"),
         "legacy_prefill": prefill,
         "mechanical_preflight": mechanical_preflight,
@@ -2307,14 +2347,18 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
             "KNOWLEDGE_INDEX.json": existing_index or index_template,
             "KB_RELEASE_APPLICATION.json": application_template,
         },
-        "unresolved": [
+        "unresolved": ([
+            "Review remaining gaps in the preserved visible candidate; do not rebuild declared roles",
+            "Preserved observations are existing evidence, not fresh acceptance; reset only gates affected by edits",
+            "Apply mechanical preflight fixes, then complete pending checks and post-results acceptance",
+        ] if visible else [
             "Confirm role meaning, triggers and any split of professional owners",
             "Assign only existing knowledge route IDs; do not move facts into a role",
             "Resolve quality owner and method versus project/tool knowledge boundary",
             "Confirm one tracked narrow validator and its actual coverage",
             "Measure one ordinary routed scenario with headroom",
             "Run one ordinary fresh-context question, then obtain owner acceptance",
-        ],
+        ]),
         "fresh_context_prompt": (
             "In a separate session with no inherited conversation, answer the ordinary "
             "project question supplied by the evaluator using the project's normal entry "

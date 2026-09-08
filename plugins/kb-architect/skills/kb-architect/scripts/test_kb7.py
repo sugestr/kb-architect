@@ -25,6 +25,102 @@ HERE = Path(__file__).resolve().parent
 
 
 class RedesignTests(unittest.TestCase):
+
+    def test_prepare_preserves_visible_candidate_and_observed_acceptance(self):
+        from test_kb import compact_role_fixture
+        root = Path(compact_role_fixture(accepted=False)).resolve()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        registry = root / "PROJECT_ROLES.json"
+        source = json.loads(registry.read_text())
+        before = registry.read_bytes()
+        first = kb_skills.prepare_candidate(root)
+        self.assertEqual(first, kb_skills.prepare_candidate(root))
+        self.assertEqual(first["templates"]["PROJECT_ROLES.json"], source)
+        self.assertEqual(first["prefill_source"], "visible-registry")
+        self.assertEqual(first["legacy_prefill"]["role_selectors"], source["roles"])
+        self.assertEqual(first["legacy_prefill"]["role_policy"], source["role_posture"])
+        self.assertEqual(first["legacy_prefill"]["implicit_required_skills"], [])
+        self.assertEqual(registry.read_bytes(), before)
+        source["role_posture"] = "invalid declaration"
+        source["skills"][0]["version"] = "1.0.0 descriptive legacy version"
+        skill = root / source["skills"][0]["canonical"] / "SKILL.md"
+        skill.write_text(re.sub(r'^  version:.*\n', '', skill.read_text(), flags=re.MULTILINE))
+        kb_skills.write_registry_atomic(registry, source)
+        result = kb_skills.prepare_candidate(root)
+        self.assertEqual(result["templates"]["PROJECT_ROLES.json"], source)
+        self.assertNotEqual(result["action"], "none")
+        self.assertEqual(result["mechanical_preflight"]["status"], "needs-action")
+
+    def pin_fixture(self):
+        from test_kb import compact_role_fixture
+        root = Path(compact_role_fixture(accepted=False)).resolve()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        registry = root / "PROJECT_ROLES.json"
+        data = json.loads(registry.read_text())
+        data["acceptance"]["accepted_skill_sha256"] = {}
+        data["acceptance"]["live_test"]["status"] = "PENDING"
+        data["acceptance"]["project_check"].update(status="PENDING", execution=None)
+        (root / "tests.py").write_text(
+            "import json, hashlib\nfrom pathlib import Path\n"
+            "r=json.loads(Path('PROJECT_ROLES.json').read_text())\n"
+            "p=Path('calls.txt'); p.write_text(str(int(p.read_text())+1) if p.exists() else '1')\n"
+            "for s in r['skills']:\n"
+            " assert r['acceptance']['accepted_skill_sha256'].get(s['name']) == "
+            "hashlib.sha256((Path(s['canonical'])/'SKILL.md').read_bytes()).hexdigest()\n")
+        kb_skills.write_registry_atomic(registry, data)
+        subprocess.run(["git", "-C", str(root), "add", "tests.py", "PROJECT_ROLES.json"], check=True)
+        return root, registry, data
+
+    def test_runner_pins_missing_hashes_before_one_run_without_accepting_project(self):
+        from test_kb import run_skills
+        root, registry, data = self.pin_fixture()
+        result = run_skills(str(root), execute_project_check=True)
+        written = json.loads(registry.read_text())
+        self.assertIn("PROJECT_CHECK_EXECUTED_PASS", result)
+        self.assertEqual((root / "calls.txt").read_text(), "1")
+        for key in ("status", "owner", "live_test", "agents", "open"):
+            self.assertEqual(written["acceptance"][key], data["acceptance"][key])
+        before_binding = written["acceptance"]["project_check"]["execution"]["input_sha256"]
+        written["acceptance"]["status"] = "accepted"
+        written["acceptance"]["live_test"]["status"] = "PASS"
+        written["acceptance"]["owner"] = {"status": "PASS", "accepted_by": "fixture", "accepted_at": "2026-09-08"}
+        kb_skills.write_registry_atomic(registry, written)
+        final = run_skills(str(root))
+        self.assertEqual(final.code, 0, str(final))
+        self.assertEqual(kb_skills.compact_project_check_input_sha256(root, written), before_binding)
+        self.assertEqual((root / "calls.txt").read_text(), "1")
+
+    def test_runner_does_not_overwrite_wrong_hash_or_run_on_pin_failure(self):
+        for mode in ("mismatch", "malformed", "live-pass", "accepted", "write-failure", "budget"):
+            with self.subTest(mode=mode):
+                root, registry, data = self.pin_fixture()
+                if mode == "mismatch":
+                    data["acceptance"]["accepted_skill_sha256"] = {"domain-auditor": "0" * 64}
+                elif mode == "malformed":
+                    data["acceptance"]["accepted_skill_sha256"] = []
+                elif mode == "live-pass":
+                    data["acceptance"]["live_test"]["status"] = "PASS"
+                elif mode == "accepted":
+                    data["acceptance"]["status"] = "accepted"
+                elif mode == "budget":
+                    # Allow the empty-map registry but no headroom for the pin.
+                    from test_kb import run_skills
+                    output = run_skills(str(root))
+                    size = int(re.search(r"static-end-to-end=(\d+)", output).group(1))
+                    data["cost_policy"]["scenarios"][0]["accepted_end_to_end_bytes"] = size + 30
+                kb_skills.write_registry_atomic(registry, data)
+                before = registry.read_bytes()
+                cm = patch.object(kb_skills, "write_registry_atomic", side_effect=OSError("fixture pin write failed")) if mode == "write-failure" else contextlib.nullcontext()
+                with cm:
+                    errors, notes, _ = kb_skills.validate(root, registry, execute_project_check=True)
+                self.assertTrue(errors)
+                self.assertFalse((root / "calls.txt").exists(), str(errors))
+                if mode != "budget":
+                    self.assertEqual(registry.read_bytes(), before)
+                else:
+                    self.assertTrue(any("OPTIMIZATION_REQUIRED" in x for x in errors))
+                    self.assertEqual(json.loads(registry.read_text())["acceptance"]["project_check"]["status"], "PENDING")
+
     def test_runner_checks_written_receipt_cost_and_executes_validator_only_once(self):
         from test_kb import compact_role_fixture, run_skills
         for tight in (False, True):
