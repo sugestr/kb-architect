@@ -3,7 +3,7 @@ name: kb-architect
 description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "7.0.9"
+  version: "7.0.10"
   minimum_project_version: "7.0.0"
   author: "sugestr"
 ---
@@ -11,7 +11,7 @@ metadata:
 # kb-architect
 
 Инфраструктура знаний: хранить и применять с нужной ролью и соразмерной ценой.
-Предметную структуру и методы выбирает проект.
+Структуру и методы выбирает проект.
 
 ## Выбери маршрут
 

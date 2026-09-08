@@ -5259,7 +5259,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.0.0 as the minimum project level",
-          kb_paths.skill_version() == "7.0.9"
+          kb_paths.skill_version() == "7.0.10"
           and kb_paths.skill_contract_line() == "7.0.0"
           and kb_skills.current_contract_line() == "7.0.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

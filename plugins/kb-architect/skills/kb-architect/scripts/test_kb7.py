@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -659,6 +660,32 @@ class RedesignTests(unittest.TestCase):
                 patch.object(sys, "argv", ["kb_due.py", str(self.root)]), \
                 contextlib.redirect_stdout(io.StringIO()):
             kb_due.main()
+
+    def test_due_migration_command_uses_relocated_skill_and_exact_project(self):
+        # Range Rover: the consumer has no scripts/kb_apply.py. The printed
+        # command must survive spaces/quotes and a different caller cwd.
+        project = self.base / "vehicle's dossier"
+        self.root.rename(project)
+        self.root = project
+        self.init_git()
+        self.save("CLAUDE.md", "# Project\nkb_standard_version: 6.2\n")
+        self.save("NOW.md", "# Current\nPending evidence\n")
+        self.commit("CLAUDE.md", "NOW.md")
+        installed = self.base / "installed skill's copy"
+        shutil.copytree(HERE.parent, installed,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        before = {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()}
+        due = subprocess.run([sys.executable, str(installed / "scripts/kb_due.py"),
+                              str(self.root)], cwd=self.base, capture_output=True,
+                             text=True, check=True)
+        command = re.search(r"`([^`]*kb_apply\.py[^`]*)`", due.stdout)
+        self.assertIsNotNone(command, due.stdout)
+        argv = shlex.split(command.group(1))
+        self.assertEqual(Path(argv[1]), installed / "scripts/kb_apply.py")
+        self.assertEqual(Path(argv[2]), self.root)
+        result = subprocess.run(argv, cwd=self.base, capture_output=True, text=True)
+        self.assertIn("NEEDS_APPLICATION", result.stdout, result.stderr)
+        self.assertEqual(before, {p.name: p.read_bytes() for p in self.root.iterdir() if p.is_file()})
 
     def test_role_specialization_deduplicates_and_keeps_siblings_out(self):
         roles = {"adviser": {"skill": "general", "knowledge_routes": ["sources"]},

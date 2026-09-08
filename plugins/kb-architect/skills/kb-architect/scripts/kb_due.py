@@ -33,6 +33,7 @@ kb_due.py — что в базе просрочено. Запускается п
 import datetime
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -620,8 +621,13 @@ def main():
                        f"Поставь номер: «kb_standard_version: {skill_line_now or '<номер>'}», "
                        f"описание можно оставить рядом")
         elif skill_line_now and contract_line(proj_v) != contract_line(skill_line_now):
+            apply_command = shlex.join([
+                sys.executable,
+                os.path.join(os.path.dirname(os.path.realpath(__file__)), "kb_apply.py"),
+                os.path.abspath(root),
+            ])
             due.append(f"версия проекта {proj_v}, установлен скилл {skill_v} — "
-                       f"запусти `python3 scripts/kb_apply.py .` (он покажет, что менялось "
+                       f"запусти `{apply_command}` (он покажет, что менялось "
                        f"между ними и чего это касается здесь), примени применимое и обнови "
                        f"строку. Сама строка не двигается: она говорит, по какой редакции "
                        f"проект собран, а не какая лежит на диске — поднять её без разбора "
