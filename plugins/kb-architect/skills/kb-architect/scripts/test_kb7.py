@@ -91,6 +91,67 @@ class RedesignTests(unittest.TestCase):
         self.assertEqual(kb_skills.compact_project_check_input_sha256(root, written), before_binding)
         self.assertEqual((root / "calls.txt").read_text(), "1")
 
+    def test_transition_candidate_can_run_check_without_becoming_ready(self):
+        from test_kb import run_skills
+        for mode in ("valid", "validator-fail", "missing-transition", "invalid-registry",
+                     "string-targets", "boolean-covered", "string-gaps", "boolean-gaps",
+                     "empty-item"):
+            with self.subTest(mode=mode):
+                root, registry, data = self.pin_fixture()
+                data["role_posture"].update(status="transitioning", transition={
+                    "target_roles": [data["roles"][0]["id"]],
+                    "covered_work": ["Evidence-grounded draft analysis"],
+                    "open_gaps": ["Specialist scope not yet accepted"],
+                })
+                if mode == "missing-transition":
+                    del data["role_posture"]["transition"]["covered_work"]
+                elif mode == "invalid-registry":
+                    data["roles"][0]["skill"] = "undeclared-method"
+                elif mode == "validator-fail":
+                    validator = root / "tests.py"
+                    validator.write_text(validator.read_text() + "raise SystemExit(2)\n")
+                elif mode == "string-targets":
+                    data["role_posture"]["transition"]["target_roles"] = "role"
+                elif mode == "boolean-covered":
+                    data["role_posture"]["transition"]["covered_work"] = True
+                elif mode == "string-gaps":
+                    data["role_posture"]["transition"]["open_gaps"] = "gap"
+                elif mode == "boolean-gaps":
+                    data["role_posture"]["transition"]["open_gaps"] = True
+                elif mode == "empty-item":
+                    data["role_posture"]["transition"]["open_gaps"] = [" "]
+                kb_skills.write_registry_atomic(registry, data)
+                before = registry.read_bytes()
+                result = run_skills(str(root), execute_project_check=True)
+                self.assertNotEqual(result.code, 0, str(result))
+                if mode not in ("valid", "validator-fail"):
+                    self.assertIn("PROJECT_CHECK_EXECUTION_BLOCKED", result)
+                    self.assertFalse((root / "calls.txt").exists())
+                    self.assertEqual(registry.read_bytes(), before)
+                    continue
+                outcome = "FAIL" if mode == "validator-fail" else "PASS"
+                self.assertIn("PROJECT_CHECK_EXECUTION_FAILED" if outcome == "FAIL"
+                              else "PROJECT_CHECK_EXECUTED_PASS", result)
+                self.assertIn("role posture is transitioning", result)
+                self.assertIn("ROLE_ACCEPTANCE_REQUIRED", result)
+                self.assertEqual((root / "calls.txt").read_text(), "1")
+                written = json.loads(registry.read_text())
+                self.assertEqual(written["acceptance"]["project_check"]["status"], outcome)
+                self.assertEqual(written["role_posture"], data["role_posture"])
+                for key in ("status", "owner", "live_test", "agents", "open"):
+                    self.assertEqual(written["acceptance"][key], data["acceptance"][key])
+                # A check receipt cannot close the declared coverage gap, even
+                # if a later caller claims owner/live acceptance.
+                written["acceptance"].update(status="accepted")
+                written["acceptance"]["live_test"]["status"] = "PASS"
+                written["acceptance"]["owner"] = {
+                    "status": "PASS", "accepted_by": "fixture", "accepted_at": "2026-09-08"}
+                kb_skills.write_registry_atomic(registry, written)
+                final = run_skills(str(root))
+                self.assertNotEqual(final.code, 0, str(final))
+                self.assertIn("role posture is transitioning", final)
+                self.assertEqual((root / "calls.txt").read_text(), "1")
+
     def test_runner_does_not_overwrite_wrong_hash_or_run_on_pin_failure(self):
         for mode in ("mismatch", "malformed", "live-pass", "accepted", "write-failure", "budget"):
             with self.subTest(mode=mode):

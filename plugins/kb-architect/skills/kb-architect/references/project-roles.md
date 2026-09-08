@@ -67,11 +67,11 @@ Accepted schema 2–5, compact v1/v2 и runner v1 читаются без patch-
 3. Fresh-context вопрос без имени роли: selection, indexed recall и реальный stop/conflict.
 4. Приёмка показанного результата с честными OPEN по полномочиям из migration.md.
 
-`--execute-project-check` запускает названный в command tracked project-local
-validator из PENDING и сам записывает PASS/FAIL с command, validator bytes, skill
-trees и wiring. До запуска он сохраняет недостающие SHA в PENDING candidate
-и проверяет бюджет; чужой hash не заменяет. Это не приёмка owner/live.
-Изменив входы, верни PENDING; не вписывай успех.
+`--execute-project-check` запускает tracked project-local validator из PENDING и
+записывает PASS/FAIL: command, validator bytes, skill trees, wiring. До запуска
+сохраняет отсутствующие SHA кандидата и проверяет бюджет; чужие hash не меняет.
+Корректный transitioning допускает тест, но блокирует приёмку.
+Owner/live не меняются. Изменив входы, верни PENDING.
 
 Fresh-context — отдельная сессия без истории миграции: обычный вопрос и исходники,
 без ожидаемого ответа, имени роли и подсказки stop. Selection/recall/stop оценивают

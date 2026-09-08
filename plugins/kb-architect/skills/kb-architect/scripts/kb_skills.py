@@ -1321,6 +1321,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                      project_check_timeout: int = 300,
                      ) -> tuple[list[str], list[str], int]:
     errors: list[str] = []
+    readiness_errors: list[str] = []
     notes: list[str] = []
     if data.get("schema") != 1 or not isinstance(data.get("roles"), list) \
             or not isinstance(data.get("skills"), list):
@@ -1349,11 +1350,17 @@ def validate_visible(root: Path, data: dict, registry: Path,
         if status == "transitioning":
             transition = policy.get("transition")
             needed = ("target_roles", "covered_work", "open_gaps")
-            if not isinstance(transition, dict) or any(not transition.get(k) for k in needed):
+            if not isinstance(transition, dict) or any(
+                    not isinstance(transition.get(k), list) or not transition[k] or
+                    any(not isinstance(value, str) or not value.strip()
+                        for value in transition[k]) for k in needed):
                 errors.append("transitioning posture requires target_roles, covered_work and open_gaps")
             else:
-                errors.append("role posture is transitioning; uncovered material work remains "
-                              "fail-closed: " + "; ".join(map(str, transition["open_gaps"])))
+                # A declared coverage gap prevents acceptance, but must not
+                # prevent the narrow check needed to evaluate the candidate.
+                readiness_errors.append(
+                    "role posture is transitioning; uncovered material work remains "
+                    "fail-closed: " + "; ".join(map(str, transition["open_gaps"])))
     elif status == "not-applicable" and (data["roles"] or data["skills"]):
         errors.append("not-applicable posture must have empty roles and skills")
 
@@ -1868,7 +1875,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                         notes.append(f"pre-owner receipt checked independently: "
                                      f"{receipt_path.relative_to(root)}")
     notes.append(f"role posture: {status}; registry={registry.name}")
-    return errors, notes, len(role_by_id)
+    return errors + readiness_errors, notes, len(role_by_id)
 
 
 def legacy_roles(data: dict) -> list[dict]:
