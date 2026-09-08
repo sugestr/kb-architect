@@ -5,6 +5,8 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -23,6 +25,37 @@ HERE = Path(__file__).resolve().parent
 
 
 class RedesignTests(unittest.TestCase):
+    def test_runner_checks_written_receipt_cost_and_executes_validator_only_once(self):
+        from test_kb import compact_role_fixture, run_skills
+        for tight in (False, True):
+            with self.subTest(tight_budget=tight):
+                root = Path(compact_role_fixture(accepted=True))
+                self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+                (root / "tests.py").write_text(
+                    "from pathlib import Path\n"
+                    "p = Path('calls.txt')\n"
+                    "p.write_text(str(int(p.read_text()) + 1) if p.exists() else '1')\n")
+                registry = root / "PROJECT_ROLES.json"
+                data = json.loads(registry.read_text())
+                data["acceptance"]["project_check"].update(status="PENDING", execution=None)
+                kb_skills.write_registry_atomic(registry, data)
+                subprocess.run(["git", "-C", str(root), "add", "tests.py", "PROJECT_ROLES.json"],
+                               check=True)
+                def costs(output):
+                    return [int(x) for x in re.findall(r"static-end-to-end=(\d+)", output)]
+                before = costs(run_skills(str(root)))
+                self.assertTrue(before)
+                if tight:
+                    data["cost_policy"]["scenarios"][0]["accepted_end_to_end_bytes"] = before[0] + 64
+                    kb_skills.write_registry_atomic(registry, data)
+                executed = run_skills(str(root), execute_project_check=True)
+                written = run_skills(str(root))
+                self.assertEqual((root / "calls.txt").read_text(), "1")
+                self.assertEqual(costs(executed), costs(written))
+                self.assertEqual(executed.code, written.code)
+                self.assertEqual(executed.code, 1 if tight else 0)
+                self.assertEqual("OPTIMIZATION_REQUIRED" in executed, tight)
+
     def test_live_observation_binds_the_tested_agent_without_erasing_other_evidence(self):
         data = kb_skills.neutral_project_roles_template({"supported_agents": ["codex", "claude"]})
         acceptance = data["acceptance"]

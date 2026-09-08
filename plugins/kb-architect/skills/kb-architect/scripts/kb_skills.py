@@ -1174,18 +1174,18 @@ def write_registry_atomic(registry: Path, data: dict) -> None:
 
 def execute_compact_project_check(root: Path, data: dict, registry: Path,
                                   skill_by_name: dict[str, dict], timeout: int,
-                                  errors: list[str], notes: list[str]) -> None:
+                                  errors: list[str], notes: list[str]) -> bool:
     """Run one pending v3 check and record the observed result without a shell."""
     acceptance = data.get("acceptance")
     if not isinstance(acceptance, dict) \
             or acceptance.get("protocol") != CURRENT_LIGHT_PROTOCOL:
         errors.append("--execute-project-check requires kb-role-acceptance/v3")
-        return
+        return False
     project_check = acceptance.get("project_check")
     if not isinstance(project_check, dict) or project_check.get("status") != "PENDING":
         errors.append("--execute-project-check requires project_check status PENDING; "
                       "the runner owns PASS/FAIL")
-        return
+        return False
     command = project_check.get("command")
     declared_commands = {
         entry.get("validation", {}).get("project", {}).get("command")
@@ -1194,11 +1194,11 @@ def execute_compact_project_check(root: Path, data: dict, registry: Path,
     }
     if command not in declared_commands:
         errors.append("project_check must bind one declared project validator command")
-        return
+        return False
     validator, validator_error = project_validator_binding(root, command)
     if validator_error:
         errors.append(validator_error)
-        return
+        return False
     argv = shlex.split(command)
     input_sha256 = compact_project_check_input_sha256(root, data, validator)
     failure = None
@@ -1230,12 +1230,13 @@ def execute_compact_project_check(root: Path, data: dict, registry: Path,
         write_registry_atomic(registry, data)
     except OSError as exc:
         errors.append(f"PROJECT_CHECK_RESULT_WRITE_FAILED: {exc}")
-        return
+        return False
     if exit_code:
         detail = f"exit {exit_code}" + (f" ({failure})" if failure else "")
         errors.append(f"PROJECT_CHECK_EXECUTION_FAILED: {detail}; recorded FAIL")
     else:
         notes.append("PROJECT_CHECK_EXECUTED_PASS: explicit narrow validator exit 0")
+    return True
 
 
 def role_closure(roles: dict[str, dict], selected: list[str]) -> tuple[list[str], list[str]]:
@@ -1568,9 +1569,18 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 if errors:
                     errors.append("PROJECT_CHECK_EXECUTION_BLOCKED: fix registry errors first")
                 else:
-                    execute_compact_project_check(
+                    execution_errors, execution_notes = [], []
+                    written = execute_compact_project_check(
                         root, data, registry, skill_by_name,
-                        project_check_timeout, errors, notes)
+                        project_check_timeout, execution_errors, execution_notes)
+                    if written:
+                        # The receipt changes control-plane bytes. Validate the written
+                        # registry, including its budget, without executing the command again.
+                        final_errors, final_notes, count = validate(
+                            root, registry, runtime_roots, False, project_check_timeout)
+                        return execution_errors + final_errors, execution_notes + final_notes, count
+                    errors.extend(execution_errors)
+                    notes.extend(execution_notes)
             errors.extend(light_acceptance_errors(
                 root, data, skill_by_name, agents, notes))
             if protocol == "kb-role-acceptance/v1" and accepted_mode:
