@@ -764,5 +764,160 @@ class RedesignTests(unittest.TestCase):
         self.assertTrue(kb_skills.role_closure(roles, ["specialist"])[1])
 
 
+class ReadSetTests(unittest.TestCase):
+    def fixture(self):
+        from test_kb import compact_role_fixture
+        root = Path(compact_role_fixture(accepted=True)).resolve()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        return root, json.loads((root / "PROJECT_ROLES.json").read_text())
+
+    def measure(self, root, data):
+        import hashlib
+        role = root / "skills/domain-auditor/SKILL.md"
+        data["acceptance"]["accepted_skill_sha256"]["domain-auditor"] = \
+            hashlib.sha256(role.read_bytes()).hexdigest()
+        subprocess.run(["git", "-C", str(root), "add", "--", "knowledge", "skills",
+                        "KNOWLEDGE_INDEX.json"], check=True, capture_output=True)
+        validator, error = kb_skills.project_validator_binding(root, "python3 tests.py")
+        self.assertIsNone(error)
+        data["acceptance"]["project_check"]["execution"]["input_sha256"] = \
+            kb_skills.compact_project_check_input_sha256(root, data, validator)
+        registry = root / "PROJECT_ROLES.json"
+        registry.write_text(json.dumps(data))
+        errors, notes, _ = kb_skills.validate_visible(root, data, registry, runtime_roots=[])
+        self.assertEqual(errors, [])
+        cost = next(note for note in notes if "static-route=" in note)
+        return int(re.search(r"static-route=(\d+)", cost)[1]), notes
+
+    def test_alias_and_category_overlap_count_once(self):
+        root, data = self.fixture()
+        before, _ = self.measure(root, data)
+        (root / "knowledge/alias.md").symlink_to("case.md")
+        data["cost_policy"]["scenarios"][0]["route_files"].extend(
+            ["knowledge/alias.md", "skills/domain-auditor/SKILL.md"])
+        self.assertEqual(before, self.measure(root, data)[0])
+        support = root / "skills/domain-auditor/references/support.md"
+        support.parent.mkdir()
+        support.write_text("Support" * 100)
+        role = support.parent.parent / "SKILL.md"
+        role.write_text(role.read_text() + "\nRead [support](references/support.md).\n")
+        before, _ = self.measure(root, data)
+        data["cost_policy"]["scenarios"][0]["route_files"].append(
+            "skills/domain-auditor/references/support.md")
+        self.assertEqual(before, self.measure(root, data)[0])
+
+    def test_section_growth_and_full_file_union(self):
+        root, data = self.fixture()
+        index_path = root / "KNOWLEDGE_INDEX.json"
+        index = json.loads(index_path.read_text())
+        route = index["routes"][0]
+        route.pop("paths")
+        route["targets"] = [{"kind": "section", "path": "knowledge/case.md", "section": "Selected"}]
+        index_path.write_text(json.dumps(index))
+        source = root / "knowledge/case.md"
+        selected = "# Selected\nФакт\n## Child\nIncluded\n"
+        source.write_text(selected + "# Other\nSmall\n")
+        before, _ = self.measure(root, data)
+        source.write_text(selected + "# Other\n" + "x" * 100000)
+        self.assertEqual(before, self.measure(root, data)[0])
+        data["cost_policy"]["scenarios"][0]["accepted_end_to_end_bytes"] = 50000
+        self.measure(root, data)  # Unrelated growth must not trip the selected budget.
+        route["targets"].append({"kind": "section", "path": "knowledge/case.md", "section": "Child"})
+        index_path.write_text(json.dumps(index))
+        self.assertEqual(before, self.measure(root, data)[0])
+        route["targets"].append({"kind": "file", "path": "knowledge/case.md"})
+        index_path.write_text(json.dumps(index))
+        data["cost_policy"]["scenarios"][0]["accepted_end_to_end_bytes"] = 300000
+        self.assertEqual(self.measure(root, data)[0], before - len(selected.encode()) + source.stat().st_size)
+
+    def test_shared_method_selectors_keep_unrelated_routes_out(self):
+        import copy
+        root, data = self.fixture()
+        first_role = data["roles"][0]["id"]
+        second = copy.deepcopy(data["roles"][0])
+        second.update(id="other-selector", load_when=["A different business question"],
+                      knowledge_routes=["other-state"])
+        data["roles"].append(second)
+        index_path = root / "KNOWLEDGE_INDEX.json"
+        index = json.loads(index_path.read_text())
+        route = copy.deepcopy(index["routes"][0])
+        route.update(id="other-state", paths=["knowledge/other.md"])
+        index["routes"].append(route)
+        index_path.write_text(json.dumps(index))
+        other = root / "knowledge/other.md"
+        other.write_text("Small")
+        scenario = copy.deepcopy(data["cost_policy"]["scenarios"][0])
+        scenario.update(id="all-selectors", roles=[first_role, "other-selector"])
+        scenario["route_files"].append("knowledge/other.md")
+        data["cost_policy"]["scenarios"].append(scenario)
+        data["cost_policy"]["all_roles_scenario"] = "all-selectors"
+        before, notes = self.measure(root, data)
+        other.write_text("x" * 100000)
+        after, newer = self.measure(root, data)
+        self.assertEqual(before, after)
+        combined = lambda rows: int(re.search(r"static-route=(\d+)",
+            next(row for row in rows if row.startswith("route-cost all-selectors:")))[1])
+        self.assertEqual(combined(newer) - combined(notes), 100000 - len("Small"))
+
+    def test_invalid_target_is_structured_failure(self):
+        root, data = self.fixture()
+        index_path = root / "KNOWLEDGE_INDEX.json"
+        index = json.loads(index_path.read_text())
+        route = index["routes"][0]
+        route.pop("paths")
+        for invalid in (42, [], None):
+            route["targets"] = [{"kind": "section", "path": invalid, "section": "Selected"}]
+            index_path.write_text(json.dumps(index))
+            errors, _, _ = kb_skills.validate_visible(root, data, root / "PROJECT_ROLES.json", runtime_roots=[])
+            self.assertTrue(any("path must be" in error for error in errors), errors)
+
+    def test_extra_alias_is_an_explicit_whole_file_read(self):
+        root, data = self.fixture()
+        source = root / "knowledge/case.md"
+        source.write_text("# Selected\nFact\n# Other\n" + "x" * 10000)
+        index_path = root / "KNOWLEDGE_INDEX.json"
+        index = json.loads(index_path.read_text())
+        index["routes"][0].pop("paths")
+        index["routes"][0]["targets"] = [{"kind": "section", "path": "knowledge/case.md", "section": "Selected"}]
+        index_path.write_text(json.dumps(index))
+        before, _ = self.measure(root, data)
+        (root / "knowledge/whole.md").symlink_to("case.md")
+        data["cost_policy"]["scenarios"][0]["route_files"].append("knowledge/whole.md")
+        self.assertEqual(self.measure(root, data)[0], before - len("# Selected\nFact\n") + source.stat().st_size)
+
+    def test_support_closure_scope_is_explicit(self):
+        root, data = self.fixture()
+        support = root / "skills/domain-auditor/references/first.md"
+        support.parent.mkdir()
+        support.write_text("Before answering read [detail](second.md).\n")
+        deep = support.with_name("second.md")
+        deep.write_text("x" * 100)
+        role = support.parent.parent / "SKILL.md"
+        role.write_text(role.read_text() + "\nRead [support](references/first.md).\n")
+        before, notes = self.measure(root, data)
+        self.assertTrue(any("COST_SCOPE_PARTIAL" in note for note in notes))
+        deep.write_text("x" * 100000)
+        after, notes = self.measure(root, data)
+        self.assertEqual(before, after)
+        self.assertTrue(any("COST_SCOPE_PARTIAL" in note for note in notes))
+        data["cost_policy"]["scenarios"][0]["route_files"].append(
+            "skills/domain-auditor/references/second.md")
+        self.assertEqual(self.measure(root, data)[0], after + 100000)
+
+    def test_section_parser_ignores_code_and_rejects_ambiguous_heading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sections.md"
+            path.write_text("# Selected\n```md\n# Selected\n```\n## Child\nyes\n# Other\nno\n")
+            start, end = kb_index.section_span(path, "Selected")
+            self.assertEqual(path.read_bytes()[start:end], path.read_bytes().split(b"# Other")[0])
+            selected = "# Selected\n```md\n```not-a-close\n# Other\n" + "x" * 10000 + "\n```\n"
+            path.write_text(selected + "   # Real sibling\noutside\n")
+            self.assertEqual(kb_index.section_span(path, "Selected"), (0, len(selected.encode())))
+            self.assertEqual(kb_index.section_span(path, "Real sibling")[0], len(selected.encode()))
+            path.write_text(path.read_text() + "# Selected\nagain\n")
+            with self.assertRaises(ValueError):
+                kb_index.section_span(path, "Selected")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

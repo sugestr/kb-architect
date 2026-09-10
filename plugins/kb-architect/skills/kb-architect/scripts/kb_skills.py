@@ -1510,9 +1510,30 @@ def validate_visible(root: Path, data: dict, registry: Path,
                                   ", ".join(missing_paths))
                 paths = [route_file(root, value, scenario_id, errors)
                          for value in dict.fromkeys(declared_files)]
-                routed_bytes = sum(path.stat().st_size for path in paths if path)
-                static_bytes = entry_bytes + support_bytes + routed_bytes
-                end_to_end_bytes = static_bytes + control_plane_bytes
+                try:
+                    route_units = kb_index.local_read_set(
+                        root, [index_routes.get(route, {}) for route in required_routes],
+                        [path for path in paths if path],
+                        tuple(path for value, path in zip(dict.fromkeys(declared_files), paths)
+                              if path and value not in required_paths))
+                except (OSError, ValueError, KeyError, TypeError, UnicodeError) as exc:
+                    errors.append(f"{scenario_id}: read set unavailable: {exc}")
+                    route_units = []
+                entry_paths = {(resolved_by_name[name] / "SKILL.md").resolve()
+                               for name in unique_skills if name in resolved_by_name}
+                entry_units = [(path, 0, path.stat().st_size) for path in entry_paths]
+                support_units = [(path, 0, path.stat().st_size) for path in support_paths]
+                routed_bytes = kb_index.read_set_bytes(route_units)
+                static_units = entry_units + support_units + route_units
+                static_bytes = kb_index.read_set_bytes(static_units)
+                control_units = [(path, 0, path.stat().st_size)
+                                 for path in (registry, index_path) if path.is_file()]
+                end_to_end_bytes = kb_index.read_set_bytes(static_units + control_units)
+                scenario_control_bytes = end_to_end_bytes - static_bytes
+                if support_paths:
+                    notes.append(f"COST_SCOPE_PARTIAL {scenario_id}: direct role links only; "
+                                 "transitive/conditional support is unmeasured unless in route_files; "
+                                 "static cost does not prove complete task context")
                 accepted_semantics_bytes = (entry_bytes + routed_bytes
                                             if receipt_schema_hint == 2 else static_bytes)
                 accepted_entry = scenario.get("accepted_role_entry_bytes")
@@ -1532,7 +1553,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 if receipt_schema_hint == 5:
                     for label, accepted, actual in (
                             ("accepted_control_plane_bytes", accepted_control,
-                             control_plane_bytes),
+                             scenario_control_bytes),
                             ("accepted_end_to_end_bytes", accepted_end_to_end,
                              end_to_end_bytes)):
                         if not isinstance(accepted, int) or accepted < 0:
@@ -1577,9 +1598,9 @@ def validate_visible(root: Path, data: dict, registry: Path,
                 notes.append(f"route-cost {scenario_id}: role-entry={entry_bytes}; "
                              f"linked-role-support={support_bytes}; "
                              f"static-route={static_bytes}; "
-                             f"control-plane={control_plane_bytes}; "
+                             f"control-plane={scenario_control_bytes}; "
                              f"static-end-to-end={end_to_end_bytes}; "
-                             "role-entry and linked-role-support are included in static-route; "
+                             "role-entry and linked-role-support are overlapping subsets of static-route; "
                              "static-end-to-end = static-route + control-plane")
             missing = sorted(set(role_by_id) - covered_roles)
             if missing:
@@ -2253,7 +2274,8 @@ def accepted_without_roles(root: Path, registry: Path, source: dict) -> bool:
             or source.get("roles") != [] or source.get("skills") != []:
         return False
     marker, _ = current_marker(root)
-    if marker != current_contract_line():
+    # Role posture acceptance is independent of a newer project application floor.
+    if not marker:
         return False
     try:
         errors, _, _ = validate_visible(root, source, registry)
@@ -2287,7 +2309,8 @@ def prepare_candidate(root: Path, explicit: Path | None = None) -> dict:
             "action": "none",
             "reason": (("A valid not-applicable registry and finalized project application"
                         if role_free else "An accepted PROJECT_ROLES.json")
-                       + " already exist; a patch build does not reopen project migration"),
+                       + " already exists; accepted role posture is reused; "
+                       "kb_apply determines any remaining project delta"),
             "project_root": str(root),
             "source_registry": source_registry,
             "templates": {},

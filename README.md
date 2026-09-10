@@ -91,21 +91,18 @@ several named roles only when they genuinely share triggers, source hierarchy,
 evidence threshold and stop conditions. Portal recipes, laws and project facts stay
 in the indexed knowledge base, not in the role.
 
-Role readiness has four separate receipts: structural validity, unforced fresh-session
-runtime discovery, synthetic-first behavioural cases, and post-results owner
-acceptance. It is also bound to a named quality review, exact role tree, manifest,
-knowledge-index hashes and split static cost budgets. An unaccepted candidate does not
-replace the old role early; the pre-change Git commit is rollback without a duplicate
-checkout. Same-name active runtime copies are inventoried; shared
-roles run from an exact pin; an all-roles scenario keeps combined cost visible.
+Role readiness distinguishes structural checks, unforced discovery, behavioural
+cases and owner acceptance in one compact manifest. Accepted unchanged components
+are reused; one end-to-end static budget includes the registry and index. A candidate
+keeps the pre-change Git commit for rollback. Same-name active runtime copies are
+inventoried; shared roles use exact pins; all-roles cost is a separate upper scenario.
 
 The concise [project-role guide](plugins/kb-architect/skills/kb-architect/references/project-roles.md)
 covers creation, growth, splitting, cost checks, migration and rare pinned reuse.
 
-For a material conclusion derived from project knowledge, the core now provides a
-two-phase evidence gate. It records support and challenge searches, stays red until
-every candidate is reviewed, and permits only `supported`, `qualified` or `unknown`.
-The matching project role still decides which topics and evidence criteria matter.
+Material project conclusions need traceable evidence and coverage. An accepted
+query/ledger can supply it; otherwise the lexical fallback records support/challenge
+searches and candidate review. The project role owns professional criteria.
 
 ### First beta run
 
@@ -131,7 +128,7 @@ personal data first.
 - Measured retrieval misses can justify a semantic/vector index as a derived search layer; it finds candidates, but source files remain the canon.
 - It does not supply professional advice, credentials, runtime access or permission for external actions.
 - Cloud-ready project files do not prove that a local MCP, account or secret exists in a cloud runtime.
-- The mandatory core is one versioned page; optional modules are adopted only for a demonstrated project need. A core revision is a project migration, not a silent install-side change.
+- The mandatory core is one versioned document behind the compact entry; optional modules are adopted only for a demonstrated project need. A core revision is a project migration, not a silent install-side change.
 
 ### Installation
 
@@ -156,7 +153,7 @@ python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
 ```
 
 When automatic updates are accepted, a fresh task with a valid receipt and local
-parity performs one cheap remote-HEAD check before project-derived work. Matching
+parity performs one cheap remote-HEAD check after the first safe source result. Matching
 HEAD avoids a clone, package reread and tests; missing parity enters the full gate,
 and a receipt alone never claims `CURRENT`. After
 `INSTALLED`, it reads the installed entry and current route. A long task updates
@@ -380,7 +377,7 @@ python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
 ```
 
 Если принято автоматическое обновление, новая задача с валидной квитанцией и local
-parity до project-derived работы один раз дешёво проверяет remote HEAD. Совпавший HEAD
+parity после первого безопасного результата один раз дешёво проверяет remote HEAD. Совпавший HEAD
 экономит clone, повторное чтение package и tests; отсутствие parity включает полный
 gate, а одна квитанция не доказывает
 `CURRENT`. После `INSTALLED` агент читает новый entry и нужный маршрут. Длинная
@@ -406,7 +403,7 @@ post-results приёмка владельца.
 ```text
 plugins/kb-architect/skills/kb-architect/
   SKILL.md               лёгкий маршрутизатор к одной нужной процедуре
-  references/contract.md версионируемый обязательный контракт на одной странице
+  references/contract.md версионируемый обязательный контракт, отдельный маршрут
   references/            опциональный справочник
   assets/templates/      единый вход/current, опциональный NOW, журнал, вопросы и хендовер
   agents/openai.yaml     интерфейс skill в Codex

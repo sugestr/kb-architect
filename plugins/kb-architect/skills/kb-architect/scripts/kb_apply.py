@@ -617,7 +617,7 @@ def main():
     print("Короткий путь:")
     print("  1. сохранить exact pre-change Git commit;")
     print("  2. применить текущий минимальный уровень, не проигрывая patch history;")
-    print("  3. для ролей: один узкий project check и один обычный fresh-context вопрос;")
+    print("  3. проверить затронутую дельту; неизменную принятую миграцию/роли не повторять;")
     print("  4. показать владельцу изменения и честные OPEN;")
     print(f"  5. после acceptance записать одну schema-3 квитанцию в {APPLICATION_RECEIPT},")
     print(f"     поставить kb_standard_version: {target_line_name}, commit и отдельно push.")

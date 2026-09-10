@@ -1802,7 +1802,7 @@ def t_633_apply_does_not_replay_historical_cleanup():
               "CLAUDE.md": "# правила\n\nkb_standard_version: 5.3\n"})
     out = run("kb_apply.py", d)
     check("6.4 application does not replay historical cleanup rows",
-          "[7.0.0]" in out
+          "[7.1.0]" in out
           and "[5.4]" not in out
           and "credential cleanup" not in out,
           out, "current minimum level replaces a per-patch historical replay")
@@ -1960,7 +1960,7 @@ def t_620_update_does_not_replay_old_optional_capabilities():
               "CLAUDE.md": "# правила\n\nkb_standard_version: 4.18\n"})
     out = run("kb_apply.py", d)
     check("обновление не переоткрывает старые опциональные возможности",
-          "[7.0.0]" in out
+          "[7.1.0]" in out
           and "[4.19]" not in out
           and "НОВЫХ ВОЗМОЖНОСТЕЙ, ТРЕБУЮЩИХ РЕШЕНИЯ, НЕТ" in out,
           out, "the project considers choices declared by the current minimum level")
@@ -2616,7 +2616,7 @@ def t_apply_ignores_marker_syntax_examples():
     out = run("kb_apply.py", d)
     check("пример маркера не становится действием проекта",
           "[4.17] …" not in out and "[4.21] …" not in out
-          and "[5.0]" not in out and "[7.0.0]" in out
+          and "[5.0]" not in out and "[7.1.0]" in out
           and "ТРЕБУЮТ ДЕЙСТВИЯ" in out, out,
           "parser skips placeholders and shows only the current minimum level")
     shutil.rmtree(d, ignore_errors=True)
@@ -3195,7 +3195,7 @@ def t_512_update_project_option_really_runs_apply():
           and "ПРИМЕНЕНИЕ К ПРОЕКТУ" in out
           and "NEEDS_APPLICATION" in out
           and "SESSION_ACTION=APPLY_PROJECT_DELTA_NOW" in out
-          and "[7.0.0]" in out
+          and "[7.1.0]" in out
           and "[5.4]" not in out,
           out, "the single entry command executes kb_apply and propagates exit 1")
     shutil.rmtree(source, ignore_errors=True)
@@ -3392,11 +3392,11 @@ def t_516_broad_evidence_query_refuses_context_overrun():
 
 def t_640_marker_without_compact_application_is_unproven():
     """A current-line marker still needs one compact owner receipt."""
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 7.0.0\n"})
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 7.1.0\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
     out = run("kb_apply.py", d)
-    check("marker 7.0.0 без короткой квитанции не скрывает незавершённую миграцию",
+    check("marker 7.1.0 без короткой квитанции не скрывает незавершённую миграцию",
           out.code == 1 and "APPLICATION_UNPROVEN" in out
           and "missing KB_RELEASE_APPLICATION.json" in out,
           out, "the marker is an outcome, but no per-release ledger is required")
@@ -3499,11 +3499,11 @@ def t_620_release_application_binds_source_line_and_owner():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.1.0\n")
     receipt = {
         "schema": 2,
         "application": {
-            "from_line": "6.1", "to_line": "7.0.0", "status": "finalized",
+            "from_line": "6.1", "to_line": "7.1.0", "status": "finalized",
             "source": {"commit": source, "version_source": "CLAUDE.md"},
             "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
             "finalized_at": "2026-08-29", "open": [],
@@ -3543,13 +3543,13 @@ def t_621_compact_application_requires_the_actual_candidate_parent():
         ["git", "-C", d, "rev-parse", "HEAD"], capture_output=True,
         text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.1.0\n")
 
     def write_receipt(source):
         with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w",
                   encoding="utf-8") as f:
             json.dump({"schema": 2, "application": {
-                "from_line": "6.1", "to_line": "7.0.0", "status": "finalized",
+                "from_line": "6.1", "to_line": "7.1.0", "status": "finalized",
                 "source": {"commit": source, "version_source": "CLAUDE.md"},
                 "owner": {"accepted_by": "fixture owner",
                           "accepted_at": "2026-08-29"},
@@ -3587,11 +3587,11 @@ def t_612_release_application_follows_safe_boot_symlink():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.1.0\n")
     receipt = {
         "schema": 2,
         "application": {
-            "from_line": "6.1", "to_line": "7.0.0", "status": "finalized",
+            "from_line": "6.1", "to_line": "7.1.0", "status": "finalized",
             "source": {"commit": source, "version_source": "AGENTS.md"},
             "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
             "finalized_at": "2026-08-29", "open": [],
@@ -3690,9 +3690,9 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "a", encoding="utf-8") as f:
-        f.write("\nkb_standard_version: 7.0.0\n")
+        f.write("\nkb_standard_version: 7.1.0\n")
     receipt = {"schema": 2, "application": {
-        "from_line": None, "to_line": "7.0.0", "status": "finalized",
+        "from_line": None, "to_line": "7.1.0", "status": "finalized",
         "source": {"commit": source, "version_source": "CLAUDE.md"},
         "owner": {"accepted_by": "owner", "accepted_at": "2026-08-29"},
         "finalized_at": "2026-08-29", "open": [],
@@ -3722,9 +3722,9 @@ def t_620_direct_migration_does_not_replay_intermediate_releases():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.1.0\n")
     receipt = {"schema": 2, "application": {
-        "from_line": "5.16", "to_line": "7.0.0", "status": "finalized",
+        "from_line": "5.16", "to_line": "7.1.0", "status": "finalized",
         "source": {"commit": source, "version_source": "CLAUDE.md"},
         "owner": {"accepted_by": "owner", "accepted_at": "2026-08-29"},
         "finalized_at": "2026-08-29", "open": [],
@@ -5151,8 +5151,8 @@ def t_623_prepare_candidate_does_not_reopen_accepted_patch_project():
     check("prepare-candidate returns no-op for an accepted project",
           result.code == 0 and prepared.get("action") == "none"
           and prepared.get("templates") == {}
-          and "does not reopen project migration" in str(result),
-          out, "a patch build cannot create a fresh project migration")
+          and "kb_apply determines any remaining project delta" in str(result),
+          out, "accepted role reuse does not waive a new project application floor")
     shutil.rmtree(d, ignore_errors=True)
 
 
@@ -5221,11 +5221,11 @@ def t_708_prepare_candidate_respects_accepted_not_applicable():
 
 
 def t_640_has_one_current_version_and_a_640_project_floor():
-    """The current skill is 7.0.0; projects below 7.0.0 update once."""
+    """The current skill is 7.1.0; projects below 7.1.0 update once."""
     import json
     import kb_paths
     import kb_skills
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.3.0\n"})
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 7.0.0\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
     subprocess.run(["git", "-C", d, "-c", "user.name=Fixture", "-c",
@@ -5234,12 +5234,12 @@ def t_640_has_one_current_version_and_a_640_project_floor():
     source = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True).stdout.strip()
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 7.0.0\n")
+        f.write("# rules\n\nkb_standard_version: 7.1.0\n")
     with open(os.path.join(d, "KB_RELEASE_APPLICATION.json"), "w", encoding="utf-8") as f:
         json.dump({
             "schema": 3,
             "application": {
-                "from_version": "6.3.0", "to_version": "7.0.0",
+                "from_version": "7.0.0", "to_version": "7.1.0",
                 "status": "finalized",
                 "source": {"commit": source, "version_source": "CLAUDE.md"},
                 "owner": {"accepted_by": "fixture owner", "accepted_at": "2026-08-29"},
@@ -5253,19 +5253,20 @@ def t_640_has_one_current_version_and_a_640_project_floor():
                    check=True)
     p = subprocess.run([sys.executable, os.path.join(HERE, "kb_apply.py"), d],
                        capture_output=True, text=True, timeout=30)
-    old = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.3.0\n"})
+    old = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 7.0.0\n"})
     old_run = subprocess.run(
         [sys.executable, os.path.join(HERE, "kb_apply.py"), old],
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
-    check("current build keeps 7.0.0 as the minimum project level",
-          kb_paths.skill_version() == "7.0.11"
-          and kb_paths.skill_contract_line() == "7.0.0"
-          and kb_skills.current_contract_line() == "7.0.0"
+    check("current build keeps 7.1.0 as the minimum project level",
+          kb_paths.skill_version() == "7.1.0"
+          and kb_paths.skill_contract_line() == "7.1.0"
+          and kb_skills.current_contract_line() == "7.1.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
           and ("миграции нет" in p.stdout or "PROJECT_VERSION_OK" in p.stdout)
           and old_run.returncode == 1 and "NEEDS_APPLICATION" in old_run.stdout
-          and "цель 7.0.0" in old_run.stdout,
+          and "цель 7.1.0" in old_run.stdout
+          and "[7.1.0]" in old_run.stdout and "[7.0.0]" not in old_run.stdout,
           out, "one current build plus one explicit minimum project level")
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(old, ignore_errors=True)

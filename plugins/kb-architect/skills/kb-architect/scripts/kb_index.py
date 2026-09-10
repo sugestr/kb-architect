@@ -48,6 +48,70 @@ def local_paths(route: dict) -> list[str]:
                              and isinstance(item.get("path"), str)))
 
 
+def section_span(path: Path, heading: str) -> tuple[int, int]:
+    """UTF-8 byte interval: heading plus descendants until a peer/ancestor.
+
+    Ignore fenced code headings, retain exact bytes and reject ambiguity.
+    """
+    import re
+    raw = path.read_bytes()
+    offset, headings, fence = 0, [], None
+    for line in raw.splitlines(keepends=True):
+        text = line.decode("utf-8").strip("\r\n")
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", text)
+        if marker:
+            token = marker.group(1)
+            if fence is None:
+                fence = token
+            elif (token[0] == fence[0] and len(token) >= len(fence)
+                  and not text[marker.end():].strip()):
+                fence = None
+        elif fence is None:
+            match = re.match(r"^ {0,3}(#{1,6})[ \t]+(.+?)\s*$", text)
+            if match:
+                title = re.sub(r"[ \t]+#+[ \t]*$", "", match.group(2)).strip()
+                headings.append((offset, len(match.group(1)), title))
+        offset += len(line)
+    matches = [i for i, value in enumerate(headings) if value[2] == heading]
+    if len(matches) != 1:
+        raise ValueError(f"section must resolve uniquely: {path.name} -> {heading}")
+    i = matches[0]
+    start, level, _ = headings[i]
+    end = next((pos for pos, depth, _ in headings[i + 1:] if depth <= level), len(raw))
+    return start, end
+
+
+def read_set_bytes(units: list[tuple[Path, int, int]]) -> int:
+    """Union byte intervals by resolved physical path, across all categories."""
+    grouped = {}
+    for path, start, end in units:
+        grouped.setdefault(path.resolve(), []).append((start, end))
+    total = 0
+    for spans in grouped.values():
+        stop = 0
+        for start, end in sorted(spans):
+            total += max(0, end - max(start, stop))
+            stop = max(stop, end)
+    return total
+
+
+def local_read_set(root: Path, routes: list[dict], paths: list[Path],
+                   extra_paths: tuple[Path, ...] = ()) -> list[tuple[Path, int, int]]:
+    """Indexed sections retain their address; extra route_files mean whole files."""
+    selected = {}
+    for route in routes:
+        for item in targets(route):
+            if not isinstance(item, dict) or item.get("kind") == "project":
+                continue
+            path = (root / item["path"]).resolve()
+            span = section_span(path, item["section"]) if item.get("kind") == "section" \
+                else (0, path.stat().st_size)
+            selected.setdefault(path, []).append(span)
+    return ([(path, start, end) for path in paths
+             for start, end in selected.get(path, [(0, path.stat().st_size)])]
+            + [(path, 0, path.stat().st_size) for path in extra_paths])
+
+
 def target_errors(root: Path, item: object) -> list[str]:
     if not isinstance(item, dict):
         return ["target must be an object"]
@@ -85,10 +149,10 @@ def target_errors(root: Path, item: object) -> list[str]:
         if not isinstance(section, str) or not section:
             errors.append("section target requires its exact heading")
         else:
-            headings = [line.lstrip("#").strip() for line in candidate.read_text(encoding="utf-8").splitlines()
-                        if line.startswith("#")]
-            if headings.count(section) != 1:
-                errors.append(f"section must resolve uniquely: {relative} -> {section}")
+            try:
+                section_span(candidate, section)
+            except (ValueError, UnicodeError) as exc:
+                errors.append(str(exc))
     if kind == "query":
         command = item.get("command")
         if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
