@@ -4,11 +4,17 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kb_paths  # noqa: E402
 
 
 DEFAULT_INDEX = "KNOWLEDGE_INDEX.json"
@@ -273,6 +279,120 @@ def resolve(root: Path, path: Path, route_id: str, chain=()) -> tuple[list[dict]
     return endpoints, errors
 
 
+
+# Knowledge without a road from the index.
+#
+# UAD report of 14.09.2026: 112 of 165 knowledge files had no route, so agents that
+# navigate by the index answered "will verify the source" while the fact sat in the
+# canon for four days. Route→target validation above cannot see this: it walks from
+# routes to files, never from files back to routes. The finding is reachability, not
+# membership in `paths`: the contract lets knowledge be discoverable through a table
+# of contents, so a file linked from a routed entry file is reachable.
+KNOWLEDGE_ROOT_KEYS = ("корень знания", "knowledge root", "knowledge_root")
+UNREACHABLE_ALLOWED_KEYS = ("допустимо без дороги", "unreachable allowed",
+                            "knowledge_unreachable_allowed")
+MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+?\.md)(?:#[^)]*)?\)|`([^`\s]+?\.md)`")
+FENCED = re.compile(r"```.*?```", re.DOTALL)
+
+
+def knowledge_roots(root: Path) -> tuple[list[str], str]:
+    """Declared knowledge directories, or `knowledge/` by default; none → not checked."""
+    raw, _ = kb_paths.declared_value(str(root), KNOWLEDGE_ROOT_KEYS)
+    if raw:
+        parts = [p.strip().strip("`\"'«»").strip("/") for p in re.split(r"[,;]", raw)]
+        roots = [p for p in parts if p and not p.startswith("<")]
+        if roots:
+            return roots, "declared"
+    if (root / "knowledge").is_dir():
+        return ["knowledge"], "default"
+    return [], "not-declared"
+
+
+def tracked_markdown(root: Path, roots: list[str]) -> list[str] | None:
+    result = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", *roots],
+                            capture_output=True)
+    if result.returncode != 0:
+        return None
+    return sorted(p for p in result.stdout.decode("utf-8", "replace").split("\0")
+                  if p.endswith(".md"))
+
+
+def local_links(root: Path, rel: str) -> list[str]:
+    """Markdown links and backticked .md paths that resolve to a file inside root."""
+    try:
+        text = FENCED.sub("", (root / rel).read_text(encoding="utf-8", errors="ignore"))
+    except OSError:
+        return []
+    found = []
+    for a, b in MD_LINK.findall(text):
+        target = (a or b).split("?")[0]
+        for candidate in ((root / rel).parent / target, root / target.lstrip("/")):
+            try:
+                resolved = candidate.resolve().relative_to(root.resolve()).as_posix()
+            except ValueError:
+                continue
+            if (root / resolved).is_file():
+                found.append(resolved)
+                break
+    return found
+
+
+def coverage(root: Path, index_path: Path) -> dict:
+    """Which tracked knowledge files no route or link chain from boot/index reaches."""
+    root = root.resolve()
+    data, errors = load_index(index_path)
+    if data is None:
+        return {"status": "NOT_CHECKED", "reason": errors[0]}
+    roots, source = knowledge_roots(root)
+    if not roots:
+        return {"status": "NOT_CHECKED", "roots": [], "source": source,
+                "reason": "knowledge root not declared and knowledge/ is absent",
+                "how": "declare «корень знания: <dir>[, <dir>]» in the project rules"}
+    files = tracked_markdown(root, roots)
+    if files is None:
+        return {"status": "NOT_CHECKED", "roots": roots, "source": source,
+                "reason": "git ls-files failed; only Git-tracked knowledge is measured"}
+    routed = set()
+    for route in data["routes"]:
+        if isinstance(route, dict):
+            routed.update(local_paths(route))
+    seeds = set(routed)
+    seeds.update(os.path.relpath(p, root) for p in kb_paths.rules_files(str(root)))
+    entry = kb_paths.locate(str(root), "entry")
+    if entry.path:
+        seeds.add(os.path.relpath(entry.path, root))
+    registry = root / "PROJECT_ROLES.json"
+    if registry.is_file():
+        try:
+            for skill in json.loads(registry.read_text(encoding="utf-8")).get("skills", []):
+                canonical = skill.get("canonical") if isinstance(skill, dict) else None
+                if isinstance(canonical, str) and (root / canonical / "SKILL.md").is_file():
+                    seeds.add(f"{canonical.strip('/')}/SKILL.md")
+        except (OSError, ValueError):
+            pass
+    seen, stack = set(), sorted(seeds)
+    while stack:
+        rel = stack.pop()
+        if rel in seen:
+            continue
+        seen.add(rel)
+        stack.extend(local_links(root, rel))
+    unreachable = [f for f in files if f not in seen]
+    raw_allowed, _ = kb_paths.declared_value(str(root), UNREACHABLE_ALLOWED_KEYS)
+    allowed = int(raw_allowed) if raw_allowed and re.fullmatch(r"[0-9]+", raw_allowed) else 0
+    by_area = Counter("/".join(f.split("/")[:2]) if f.count("/") > 1 else f.split("/")[0]
+                      for f in unreachable)
+    return {
+        "status": "FINDING" if len(unreachable) > allowed else "PASS",
+        "roots": roots, "source": source, "files": len(files),
+        "routed": sum(1 for f in files if f in routed),
+        "reachable": len(files) - len(unreachable),
+        "unreachable": unreachable, "allowed": allowed,
+        "by_area": dict(by_area.most_common()),
+        "note": "reachable = route paths/targets, boot files and role SKILL.md plus local "
+                "Markdown links from them; reachability is not proof that the file is read",
+    }
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", nargs="?", default=".")
@@ -281,10 +401,32 @@ def main() -> int:
     parser.add_argument("--current", action="store_true", help="resolve the declared current route")
     parser.add_argument("--require-now", action="store_true",
                         help="check physical root NOW.md, one current route and no aliases; implies --current")
+    parser.add_argument("--coverage", action="store_true",
+                        help="knowledge files that no route or link chain from boot/index reaches")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     path = args.index.resolve() if args.index else root / DEFAULT_INDEX
+    if args.coverage:
+        report = coverage(root, path)
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        elif report["status"] == "NOT_CHECKED":
+            print(f"coverage: NOT_CHECKED — {report['reason']}")
+            if report.get("how"):
+                print(f"  {report['how']}")
+        else:
+            print(f"coverage: {report['status']} — roots={','.join(report['roots'])} "
+                  f"({report['source']}) files={report['files']} routed={report['routed']} "
+                  f"reachable={report['reachable']} unreachable={len(report['unreachable'])} "
+                  f"allowed={report['allowed']}")
+            for area, count in report["by_area"].items():
+                print(f"  {area}: {count}")
+            for rel in report["unreachable"][:40]:
+                print(f"  - {rel}")
+            if len(report["unreachable"]) > 40:
+                print(f"  … and {len(report['unreachable']) - 40} more")
+        return 1 if report["status"] == "FINDING" else 0
     current_errors = []
     args.current = args.current or args.require_now
     current = None

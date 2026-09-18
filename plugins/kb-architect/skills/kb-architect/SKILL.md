@@ -3,8 +3,8 @@ name: kb-architect
 description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "7.1.0"
-  minimum_project_version: "7.1.0"
+  version: "7.2.0"
+  minimum_project_version: "7.2.0"
   author: "sugestr"
 ---
 
@@ -36,7 +36,7 @@ metadata:
 | Разобрать приложенный локальный файл («пришло») | `references/incoming.md` |
 | Сверить реальность, найти факт или gap | `references/retrieval.md`; внешняя сверка — `references/operations.md` |
 | Сделать существенный вывод из KB | current + matching role + `references/retrieval.md` → `evidence_contract` |
-| Проверить целостность или просрочку | `scripts/kb_check.py`, `scripts/kb_due.py` |
+| Проверить целостность или просрочку | `scripts/kb_check.py`, `scripts/kb_due.py`; знание без дороги — `kb_index.py --coverage` |
 | Отделить факт, интерпретацию и решение | `references/knowledge-roles.md` |
 | Собрать мусор | `references/garbage-collection.md` |
 | Понять authority и границы публикации | `references/authority.md` |

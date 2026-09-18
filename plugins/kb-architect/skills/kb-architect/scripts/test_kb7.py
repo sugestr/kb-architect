@@ -919,5 +919,118 @@ class ReadSetTests(unittest.TestCase):
                 kb_index.section_span(path, "Selected")
 
 
+class CoverageTests(unittest.TestCase):
+    """UAD 14.09/12.09.2026: knowledge without a road and derived files without a source."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit = RedesignTests.commit
+    index = RedesignTests.index
+
+    def seed(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Project\nвход: NOW.md\n")
+        self.save("NOW.md", "# Current\nSee [area A](knowledge/a/00-entry.md).\n")
+        self.save("knowledge/a/00-entry.md", "# A\nDetails in `knowledge/a/01-linked.md`.\n")
+        self.save("knowledge/a/01-linked.md", "# Linked\nreachable through the entry\n")
+        self.save("knowledge/b/01-orphan.md", "# Orphan\nno route, no link\n")
+        self.index([{"id": "project-current", "description": "current", "load_when": ["orientation"],
+                     "aliases": ["now"], "paths": ["NOW.md"]},
+                    {"id": "area-a", "description": "area a", "load_when": ["question about a"],
+                     "aliases": ["a"], "paths": ["knowledge/a/00-entry.md"]}], current="project-current")
+        self.commit("CLAUDE.md", "NOW.md", "knowledge", "KNOWLEDGE_INDEX.json")
+
+    def test_unreachable_knowledge_is_a_finding_and_links_count_as_roads(self):
+        self.seed()
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["status"], "FINDING")
+        self.assertEqual(report["files"], 3)
+        self.assertEqual(report["routed"], 1)
+        self.assertEqual(report["unreachable"], ["knowledge/b/01-orphan.md"])
+        self.assertEqual(report["by_area"], {"knowledge/b": 1})
+        result = self.run_tool("kb_index.py", "--coverage")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("knowledge/b/01-orphan.md", result.stdout)
+        check = self.run_tool("kb_check.py")
+        self.assertEqual(check.returncode, 1, check.stdout)
+        self.assertIn("ЗНАНИЕ БЕЗ ДОРОГИ ОТ ИНДЕКСА — 1 из 3", check.stdout)
+        self.assertIn("достижимость знания — FINDING (2/3 в knowledge)", check.stdout)
+
+    def test_route_or_link_to_the_orphan_clears_the_finding(self):
+        self.seed()
+        self.save("knowledge/a/00-entry.md", "# A\n`knowledge/a/01-linked.md` and [b](../b/01-orphan.md)\n")
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["unreachable"], [])
+        self.assertEqual(self.run_tool("kb_index.py", "--coverage").returncode, 0)
+
+    def test_untracked_files_and_declared_allowance_do_not_hide_or_inflate(self):
+        self.seed()
+        self.save("knowledge/b/02-untracked.md", "# Not in git\n")
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["files"], 3, "only Git-tracked knowledge is measured")
+        self.save("CLAUDE.md", "# Project\nвход: NOW.md\nдопустимо без дороги: 1\n")
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["allowed"], 1)
+        self.assertEqual(report["unreachable"], ["knowledge/b/01-orphan.md"], "still listed, not hidden")
+
+    def test_missing_knowledge_root_is_not_checked_rather_than_clean(self):
+        self.init_git()
+        self.save("NOW.md", "# Current\n")
+        self.save("kb/01-note.md", "# Note\n")
+        self.index([{"id": "project-current", "description": "current", "load_when": ["orientation"],
+                     "aliases": ["now"], "paths": ["NOW.md"]}], current="project-current")
+        self.commit("NOW.md", "kb", "KNOWLEDGE_INDEX.json")
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["status"], "NOT_CHECKED")
+        check = self.run_tool("kb_check.py")
+        self.assertIn("достижимость знания — NOT_CHECKED", check.stdout)
+        self.assertNotIn("достижимость знания — PASS", check.stdout)
+        self.save("CLAUDE.md", "# Project\nкорень знания: kb\n")
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["status"], "FINDING")
+        self.assertEqual(report["roots"], ["kb"])
+        self.assertEqual(report["unreachable"], ["kb/01-note.md"])
+
+    def test_ephemeral_generated_from_is_a_finding_but_named_canons_are_not(self):
+        self.init_git()
+        self.save("NOW.md", "# Current\n")
+        self.save("report.md", "---\ngenerated: true\ngenerated_from: scratchpad/rerun\n---\n# Report\n")
+        self.save("daily.md", "---\ngenerated_from: живая база (скрипт scratchpad an9.py)\n---\n# Daily\n")
+        self.save("tmp.md", "---\ngenerated_from: /tmp/kb-run/build.py\n---\n# Tmp\n")
+        for name, value in (("db.md", "живая база; повторяется скриптом §7"),
+                            ("sheet.md", "Google Sheet «2017 анализ SEO по pr»"),
+                            ("sql.md", "confident.pays / ap_members (ok=1)"),
+                            ("git.md", "git CPPJ (flow_*.rpx), читано через tools/git_file.py")):
+            self.save(name, f"---\ngenerated_from: {value}\n---\n# {name}\n")
+        self.save("tools/git_file.py", "# tracked helper\n")
+        self.commit("NOW.md", "report.md", "daily.md", "tmp.md", "db.md", "sheet.md", "sql.md", "git.md", "tools")
+        result = self.run_tool("kb_check.py")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("ПРОИЗВОДНЫЙ ФАЙЛ БЕЗ ПРОВЕРЯЕМОГО ИСТОЧНИКА — 3:", result.stdout)
+        for name in ("report.md", "daily.md", "tmp.md"):
+            self.assertIn(f"{name} → generated_from", result.stdout)
+        for name in ("db.md", "sheet.md", "sql.md", "git.md"):
+            self.assertNotIn(f"{name} → generated_from", result.stdout)
+
+    def test_project_path_outside_git_is_a_finding_and_tracked_path_is_not(self):
+        self.init_git()
+        self.save("NOW.md", "# Current\n")
+        self.save("tools/out/run.txt", "raw output\n")
+        self.save("tools/keep/run.txt", "kept output\n")
+        self.save("a.md", "---\ngenerated_from: tools/out/run.txt + tools/keep/run.txt\n---\n# A\n")
+        self.save("b.md", "---\ngenerated_from: tools/keep/run.txt\n---\n# B\n")
+        self.commit("NOW.md", "a.md", "b.md", "tools/keep")
+        result = self.run_tool("kb_check.py")
+        self.assertIn("ПРОИЗВОДНЫЙ ФАЙЛ БЕЗ ПРОВЕРЯЕМОГО ИСТОЧНИКА — 1:", result.stdout)
+        self.assertIn("a.md → generated_from", result.stdout)
+        self.assertIn("не в Git", result.stdout)
+        self.assertNotIn("b.md → generated_from", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

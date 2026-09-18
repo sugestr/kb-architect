@@ -44,15 +44,28 @@ kb_check.py — целостность базы. Семь проверок, ко
 содержания.
 
 Выход: 0 — чисто, 1 — есть находки. Годится для pre-commit.
+
+  8. Знание без дороги от индекса. Tracked-файлы объявленного корня знания,
+     до которых не ведёт ни маршрут, ни цепочка локальных ссылок от boot,
+     current, ролей и маршрутов. Отчёт UAD 14.09.2026: 112 файлов из 165 были
+     невидимы агентам, ходящим по индексу, и ни одна проверка не говорила.
+     Достижимость не доказывает чтение; недекларированный корень — NOT_CHECKED.
+
+  9. Производный файл без проверяемого источника. `generated_from` указывает
+     на scratchpad, /tmp или сессионный каталог либо на путь внутри проекта,
+     которого нет в Git. Отчёт UAD 12.09.2026: выпуск для руководства собран
+     из эфемерного каталога, поле стояло, воспроизводимости не было.
 """
 
 import datetime
 import os
 import re
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kb_dates import parse_dates, infer_order
+import kb_index
 import kb_paths
 
 TEXT_EXT = {".md"}
@@ -100,6 +113,39 @@ ACTION_STATUS = {
     "sent", "submitted", "paid", "signed", "filed", "delivered", "executed",
     "отправлено", "подано", "оплачено", "подписано", "сдано", "исполнено",
 }
+
+
+GENERATED_FROM = re.compile(r"^\s*generated_from\s*:\s*(.+)$", re.MULTILINE)
+# Эфемерные адреса: живут ровно столько, сколько сессия или перезагрузка.
+EPHEMERAL = re.compile(
+    r"scratchpad|/tmp/|/private/tmp|/var/folders/|tool-results|\$TMPDIR|%TEMP%|"
+    r"\bсессионн\w*\s+каталог", re.IGNORECASE)
+PATH_TOKEN = re.compile(r"(?<![\w/])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]{1,5})")
+
+
+def generated_from_findings(root, rel, raw):
+    """Values of generated_from that no future session can open.
+
+    Free text («живая база; повторяется скриптом §7», Google Sheet, чужой git)
+    остаётся законным именованным каноном и находкой не является. Находка —
+    эфемерный адрес либо путь внутри проекта, которого нет в Git."""
+    out = []
+    for value in GENERATED_FROM.findall(raw[:4000]):
+        value = value.strip()
+        if EPHEMERAL.search(value):
+            out.append((rel, value, "эфемерный адрес"))
+            continue
+        for token in PATH_TOKEN.findall(value):
+            candidate = os.path.normpath(os.path.join(root, token))
+            if not candidate.startswith(root + os.sep) or not os.path.exists(candidate):
+                continue
+            tracked = subprocess.run(
+                ["git", "-C", root, "ls-files", "--error-unmatch", "--", token],
+                capture_output=True)
+            if tracked.returncode != 0:
+                out.append((rel, value, f"«{token}» есть на диске, но не в Git"))
+                break
+    return out
 
 
 MSG_FIELD = {
@@ -244,7 +290,7 @@ def main():
 
     today = datetime.date.today()
     broken, expired, blank = [], [], []
-    wrong_name, no_verify = [], []
+    wrong_name, no_verify, nesource = [], [], []
     files_all = collect(root)
     ORDER = infer_order(open(f, encoding="utf-8", errors="ignore").read() for f in files_all[:400])
 
@@ -286,6 +332,9 @@ def main():
                     if os.path.isfile(located_near) or os.path.isfile(located_root):
                         continue
                 broken.append((rel, clean))
+
+        # 9. производный файл без проверяемого источника
+        nesource.extend(generated_from_findings(root, rel, raw))
 
         # 2. истёкший срок годности
         for val in VALID_UNTIL.findall(raw):
@@ -429,6 +478,13 @@ def main():
     lishnie = [v for v in vetki if not v.lost]
     report_inbox, report_inbox_error, report_inbox_note = report_inbox_state(root)
 
+    # 8. Знание без дороги от индекса (см. kb_index.coverage).
+    index_path = os.path.join(root, kb_index.DEFAULT_INDEX)
+    if os.path.isfile(index_path):
+        cover = kb_index.coverage(kb_index.Path(root), kb_index.Path(index_path))
+    else:
+        cover = {"status": "NOT_CHECKED", "reason": "KNOWLEDGE_INDEX.json отсутствует"}
+
     found = 0
 
     if nedostavleno:
@@ -518,6 +574,31 @@ def main():
         print("  Это нарушение собственного решения проекта, а не универсального лимита.")
         print("  Не сокращай данные вслепую: сначала карта блоков и мест назначения,")
         print("  затем rollback и fresh-context проверка recall/authority/stops.\n")
+
+    if cover["status"] == "FINDING":
+        found += len(cover["unreachable"])
+        print(f"ЗНАНИЕ БЕЗ ДОРОГИ ОТ ИНДЕКСА — {len(cover['unreachable'])} из {cover['files']} "
+              f"(корень: {', '.join(cover['roots'])}):")
+        for area, count in list(cover["by_area"].items())[:10]:
+            print(f"  {area}: {count}")
+        for rel in cover["unreachable"][:10]:
+            print(f"  - {rel}")
+        if len(cover["unreachable"]) > 10:
+            print(f"  … и ещё {len(cover['unreachable']) - 10}; полный список: kb_index.py --coverage")
+        print("  Ни маршрут индекса, ни ссылка от boot/current/роли/маршрута сюда не ведут.")
+        print("  Агент, идущий по индексу, этого знания не видит. Заведи маршрут или ссылку")
+        print("  от точки входа области; исключение объяви «допустимо без дороги: N».\n")
+
+    if nesource:
+        found += len(nesource)
+        print(f"ПРОИЗВОДНЫЙ ФАЙЛ БЕЗ ПРОВЕРЯЕМОГО ИСТОЧНИКА — {len(nesource)}:")
+        for rel, value, why in nesource[:20]:
+            print(f"  {rel} → generated_from: {value[:80]} ({why})")
+        if len(nesource) > 20:
+            print(f"  … и ещё {len(nesource) - 20}")
+        print("  Следующая сессия не сможет перегенерировать файл: адрес исчезает")
+        print("  вместе с сессией или лежит вне Git. Перенеси скрипт/первичку в tracked")
+        print("  путь или назови внешний канон.\n")
 
     if broken:
         found += len(broken)
@@ -609,6 +690,13 @@ def main():
                          f"({bootstrap}/{budget} B)")
     else:
         scope.append("max project bootstrap — NOT_CHECKED")
+
+    if cover["status"] == "NOT_CHECKED":
+        scope.append(f"достижимость знания — NOT_CHECKED ({cover['reason']})")
+    else:
+        scope.append(f"достижимость знания — {cover['status']} "
+                     f"({cover['reachable']}/{cover['files']} в {', '.join(cover['roots'])})")
+    scope.append("generated_from (эфемерный · вне Git)")
 
     if not found:
         print("целостность: чисто. Проверено: " + ", ".join(scope) + ".")
