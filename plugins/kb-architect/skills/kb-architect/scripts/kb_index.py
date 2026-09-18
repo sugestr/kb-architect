@@ -291,8 +291,19 @@ def resolve(root: Path, path: Path, route_id: str, chain=()) -> tuple[list[dict]
 KNOWLEDGE_ROOT_KEYS = ("корень знания", "knowledge root", "knowledge_root")
 UNREACHABLE_ALLOWED_KEYS = ("допустимо без дороги", "unreachable allowed",
                             "knowledge_unreachable_allowed")
+# Outputs that live under the knowledge root (pages rendered for a clinician, a
+# memo sent to a person) are results, not knowledge: the project names them by
+# glob and the report shows how many were set aside.
+KNOWLEDGE_EXCLUDE_KEYS = ("вне знания", "knowledge exclude", "knowledge_exclude")
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+?\.md)(?:#[^)]*)?\)|`([^`\s]+?\.md)`")
+# Structured canons (a profile JSON, a ledger) address their documents by path in
+# string values; a road through them is as real as a Markdown link.
+JSON_PATH = re.compile(r'"((?:[^"\\/\s]+/)*[^"\\/\s]+\.md)"')
 FENCED = re.compile(r"```.*?```", re.DOTALL)
+# A generated view is regenerated from its source and is not knowledge itself:
+# its reachability says nothing about the canon (contract: derived files are
+# edited through the source). Marked files leave the denominator and are listed.
+GENERATED = re.compile(r"^\s*(?:<!--\s*)?generated(?:_from)?\s*:", re.MULTILINE)
 
 
 def knowledge_roots(root: Path) -> tuple[list[str], str]:
@@ -317,16 +328,34 @@ def tracked_markdown(root: Path, roots: list[str]) -> list[str] | None:
                   if p.endswith(".md"))
 
 
-def local_links(root: Path, rel: str) -> list[str]:
-    """Markdown links and backticked .md paths that resolve to a file inside root."""
+def is_generated_view(root: Path, rel: str) -> bool:
     try:
-        text = FENCED.sub("", (root / rel).read_text(encoding="utf-8", errors="ignore"))
+        with (root / rel).open(encoding="utf-8", errors="ignore") as stream:
+            return bool(GENERATED.search(stream.read(4000)))
+    except OSError:
+        return False
+
+
+def local_links(root: Path, rel: str) -> list[str]:
+    """Markdown links, backticked .md paths and .md strings in JSON that resolve inside root."""
+    try:
+        raw = (root / rel).read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return []
+    if rel.endswith(".json"):
+        candidates = [(value, "") for value in JSON_PATH.findall(raw)]
+    else:
+        candidates = MD_LINK.findall(FENCED.sub("", raw))
     found = []
-    for a, b in MD_LINK.findall(text):
+    # A path may be written relative to the file, to the root, or to any ancestor
+    # directory in between (a per-person profile addressing "ann/notes/x.md"
+    # from people/): the first resolution inside root wins.
+    bases = [(root / rel).parent]
+    while bases[-1] != root and root in bases[-1].parents:
+        bases.append(bases[-1].parent)
+    for a, b in candidates:
         target = (a or b).split("?")[0]
-        for candidate in ((root / rel).parent / target, root / target.lstrip("/")):
+        for candidate in [base / target for base in bases] + [root / target.lstrip("/")]:
             try:
                 resolved = candidate.resolve().relative_to(root.resolve()).as_posix()
             except ValueError:
@@ -377,6 +406,15 @@ def coverage(root: Path, index_path: Path) -> dict:
             continue
         seen.add(rel)
         stack.extend(local_links(root, rel))
+    raw_exclude, _ = kb_paths.declared_value(str(root), KNOWLEDGE_EXCLUDE_KEYS)
+    # declared_value strips trailing "*" as Markdown emphasis; a glob ending in "/"
+    # therefore means "everything below that directory".
+    globs = [g.strip().strip("`\"'«»") for g in re.split(r"[,;]", raw_exclude or "") if g.strip()]
+    globs = [g + "*" if g.endswith("/") else g for g in globs]
+    import fnmatch
+    excluded = [f for f in files if any(fnmatch.fnmatch(f, g) for g in globs)]
+    views = [f for f in files if f not in set(excluded) and is_generated_view(root, f)]
+    files = [f for f in files if f not in set(views) and f not in set(excluded)]
     unreachable = [f for f in files if f not in seen]
     raw_allowed, _ = kb_paths.declared_value(str(root), UNREACHABLE_ALLOWED_KEYS)
     allowed = int(raw_allowed) if raw_allowed and re.fullmatch(r"[0-9]+", raw_allowed) else 0
@@ -388,9 +426,13 @@ def coverage(root: Path, index_path: Path) -> dict:
         "routed": sum(1 for f in files if f in routed),
         "reachable": len(files) - len(unreachable),
         "unreachable": unreachable, "allowed": allowed,
+        "generated_views_excluded": len(views),
+        "declared_exclusions": globs, "excluded_by_declaration": len(excluded),
         "by_area": dict(by_area.most_common()),
         "note": "reachable = route paths/targets, boot files and role SKILL.md plus local "
-                "Markdown links from them; reachability is not proof that the file is read",
+                "Markdown links and .md paths in JSON strings from them; generated views "
+                "(generated_from marker) are not knowledge and are excluded; reachability "
+                "is not proof that the file is read",
     }
 
 def main() -> int:
@@ -419,7 +461,8 @@ def main() -> int:
             print(f"coverage: {report['status']} — roots={','.join(report['roots'])} "
                   f"({report['source']}) files={report['files']} routed={report['routed']} "
                   f"reachable={report['reachable']} unreachable={len(report['unreachable'])} "
-                  f"allowed={report['allowed']}")
+                  f"allowed={report['allowed']} generated_views_excluded={report['generated_views_excluded']} "
+                  f"excluded_by_declaration={report['excluded_by_declaration']}")
             for area, count in report["by_area"].items():
                 print(f"  {area}: {count}")
             for rel in report["unreachable"][:40]:

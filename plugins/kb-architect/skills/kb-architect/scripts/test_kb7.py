@@ -1031,6 +1031,38 @@ class CoverageTests(unittest.TestCase):
         self.assertIn("не в Git", result.stdout)
         self.assertNotIn("b.md → generated_from", result.stdout)
 
+    def test_json_paths_generated_views_and_declared_outputs(self):
+        """Medical project 18.09.2026: a profile JSON addresses notes relative to people/;
+        rendered views carry generated_from; exports for clinicians are outputs."""
+        self.init_git()
+        self.save("CLAUDE.md", "# Project\nвход: NOW.md\nкорень знания: people\nвне знания: people/*/exports/*\n")
+        self.save("NOW.md", "# Current\n")
+        self.save("people/ann/HEALTH_PROFILE.json", {"documents": [
+            {"title": "MRI", "note": "ann/notes/2021-12-23_mri.md"},
+            {"title": "Labs", "note": "people/ann/notes/2022-01-26_labs.md"}]})
+        self.save("people/ann/notes/2021-12-23_mri.md", "# MRI\n")
+        self.save("people/ann/notes/2022-01-26_labs.md", "# Labs\n")
+        self.save("people/ann/notes/2023-05-05_orphan.md", "# Not registered anywhere\n")
+        self.save("people/ann/HEALTH_HOME.md", "<!-- generated_from: HEALTH_PROFILE.json -->\n# Home\n")
+        self.save("people/ann/START_HERE.md", "---\ngenerated: true\ngenerated_from: profile\n---\n# Hi\n")
+        self.save("people/ann/exports/DOCTOR_PAGE_en.md", "# Clinical summary\n")
+        self.save("people/ann/SOURCES.md", "# hand-written list, no road\n")
+        self.index([{"id": "project-current", "description": "current", "load_when": ["orientation"],
+                     "aliases": ["now"], "paths": ["NOW.md"]},
+                    {"id": "person-ann", "description": "Ann", "load_when": ["question about Ann"],
+                     "aliases": ["Ann"], "paths": ["people/ann/HEALTH_HOME.md", "people/ann/HEALTH_PROFILE.json"]}],
+                   current="project-current")
+        self.commit("CLAUDE.md", "NOW.md", "people", "KNOWLEDGE_INDEX.json")
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["generated_views_excluded"], 2)
+        self.assertEqual(report["excluded_by_declaration"], 1)
+        self.assertEqual(report["declared_exclusions"], ["people/*/exports/*"])
+        self.assertEqual(report["files"], 4, "two notes reached via JSON, one orphan note, one hand list")
+        self.assertEqual(report["unreachable"], ["people/ann/SOURCES.md", "people/ann/notes/2023-05-05_orphan.md"])
+        self.assertEqual(report["status"], "FINDING")
+        check = self.run_tool("kb_check.py")
+        self.assertIn("ЗНАНИЕ БЕЗ ДОРОГИ ОТ ИНДЕКСА — 2 из 4", check.stdout)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
