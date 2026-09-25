@@ -298,6 +298,12 @@ KNOWLEDGE_EXCLUDE_KEYS = ("вне знания", "knowledge exclude", "knowledge
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+?\.md)(?:#[^)]*)?\)|`([^`\s]+?\.md)`")
 # Structured canons (a profile JSON, a ledger) address their documents by path in
 # string values; a road through them is as real as a Markdown link.
+# A README that lists its subareas as `tax/` or [tax](tax/) is a table of contents
+# too (accounting project 25.09.2026: 15 of 21 "unreachable" files were linked this way).
+# The directory counts as a road to its README.md; a directory without one leads
+# nowhere a session can open, so it stays unresolved.
+DIR_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#:]+?/)\)|`([^`\s:]+?/)`")
+DIR_ENTRY = "README.md"
 JSON_PATH = re.compile(r'"((?:[^"\\/\s]+/)*[^"\\/\s]+\.md)"')
 FENCED = re.compile(r"```.*?```", re.DOTALL)
 # A generated view is regenerated from its source and is not knowledge itself:
@@ -345,7 +351,9 @@ def local_links(root: Path, rel: str) -> list[str]:
     if rel.endswith(".json"):
         candidates = [(value, "") for value in JSON_PATH.findall(raw)]
     else:
-        candidates = MD_LINK.findall(FENCED.sub("", raw))
+        text = FENCED.sub("", raw)
+        candidates = MD_LINK.findall(text) + [
+            ((a or b) + DIR_ENTRY, "") for a, b in DIR_LINK.findall(text)]
     found = []
     # A path may be written relative to the file, to the root, or to any ancestor
     # directory in between (a per-person profile addressing "ann/notes/x.md"
@@ -430,7 +438,8 @@ def coverage(root: Path, index_path: Path) -> dict:
         "declared_exclusions": globs, "excluded_by_declaration": len(excluded),
         "by_area": dict(by_area.most_common()),
         "note": "reachable = route paths/targets, boot files and role SKILL.md plus local "
-                "Markdown links and .md paths in JSON strings from them; generated views "
+                "Markdown links, directory links to a README.md and .md paths in JSON "
+                "strings from them; generated views "
                 "(generated_from marker) are not knowledge and are excluded; reachability "
                 "is not proof that the file is read",
     }

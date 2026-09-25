@@ -194,12 +194,19 @@ def skill_version() -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Measure the route costs of this skill package, not of a project.")
+    # Sibling scripts take the project path positionally, and sessions pass it here
+    # by analogy (accounting project 25.09.2026). Accept it and say that it is not used.
+    parser.add_argument("project", nargs="?", help="ignored: the skill itself is measured")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--write-baseline", action="store_true",
                         help="accept current route costs for this skill version")
     args = parser.parse_args()
+    if args.project is not None:
+        print(f"kb_cost.py: path «{args.project}» ignored — the installed skill is measured, "
+              "not a project", file=sys.stderr)
     result = measure(check_baseline=not args.write_baseline)
     if args.write_baseline:
         BASELINE.write_text(

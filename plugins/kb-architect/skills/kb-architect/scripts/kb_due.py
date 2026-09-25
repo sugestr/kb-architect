@@ -43,7 +43,25 @@ import kb_paths
 
 STALE_ENTRY_DAYS = 7        # вход старше — снимок протух
 REVIEW_DAYS = 30            # журнал и вопросы: давно не разбирали
+STALE_LOCK_MINUTES = 10     # lock в .git старше — брошен, а не держится командой
 DATE_RE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
+
+
+# Markdown emphasis before the mark is formatting, not content: projects write
+# «- **✔ Закрыто 2026-09-25 · тема:** внесено в …» (an accounting project since 4.12).
+EMPHASIS = re.compile(r"^(?:\*\*|__|\*|_)+\s*")
+CLOSURE_MARK = re.compile(r"✔\s*(?:закрыт\w*|closed|решено|учтено|применено|вход\s+учт[её]н)\b",
+                          re.I)
+
+
+def mark_value(line):
+    """A line without its list marker and leading emphasis."""
+    return EMPHASIS.sub("", re.sub(r"^\s*[-*]\s+", "", line).strip())
+
+
+def is_closure_item(line):
+    """A list item that is only a closure mark: it closes the entry above it."""
+    return bool(re.match(r"^\s*[-*]\s+", line)) and bool(CLOSURE_MARK.match(mark_value(line)))
 
 
 def correction_status(text):
@@ -51,7 +69,7 @@ def correction_status(text):
     status = "unknown"
     fenced = False
     for line in text.splitlines():
-        value = re.sub(r"^\s*[-*]\s+", "", line).strip()
+        value = mark_value(line)
         if value.startswith("```"):
             fenced = not fenced
         if fenced or value.startswith((">", "`")):
@@ -66,7 +84,7 @@ def correction_status(text):
 
 
 def correction_entry_synced(text):
-    return any(re.match(r"^\s*✔\s*Вход\s+учт[её]н\b", line, re.I)
+    return any(re.match(r"✔\s*Вход\s+учт[её]н\b", mark_value(line), re.I)
                for line in text.splitlines())
 
 
@@ -269,9 +287,17 @@ def main():
         # закрытия только в первой строке, marked всегда выходил False, и
         # ветка «неразобранное про вход» была недостижима в принципе — то
         # есть проверка, написанная против fail-open, сама была fail-open.
-        lines, cur = [], None
+        # Отдельный пункт «✔ закрыто …» сразу под записью закрывает её, а не
+        # становится новой записью: иначе он и не помечал исходную, и раздувал
+        # знаменатель (бухгалтерский проект 25.09: 31 отметка, счётчик 4 из 175).
+        lines, cur, orphan_marks = [], None, 0
         for ln in corrections.text().splitlines():
-            if ln.lstrip().startswith(("- ", "* ")):
+            if is_closure_item(ln):
+                if cur is not None:
+                    cur.append(ln)
+                else:
+                    orphan_marks += 1
+            elif ln.lstrip().startswith(("- ", "* ")):
                 if cur is not None:
                     lines.append("\n".join(cur))
                 cur = [ln]
@@ -310,7 +336,8 @@ def main():
                       f"несут {skolko} — разобранность отсюда не видна, и записей про вход "
                       f"({len(pending)}) я по этой причине в находки не выношу: непомеченное "
                       f"здесь не значит неразобранное. Помечай применённое "
-                      f"(«✔ закрыто <дата>» в той же записи — это дописывание, а не правка), "
+                      f"(«✔ закрыто <дата>» в той же записи или отдельным пунктом сразу "
+                      f"под ней — это дописывание, а не правка), "
                       f"и проверка начнёт различать")
         elif pending:
             dts = [d for ln in pending for d in dates_in(ln, past_only=True, today=today)]
@@ -321,6 +348,9 @@ def main():
                 f"подтверждённое событие могло дойти до канала и не дойти до входа")
         else:
             ok.append(f"канал правок ({where_c}): записей про вход, ждущих применения, нет")
+        if orphan_marks:
+            ok.append(f"канал правок ({where_c}): пунктов «✔ …» без записи над ними — "
+                      f"{orphan_marks}; они ни к чему не привязаны и не засчитаны")
 
     # 2. Ожидания, которые ждут слишком долго.
     #
@@ -510,6 +540,32 @@ def main():
             dirty = [l for l in status_raw.splitlines() if l.strip()]
             if dirty:
                 due.append(f"незакоммиченных изменений: {len(dirty)} — точка возврата не полна")
+
+        # Брошенный lock останавливает следующий коммит любой сессии и сам
+        # не исчезает (бухгалтерский проект 18.09.2026: index.lock и HEAD.lock, два
+        # упавших коммита). Свежий lock — нормальная работа git, старый — нет.
+        git_dir = git("rev-parse", "--absolute-git-dir")
+        if git_dir:
+            stale = []
+            now_ts = datetime.datetime.now().timestamp()
+            for sub, _, files in os.walk(git_dir):
+                rel_sub = os.path.relpath(sub, git_dir)
+                if rel_sub != "." and not rel_sub.split(os.sep)[0] in ("refs", "logs"):
+                    continue
+                for f in files:
+                    if f.endswith(".lock"):
+                        path = os.path.join(sub, f)
+                        try:
+                            age = (now_ts - os.path.getmtime(path)) / 60
+                        except OSError:
+                            continue
+                        if age >= STALE_LOCK_MINUTES:
+                            stale.append(f"{os.path.relpath(path, git_dir)} ({age:.0f} мин)")
+            if stale:
+                due.append(f"в git-каталоге висят lock-файлы старше {STALE_LOCK_MINUTES} минут: "
+                           f"{', '.join(sorted(stale)[:6])} — прерванная команда или другой "
+                           f"писатель в этом checkout; следующий коммит упадёт. Удаляй только "
+                           f"убедившись, что живого git-процесса нет")
 
         if dirty is not None:
             ahead = git("rev-list", "--count", "@{u}..HEAD")

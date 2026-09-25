@@ -2,6 +2,7 @@
 """Observed 6.x failures and 7.0 heterogeneous-project contracts, in isolation."""
 
 import contextlib
+import os
 import io
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -1062,6 +1064,77 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(report["status"], "FINDING")
         check = self.run_tool("kb_check.py")
         self.assertIn("ЗНАНИЕ БЕЗ ДОРОГИ ОТ ИНДЕКСА — 2 из 4", check.stdout)
+
+
+class SignalPrecision2509Tests(unittest.TestCase):
+    """accounting project 25.09.2026: directory links, closure items, stale locks, cost CLI."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit = RedesignTests.commit
+    index = RedesignTests.index
+
+    def test_directory_link_reaches_its_readme_but_not_an_empty_directory(self):
+        self.init_git()
+        self.save("NOW.md", "# Current\n")
+        self.save("knowledge/README.md", "# Areas\n`tax/` — declarations; [bank](bank/); `empty/`\n")
+        self.save("knowledge/tax/README.md", "# Tax\n")
+        self.save("knowledge/bank/README.md", "# Bank\n")
+        self.save("knowledge/empty/note.md", "# No README beside me\n")
+        self.index([{"id": "project-current", "description": "current", "load_when": ["orientation"],
+                     "aliases": ["now"], "paths": ["NOW.md"]},
+                    {"id": "areas", "description": "areas", "load_when": ["area question"],
+                     "aliases": ["areas"], "paths": ["knowledge/README.md"]}], current="project-current")
+        self.commit("NOW.md", "knowledge", "KNOWLEDGE_INDEX.json")
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["unreachable"], ["knowledge/empty/note.md"])
+        self.assertEqual(report["reachable"], 3)
+
+    def test_bold_and_separate_closure_items_close_the_entry_above(self):
+        for value in ("- **✔ Закрыто 2026-09-25 · тема:** внесено в `a.md`",
+                      "- __✔ закрыто 2026-09-25__", "- *✔ closed*"):
+            with self.subTest(value=value):
+                self.assertEqual(kb_due.correction_status(value), "closed")
+        self.assertEqual(kb_due.correction_status("- **пример:** ✔ закрыто"), "unknown")
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-25\n\n## ГДЕ МЫ\ntext\n")
+        corr = "# Правки\n\n"
+        for i in range(1, 5):
+            corr += f"- 2026-09-0{i} · `NOW.md` — запись {i}\n"
+            if i <= 3:
+                corr += f"- **✔ Закрыто 2026-09-2{i} · запись {i}:** внесено в `NOW.md`\n"
+        corr += "\n## Другое\n\n- ✔ закрыто 2026-09-24 без записи\n"
+        self.save("CORRECTIONS.md", corr)
+        out = self.run_tool("kb_due.py").stdout
+        self.assertNotIn("записей, отметку о разборе", out, "3 of 4 closed is above the threshold")
+        self.assertIn("пунктов «✔ …» без записи над ними — 1", out)
+        self.assertIn("неразобранных записей про сам вход: 1", out)
+
+    def test_stale_git_lock_is_named_and_fresh_lock_is_not(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-25\n")
+        self.commit("CLAUDE.md", "NOW.md")
+        fresh = self.root / ".git" / "HEAD.lock"
+        fresh.write_text("")
+        self.assertNotIn("lock-файлы", self.run_tool("kb_due.py").stdout)
+        stale = self.root / ".git" / "index.lock"
+        stale.write_text("")
+        old = time.time() - 3600
+        os.utime(stale, (old, old))
+        out = self.run_tool("kb_due.py").stdout
+        self.assertIn("lock-файлы старше 10 минут: index.lock", out)
+        self.assertNotIn("HEAD.lock", out)
+
+    def test_cost_accepts_a_project_path_and_says_it_is_ignored(self):
+        result = subprocess.run([sys.executable, str(HERE / "kb_cost.py"), "--check", str(self.root)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertNotIn("unrecognized arguments", result.stderr)
+        self.assertIn("ignored", result.stderr)
+        self.assertIn("entry:", result.stdout)
 
 
 if __name__ == "__main__":
