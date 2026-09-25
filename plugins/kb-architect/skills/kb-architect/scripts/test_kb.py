@@ -170,7 +170,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "7.2.2"
+          and data.get("baseline_version") == "7.2.3"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 6_144
@@ -3095,6 +3095,42 @@ def t_update_safe_replace_keeps_backup():
     shutil.rmtree(source, ignore_errors=True)
 
 
+def t_722_updater_leaves_an_external_managed_release_link():
+    """Remote host 24.09.2026: the updater replaced links into another installer's
+    releases/ + identities/ layout with plain copies, and that installer then
+    refused its next release. Such a link is reported, never replaced."""
+    source = base({
+        "SKILL.md": "---\nname: kb-architect\nmetadata:\n  version: \"9.9\"\n---\n",
+        "scripts/test_kb.py": "print('fixture ok')\n",
+    })
+    home = tempfile.mkdtemp(prefix="kbtest-update-external-")
+    managed = os.path.join(home, "managed")
+    release = os.path.join(managed, "releases", "9.8-abc")
+    os.makedirs(release)
+    with open(os.path.join(release, "SKILL.md"), "w", encoding="utf-8") as f:
+        f.write("---\nname: kb-architect\nmetadata:\n  version: \"9.8\"\n---\n")
+    os.makedirs(os.path.join(managed, "identities"))
+    with open(os.path.join(managed, "identities", "9.8-abc.json"), "w") as f:
+        f.write("{}\n")
+    link = os.path.join(home, ".claude", "skills", "kb-architect")
+    os.makedirs(os.path.dirname(link))
+    os.symlink(release, link)
+    env = dict(os.environ)
+    env["HOME"] = home
+    p = subprocess.run(
+        [sys.executable, os.path.join(HERE, "kb_update.py"), "--source", source, "--do"],
+        capture_output=True, text=True, timeout=180, env=env)
+    out = Vyvod(p.stdout + p.stderr, p.returncode)
+    check("updater не заменяет ссылку на управляемый выпуск другого установщика",
+          os.path.islink(link) and os.path.realpath(link) == os.path.realpath(release)
+          and "updater ссылку не заменяет" in out
+          and not os.path.exists(os.path.join(home, ".claude", "skills", ".backups"))
+          and out.code == 1,
+          out, "the owning installer switches its link; the updater only reports the lag")
+    shutil.rmtree(home, ignore_errors=True)
+    shutil.rmtree(source, ignore_errors=True)
+
+
 def t_633_published_install_does_not_repeat_tests_or_touch_runtime():
     """A formed public release is copied by parity without model or test runs."""
     import contextlib
@@ -5259,7 +5295,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "7.2.2"
+          kb_paths.skill_version() == "7.2.3"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == "7.2.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

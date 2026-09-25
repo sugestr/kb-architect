@@ -88,6 +88,24 @@ def save_cache(data):
         return str(exc)
 
 
+def external_release(path):
+    """A link into another installer's managed layout: <root>/releases/<name>
+    with <root>/identities/<name>.json. That installer owns the switch and the
+    rollback; replacing its link with a copy breaks its next install (remote
+    host 24.09.2026: both links became plain copies, the adapter then refused
+    «owner skill path is unmanaged»). A link to a development checkout has no
+    such record and is still converted."""
+    if not os.path.islink(path):
+        return False
+    target = os.path.realpath(path)
+    releases = os.path.dirname(target)
+    if os.path.basename(releases) != "releases":
+        return False
+    identity = os.path.join(os.path.dirname(releases), "identities",
+                            os.path.basename(target) + ".json")
+    return os.path.isfile(identity)
+
+
 def managed_installs_match(receipt):
     expected_version = receipt.get("version")
     expected_fingerprint = receipt.get("fingerprint")
@@ -99,7 +117,8 @@ def managed_installs_match(receipt):
         if not os.path.lexists(path):
             continue
         found += 1
-        if (os.path.islink(path) or versiya(path) != expected_version
+        if ((os.path.islink(path) and not external_release(path))
+                or versiya(path) != expected_version
                 or fingerprint(path) != expected_fingerprint):
             return False
     return found > 0
@@ -440,6 +459,17 @@ def update_from_source(src, args, source_label, record_receipt=False):
             continue
         managed_count += 1
         was_link = os.path.islink(path)
+        if external_release(path):
+            current = versiya(path)
+            if fingerprint(path) == fingerprint(src):
+                print(f"{name:12} ссылка на управляемый выпуск другого установщика, "
+                      f"редакция {current} — совпадает с source")
+            else:
+                print(f"{name:12} ссылка на управляемый выпуск другого установщика, "
+                      f"редакция {current} против {source_version} — обновляет его "
+                      "владелец этой установки; updater ссылку не заменяет")
+                pending = True
+            continue
         if was_link and not args.do_update:
             target = os.path.realpath(path)
             print(f"{name:12} симлинк → {target}, редакция {versiya(path)} — "
