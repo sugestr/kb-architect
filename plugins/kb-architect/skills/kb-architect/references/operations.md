@@ -30,6 +30,8 @@ commit/push при имеющихся полномочиях. Не считай 
 частичный intake сохраняют с адресом продолжения, не задерживая backup до конца.
 `DURABLE_TAIL=PENDING` называет точный незавершённый хвост. Report-only не создаёт
 write-authority. Commit, remote parity и внешнее исполнение — разные результаты.
+Работа, не дошедшая до базы (входящие без следа, модули без описания, невлитые ветки,
+прошедшие сроки current), — долги знания: `capture.md`, `kb_debts.py`.
 
 Меряй отдельно `time to first useful result` и `time to durable completion`.
 Latency guard ограничивает молчание, а не доказательства: через 60 секунд или три

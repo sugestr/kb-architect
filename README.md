@@ -410,6 +410,7 @@ plugins/kb-architect/skills/kb-architect/
   scripts/kb_init.py     развернуть минимальную базу
   scripts/kb_due.py      найти просроченное
   scripts/kb_check.py    проверить целостность
+  scripts/kb_debts.py    найти работу, не дошедшую до базы (входящие, ветки, код, сроки)
   scripts/kb_lookup.py   найти известное и закрыть evidence-gate до вывода
   scripts/kb_skills.py   проверить project-owned профессиональные skills
   scripts/kb_apply.py    разобрать изменения между редакциями

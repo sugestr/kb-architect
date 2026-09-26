@@ -52,6 +52,14 @@ DATE_RE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 EMPHASIS = re.compile(r"^(?:\*\*|__|\*|_)+\s*")
 CLOSURE_MARK = re.compile(r"✔\s*(?:закрыт\w*|closed|решено|учтено|применено|вход\s+учт[её]н)\b",
                           re.I)
+# Шаблон CORRECTIONS.md велит дописывать отметку в конец самой записи:
+# «… Источник: … ✔ закрыто ДАТА, внесено в ПУТЬ». Проверка видела её только
+# в начале строки, и три проекта с 34 честными закрытиями получали «ни одной»
+# (аудит проектов 26.09.2026). В середине строки отметка засчитывается только
+# с адресом внесения — так и требует шаблон; «пример: ✔ закрыто» не закрывает.
+TAIL_CLOSURE = re.compile(r"(?<![`>])✔\s*(?:закрыт\w*|closed)\b[^\n`]*?"
+                          r"(?:\bвнес[её]?\w*\s+в\b|\bотклон\w*|\brejected\b|\bmerged into\b)",
+                          re.I)
 
 
 def mark_value(line):
@@ -75,6 +83,8 @@ def correction_status(text):
         if fenced or value.startswith((">", "`")):
             continue
         if re.match(r"(?:\[x\](?:\s|$)|✔\s*(?:закрыт\w*|closed|решено|учтено|применено)\b)", value, re.I):
+            status = "closed"
+        elif TAIL_CLOSURE.search(value):
             status = "closed"
         elif re.match(r"(?:\[ \]|(?:status|статус):\s*(?:open|pending|открыт\w*))", value, re.I):
             status = "open"
@@ -374,6 +384,11 @@ def main():
         per_row = [min(d) for d in
                    (dates_in(ln, past_only=True, today=today) for ln in rows) if d]
         started = per_row if rows else dates_in(wait, past_only=True, today=today)
+        undated = len(rows) - len(per_row) if rows else 0
+        if undated:
+            # Строка без даты молча выпадала из счёта (аудит 26.09: 10 строк в одном проекте, 4 из 5 в другом).
+            ok.append(f"ожиданий без даты начала: {undated} — их возраст не считается (UNKNOWN); "
+                      f"впиши «с какого числа»")
         if started:
             longest = min(started)
             age = (today - longest).days
@@ -603,7 +618,13 @@ def main():
                 else:
                     pusto.append((b, 0))
             if rabota:
-                spisok = ", ".join(f"{b} ({c})" for b, c in rabota[:6])
+                def perenos(b):
+                    # Патчи ветки уже в каноне — перенесено cherry-pick; версии
+                    # всё равно сверяет kb_check, откат в каноне остаётся виден.
+                    rest = git("rev-list", "--count", "--right-only", "--cherry-pick",
+                               f"{head}...{b}")
+                    return f", патчи уже в {head}" if rest == "0" else ""
+                spisok = ", ".join(f"{b} ({c}{perenos(b)})" for b, c in rabota[:6])
                 due.append(f"веток с коммитами вне истории {head}: {len(rabota)} — {spisok}. "
                            "Это не доказывает отсутствие работы в каноне: проверь "
                            "перенос patches, последующие правки и отмены до нового слияния.")
@@ -727,6 +748,23 @@ def main():
                   "перечитываются на лету. Разошлась с установленной — узнать об этом "
                   "нельзя, поэтому опровергая собственное недавнее наблюдение, сначала "
                   "проверь версию")
+
+    # 8. Долги знания: работа, не дошедшая до базы (kb_debts.py). Возраст и
+    # формы проверены выше; здесь база сверяется с потоками работы — входящими,
+    # ветками и worktree, модулями кода, сроками во входе. Все проверки выше
+    # зелёные бывали и при пустой базе там, где шла основная работа
+    # (продукт на Odoo и UAD, 26.09.2026).
+    try:
+        import kb_debts
+        lines, clean = kb_debts.summary_lines(kb_debts.debts(root, today=today))
+        due.extend(f"долг знания: {line}" for line in lines)
+        ok.extend(clean)
+        if lines:
+            ok.append(f"подробно по долгам: {sys.executable} "
+                      f"{os.path.join(os.path.dirname(os.path.realpath(__file__)), 'kb_debts.py')} "
+                      f"{os.path.abspath(root)}")
+    except Exception as exc:
+        due.append(f"долги знания НЕ ПРОВЕРЕНЫ: {exc}")
 
     if due:
         print("ПОРА:")

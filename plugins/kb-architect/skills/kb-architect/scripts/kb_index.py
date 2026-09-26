@@ -309,7 +309,15 @@ FENCED = re.compile(r"```.*?```", re.DOTALL)
 # A generated view is regenerated from its source and is not knowledge itself:
 # its reachability says nothing about the canon (contract: derived files are
 # edited through the source). Marked files leave the denominator and are listed.
-GENERATED = re.compile(r"^\s*(?:<!--\s*)?generated(?:_from)?\s*:", re.MULTILINE)
+GENERATED = re.compile(r"^\s*(?:<!--\s*)?generated(_from)?\s*:\s*(.*)$", re.MULTILINE)
+# Only a render has one writer, the generator, and a structured source: the
+# medical project's pages say `generated_from: HEALTH_PROFILE.json + health_metrics.db`.
+# UAD writes the same field as provenance of an authored synthesis («живая
+# база», Markdown chapters, Telegram) — 51 files, among them an area's declared
+# entry map, silently left the reachability count (audit of 26.09.2026). A note
+# derived from knowledge or from the outside world is still knowledge.
+VIEW_SOURCE = re.compile(r"[\w.-]+\.(?:json|jsonl|db|sqlite3?|csv|tsv|py|sh|sql|ya?ml|js|ts|xlsx)\b",
+                         re.IGNORECASE)
 
 
 def knowledge_roots(root: Path) -> tuple[list[str], str]:
@@ -337,9 +345,13 @@ def tracked_markdown(root: Path, roots: list[str]) -> list[str] | None:
 def is_generated_view(root: Path, rel: str) -> bool:
     try:
         with (root / rel).open(encoding="utf-8", errors="ignore") as stream:
-            return bool(GENERATED.search(stream.read(4000)))
+            head = stream.read(4000)
     except OSError:
         return False
+    for is_from, value in GENERATED.findall(head):
+        if not is_from or VIEW_SOURCE.search(value):
+            return True
+    return False
 
 
 def local_links(root: Path, rel: str) -> list[str]:

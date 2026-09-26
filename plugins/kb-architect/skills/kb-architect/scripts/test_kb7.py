@@ -357,7 +357,8 @@ class RedesignTests(unittest.TestCase):
         self.save('_inbox/outgoing.md', '---\ntype: agent-message\nfrom_project: old shop\nto_project: shop-sl\ndelivery_state: delivered\n---\nOutgoing.\n')
         result = self.run_tool('kb_check.py')
         self.assertIn('outgoing.md', result.stdout)
-        self.assertNotIn('incoming.md', result.stdout)
+        # Addressing only; an untraced inbound is a separate knowledge debt below.
+        self.assertNotIn('incoming.md', result.stdout.split('ДОЛГИ ЗНАНИЯ')[0])
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="kb7-test-")
@@ -1135,6 +1136,511 @@ class SignalPrecision2509Tests(unittest.TestCase):
         self.assertNotIn("unrecognized arguments", result.stderr)
         self.assertIn("ignored", result.stderr)
         self.assertIn("entry:", result.stdout)
+
+
+class WorktreeSignals2609Tests(unittest.TestCase):
+    """Odoo product 26.09.2026: linked worktree and role suffix false alarms."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit = RedesignTests.commit
+
+    def test_sibling_report_inbox_resolves_from_the_main_checkout_of_a_worktree(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nинбокс отчётов: ../lab/inbox\n")
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.commit("CLAUDE.md", "NOW.md")
+        (self.base / "lab" / "inbox").mkdir(parents=True)
+        worktree = self.base / "elsewhere" / "wt"
+        worktree.parent.mkdir()
+        self.git("worktree", "add", "-q", "-b", "audit", str(worktree))
+        result = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(worktree)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertNotIn("ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН", result.stdout)
+        self.assertIn("от основного checkout", result.stdout)
+        shutil.rmtree(self.base / "lab")
+        missing = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(worktree)],
+                                 capture_output=True, text=True, timeout=30)
+        self.assertIn("ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН", missing.stdout)
+
+    def test_role_suffix_after_slash_keeps_the_project_as_recipient(self):
+        self.save("CLAUDE.md", "project_aliases: shop, shop-agent\n")
+        names = kb_check.imena_proekta(str(self.root))
+        self.assertTrue(kb_check.nash("shop / next Claude supervisor", names))
+        self.assertTrue(kb_check.nash("Shop-Agent / receiving supervisor", names))
+        for value in ("shop-sl / supervisor", "shop/sub", "other / shop"):
+            self.assertFalse(kb_check.nash(value, names), value)
+
+
+class KnowledgeDebts2609Tests(unittest.TestCase):
+    """UAD, the Odoo product and the project sweep of 26.09.2026: work that never reached the base."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    index = RedesignTests.index
+    TODAY = __import__("datetime").date(2026, 9, 26)
+
+    def commit_at(self, day, *paths, root=None):
+        env = dict(os.environ, GIT_AUTHOR_DATE=f"{day}T12:00:00", GIT_COMMITTER_DATE=f"{day}T12:00:00")
+        self.git("add", "--", *paths, root=root)
+        subprocess.run(["git", "-C", str(root or self.root), "commit", "-qm", f"at {day}"],
+                       check=True, capture_output=True, env=env)
+
+    def debts(self):
+        import kb_debts
+        return kb_debts.debts(str(self.root), today=self.TODAY)
+
+    def envelope(self, name, mid, created, sender="specialist"):
+        self.save(f"_inbox/{name}.md", f"---\ntype: agent-message\nmessage_id: {mid}\n"
+                  f"created_at: {created}T10:00:00Z\nfrom_project: {sender}\nto_project: project\n"
+                  f"delivery_state: delivered\n---\nFact: bans come after 24h of zero.\n")
+
+    def test_inbound_without_trace_is_a_debt_until_cited_or_dispositioned(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.envelope("a", "flow:msg-0001", "2026-09-19")
+        self.envelope("b", "flow:msg-0002", "2026-09-20")
+        self.envelope("c", "flow:msg-0003", "2026-09-25")
+        self.commit_at("2026-09-25", "CLAUDE.md", "NOW.md", "_inbox")
+        inbound = self.debts()["inbound"]
+        self.assertEqual(inbound["status"], "DEBT")
+        self.assertEqual([e["message_id"] for e in inbound["open"]],
+                         ["flow:msg-0001", "flow:msg-0002"], "within grace is not yet a debt")
+        self.save("knowledge/flow.md", "Ban mechanics (source: flow:msg-0001).\n")
+        self.save("_inbox/INDEX.md", "- flow:msg-0002 — без дельты: уже есть в knowledge/flow.md\n")
+        self.commit_at("2026-09-26", "knowledge", "_inbox/INDEX.md")
+        inbound = self.debts()["inbound"]
+        self.assertEqual(inbound["status"], "PASS")
+        self.assertEqual(inbound["traced"], 2)
+
+    def code_fixture(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-01\n")
+        for mod in ("shop_pos", "shop_care"):
+            self.save(f"addons/{mod}/__manifest__.py", "{'name': '%s'}\n" % mod)
+            self.save(f"addons/{mod}/models.py", "x = 1\n")
+        self.save("CHANGELOG.md", "## shop_care\n- touched shop_care and shop_pos\n")
+        self.save("kb/system.md", "# System\nModules: `shop_pos`, `shop_care`.\n")
+        self.commit_at("2026-09-01", "CLAUDE.md", "NOW.md", "addons", "CHANGELOG.md", "kb")
+
+    def test_code_modules_need_a_description_not_a_mention_or_a_journal(self):
+        self.code_fixture()
+        code = self.debts()["code"]
+        self.assertEqual(code["units"], 2)
+        self.assertEqual(sorted(u["unit"] for u in code["missing"]),
+                         ["addons/shop_care", "addons/shop_pos"],
+                         "a list line and a changelog heading are not descriptions")
+        self.save("kb/system.md", "# System\n\n## shop_pos — till and receipts\nHow it works.\n")
+        self.commit_at("2026-09-02", "kb/system.md")
+        code = self.debts()["code"]
+        self.assertEqual([u["unit"] for u in code["missing"]], ["addons/shop_care"])
+        self.assertEqual(code["described"], 1)
+
+    def test_description_lagging_behind_its_module_is_a_debt(self):
+        self.code_fixture()
+        self.save("addons/shop_pos/README.md", "# shop_pos\nPurpose and flows.\n")
+        self.save("addons/shop_care/README.md", "# shop_care\nPurpose.\n")
+        self.commit_at("2026-09-02", "addons")
+        for i in range(10):
+            self.save("addons/shop_pos/models.py", f"x = {i + 2}\n")
+            self.commit_at(f"2026-09-{i + 10}", "addons/shop_pos/models.py")
+        code = self.debts()["code"]
+        self.assertEqual([u["unit"] for u in code["lagging"]], ["addons/shop_pos"])
+        self.assertEqual(code["lagging"][0]["lag_commits"], 10)
+        self.assertEqual(code["missing"], [])
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nкод без описания допустим: addons/shop_pos\n")
+        self.assertEqual(self.debts()["code"]["excused"], ["addons/shop_pos"])
+
+    def test_only_product_code_is_a_module(self):
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-01\n")
+        files = {"knowledge/mirror/a.py": "", "knowledge/mirror/b.py": "", "knowledge/mirror/c.py": "",
+                 "skills/role/x.py": "", "skills/role/y.py": "", "skills/role/z.py": "",
+                 "_reports/site/package.json": "{}", "_reports/site/a.js": "",
+                 "tests/t1.py": "", "tests/t2.py": "", "tests/t3.py": "",
+                 "nested/CLAUDE.md": "# nested\n", "nested/n1.py": "", "nested/n2.py": "", "nested/n3.py": "",
+                 "vendor/lib/package.json": "{}", "vendor/lib/v.js": "",
+                 "cloud_mcp/package.json": "{}", "cloud_mcp/index.js": "",
+                 "tools/a.py": "", "tools/b.py": "", "tools/c.py": ""}
+        for name, text in files.items():
+            self.save(name, text)
+        self.save("docs/ops.md", "# Useful tools and habits\nNothing about the code.\n")
+        self.commit_at("2026-09-01", "NOW.md", *sorted({n.split("/")[0] for n in files}), "docs")
+        code = self.debts()["code"]
+        self.assertEqual(sorted(u["unit"] for u in code["missing"]), ["cloud_mcp", "tools"],
+                         "a nested manifest must not hide top-level code; «tools» in a heading is no description")
+        self.save("docs/ops.md", "# Code map\n\n## tools/ — importers\nHow they run.\n")
+        self.commit_at("2026-09-02", "docs")
+        self.assertEqual([u["unit"] for u in self.debts()["code"]["missing"]], ["cloud_mcp"])
+
+    def test_same_day_uncommitted_shared_files_in_another_worktree(self):
+        """UAD 26.09: a supervisor committed its zone and left shared files dirty the same day."""
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.commit_at("2026-09-26", "NOW.md")
+        seo = self.base / "seo"
+        self.git("worktree", "add", "-q", "-b", "seo", str(seo))
+        (seo / "NOW.md").write_text("next step\n", encoding="utf-8")
+        work = self.debts()["work"]
+        self.assertEqual(work["worktrees"], [], "live work of a neighbour is not a debt")
+        self.assertEqual([w["branch"] for w in work["fresh"]], ["seo"])
+        hours_ago = time.time() - 8 * 3600
+        os.utime(seo / "NOW.md", (hours_ago, hours_ago))
+        work = self.debts()["work"]
+        self.assertEqual([w["branch"] for w in work["worktrees"]], ["seo"])
+
+    def test_non_code_project_has_no_code_debt(self):
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.save("knowledge/a.md", "# A\n")
+        self.commit_at("2026-09-26", "NOW.md", "knowledge")
+        self.assertEqual(self.debts()["code"]["status"], "NOT_APPLICABLE")
+
+    def test_stranded_work_ignores_cherry_picked_branches(self):
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-01\n")
+        self.commit_at("2026-09-01", "NOW.md")
+        self.git("checkout", "-qb", "audit")
+        self.save("knowledge/zone.md", "# Zone audit\n")
+        self.commit_at("2026-09-10", "knowledge")
+        self.git("checkout", "-qb", "ported", "main")
+        self.save("knowledge/other.md", "# Other\n")
+        self.commit_at("2026-09-11", "knowledge")
+        self.git("checkout", "-q", "main")
+        tip = self.git("rev-parse", "ported")
+        subprocess.run(["git", "-C", str(self.root), "cherry-pick", tip], check=True, capture_output=True)
+        work = self.debts()["work"]
+        self.assertEqual([b["branch"] for b in work["branches"]], ["audit"])
+        self.save("NOW.md", "Обновлено: 2026-09-02\nhalf-done\n")
+        self.git("stash")
+        self.assertEqual(len(self.debts()["work"]["stashes"]), 1)
+
+    def test_dirty_linked_worktree_is_named(self):
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-01\n")
+        self.commit_at("2026-09-01", "NOW.md")
+        wt = self.base / "wt"
+        self.git("worktree", "add", "-q", "-b", "zone", str(wt))
+        (wt / "NOW.md").write_text("Обновлено: 2026-09-02\nunfinished\n", encoding="utf-8")
+        old = time.mktime((2026, 9, 10, 12, 0, 0, 0, 0, -1))
+        os.utime(wt / "NOW.md", (old, old))
+        work = self.debts()["work"]
+        self.assertEqual([w["branch"] for w in work["worktrees"]], ["zone"])
+        self.assertEqual(work["worktrees"][0]["dirty"], 1)
+
+    def test_dates_after_the_update_line_that_already_passed(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-05\n\n## ЧТО ДАЛЬШЕ\n1. Pay GBP 350 до 15.09.\n"
+                  "2. Hearing 2026-10-02.\n3. Letter sent 2026-09-01.\n\n## ЧТО ОТВЕРГЛИ\n"
+                  "- plan for 2026-09-20 — rejected\n")
+        self.commit_at("2026-09-05", "CLAUDE.md", "NOW.md")
+        current = self.debts()["current"]
+        self.assertEqual(current["status"], "DEBT")
+        self.assertEqual([p["date"] for p in current["passed"]], ["2026-09-15"])
+        self.save("NOW.md", "Обновлено: 2026-09-26\n\n## ЧТО ДАЛЬШЕ\n1. Hearing 2026-10-02.\n")
+        self.assertEqual(self.debts()["current"]["status"], "PASS")
+        import kb_debts
+        self.save("NOW.md", "Обновлено: 2026-12-20\n\n## ЧТО ДАЛЬШЕ\n1. Файл до 10.01.\n")
+        current = kb_debts.current(str(self.root), __import__("datetime").date(2027, 1, 15))
+        self.assertEqual([p["date"] for p in current["passed"]], ["2027-01-10"])
+
+    def test_method_only_role_holding_dated_state(self):
+        self.init_git()
+        self.save("PROJECT_ROLES.json", {"skills": [{"name": "ga", "canonical": "skills/ga",
+                                                     "quality": {"knowledge_boundary": "method-only"}}]})
+        self.save("skills/ga/SKILL.md", "# GA\nMethod: compare windows.\nPurchase сломан с 11.08.2026.\n")
+        self.commit_at("2026-09-01", "PROJECT_ROLES.json", "skills")
+        roles = self.debts()["roles"]
+        self.assertEqual(roles["status"], "DEBT")
+        self.assertEqual(roles["lines"][0]["path"], "skills/ga/SKILL.md:3")
+
+    def test_authored_synthesis_with_provenance_stays_knowledge(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Project\nвход: NOW.md\n")
+        self.save("NOW.md", "# Current\n")
+        self.save("knowledge/pays/22-map.md", "---\ngenerated_from: живая база; knowledge/pays/19.md\n"
+                  "---\n# Zone map\n")
+        self.save("knowledge/pays/home.md", "<!-- generated_from: PROFILE.json + metrics.db -->\n# Home\n")
+        self.index([{"id": "project-current", "description": "current", "load_when": ["orientation"],
+                     "aliases": ["now"], "paths": ["NOW.md"]}], current="project-current")
+        self.commit_at("2026-09-01", "CLAUDE.md", "NOW.md", "knowledge", "KNOWLEDGE_INDEX.json")
+        report = kb_index.coverage(self.root, self.root / "KNOWLEDGE_INDEX.json")
+        self.assertEqual(report["generated_views_excluded"], 1)
+        self.assertEqual(report["unreachable"], ["knowledge/pays/22-map.md"])
+
+    def test_check_names_debts_without_changing_the_exit_code(self):
+        self.code_fixture()
+        result = self.run_tool("kb_check.py")
+        self.assertIn("ДОЛГИ ЗНАНИЯ", result.stdout)
+        self.assertIn("модулей кода без описания: 2 из 2", result.stdout)
+        self.assertIn("целостность: чисто, но работа не дошла до базы", result.stdout)
+        self.assertEqual(result.returncode, 0)
+        due = self.run_tool("kb_due.py")
+        self.assertIn("долг знания: модулей кода без описания", due.stdout)
+
+    def test_sweep_lists_every_kb_project_once(self):
+        import kb_debts
+        for name in ("alpha", "beta"):
+            root = self.base / "projects" / name
+            root.mkdir(parents=True)
+            self.init_git(root=root)
+            self.save("CLAUDE.md", "kb_standard_version: 7.2.0\nвход: NOW.md\n", root=root)
+            self.save("NOW.md", "Обновлено: 2026-09-20\n", root=root)
+            self.commit_at("2026-09-20", "CLAUDE.md", "NOW.md", root=root)
+        (self.base / "projects" / "not-kb").mkdir()
+        rows = kb_debts.sweep(str(self.base / "projects"))
+        self.assertEqual([r["project"] for r in rows], ["alpha", "beta"])
+        self.assertEqual(rows[0]["version"], "7.2.0")
+
+
+class ProjectSweepPrecision2609Tests(unittest.TestCase):
+    """False alarms and blind spots found by the project sweep of 26.09.2026."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+
+    def test_closure_mark_at_the_end_of_the_entry_as_the_template_prescribes(self):
+        entry = ("- 2026-08-14 · знание · `NOW.md` — claimed two chats. Источник: list. "
+                 "✔ закрыто 2026-08-14, внесено в `NOW.md` и `knowledge/a.md`.")
+        self.assertEqual(kb_due.correction_status(entry), "closed")
+        self.assertEqual(kb_due.correction_status(
+            "- 2026-08-10 · знание · x. ✔ закрыто 2026-08-10, обе версии внесены в `k.md`."), "closed")
+        for value in ("- 2026-08-14 · x — пример: ✔ закрыто", "- `✔ закрыто, внесено в a.md` is an example",
+                      "> ✔ закрыто, внесено в a.md"):
+            with self.subTest(value=value):
+                self.assertEqual(kb_due.correction_status(value), "unknown")
+
+    def test_declared_refusal_of_a_report_route_is_not_a_finding(self):
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nмаршрут отчётов: не принят\n")
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        result = self.run_tool("kb_check.py")
+        self.assertNotIn("ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН", result.stdout)
+        self.assertIn("неприменимо (объявлено: «не принят»)", result.stdout)
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nмаршрут отчётов: не принят\n"
+                  "сервисный контур kb-architect: принят\n")
+        self.assertIn("ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН", self.run_tool("kb_check.py").stdout)
+
+    def test_link_to_a_file_with_parentheses_resolves(self):
+        self.save("NOW.md", "See [scan](docs/scan (2).md) and [gone](docs/none (1).md).\n")
+        self.save("docs/scan (2).md", "# Scan\n")
+        out = self.run_tool("kb_check.py").stdout
+        self.assertNotIn("scan (2).md", out)
+        self.assertIn("docs/none (1).md", out)
+
+    def test_receipt_field_is_the_verify_of_a_sent_letter(self):
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.save("letters/a.md", "---\nstatus: sent\nsent_message_id: 18f2a\n---\nLetter.\n")
+        self.save("letters/b.md", "---\nstatus: sent\nsent_message_id: TBD\n---\nLetter.\n")
+        out = self.run_tool("kb_check.py").stdout
+        self.assertNotIn("letters/a.md", out)
+        self.assertIn("letters/b.md", out)
+
+    def test_own_megamozg_profiles_and_alias_patterns_are_the_project(self):
+        self.save("CLAUDE.md", "project_aliases: uad-*\n")
+        self.save("_megamozg/flow-zone/profile.json", {"id": "flow-zone"})
+        names = kb_check.imena_proekta(str(self.root))
+        self.assertTrue(kb_check.nash("flow-zone", names))
+        self.assertTrue(kb_check.nash("uad-payments", names))
+        self.assertFalse(kb_check.nash("other-uad", names))
+        self.assertFalse(kb_check.nash("flow", names))
+
+    def test_nested_project_is_not_a_second_entry(self):
+        self.save("CLAUDE.md", "# Rules\n")
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.save("agent-config/CLAUDE.md", "# Nested project\nkb_standard_version: 7.0.0\n")
+        self.save("agent-config/NOW.md", "Обновлено: 2026-09-24\n")
+        entry = kb_paths.locate(str(self.root), "entry")
+        self.assertEqual(entry.others, [])
+        self.assertNotIn("ВХОД НАЙДЕН В НЕСКОЛЬКИХ МЕСТАХ", self.run_tool("kb_check.py").stdout)
+
+    def test_plain_folder_instructions_do_not_hide_the_entry(self):
+        self.save("kb/CLAUDE.md", "# How to edit this folder\n")
+        self.save("kb/NOW.md", "Обновлено: 2026-09-26\n")
+        entry = kb_paths.locate(str(self.root), "entry")
+        self.assertTrue(entry.path and entry.path.endswith("kb/NOW.md"), entry.path)
+
+
+class Review73Tests(unittest.TestCase):
+    """Fresh-context review of the 7.3.0 candidate, 26.09.2026: every item was reproduced first."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    TODAY = KnowledgeDebts2609Tests.TODAY
+
+    def debts(self, root=None, **kw):
+        import kb_debts
+        return kb_debts.debts(str(root or self.root), today=kw.pop("today", self.TODAY), **kw)
+
+    def lagging_fixture(self, prefix="", code_name="f.py"):
+        root = self.root / prefix if prefix else self.root
+        self.save(f"{prefix}NOW.md", "Обновлено: 2026-09-01\n")
+        self.save(f"{prefix}src/README.md", "# src\nPurpose.\n")
+        self.save(f"{prefix}src/a.py", "a\n")
+        self.save(f"{prefix}src/b.py", "b\n")
+        self.commit_at("2026-09-01", ".")
+        for i in range(12):
+            self.save(f"{prefix}src/{code_name}", f"x = {i}\n")
+            self.commit_at(f"2026-09-{i + 5:02d}", ".")
+        return root
+
+    def test_non_ascii_module_paths_are_counted(self):
+        self.init_git()
+        self.lagging_fixture(code_name="модуль.py")
+        code = self.debts()["code"]
+        self.assertEqual([u["lag_commits"] for u in code["lagging"]], [12])
+
+    def test_project_inside_a_larger_repository(self):
+        self.init_git()
+        proj = self.lagging_fixture(prefix="proj/")
+        self.assertEqual([u["lag_commits"] for u in self.debts(proj)["code"]["lagging"]], [12])
+
+    def test_other_worktree_is_checked_inside_a_git_hook(self):
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-01\n")
+        self.commit_at("2026-09-01", "NOW.md")
+        side = self.base / "side"
+        self.git("worktree", "add", "-q", "-b", "side", str(side))
+        (side / "NOW.md").write_text("changed\n", encoding="utf-8")
+        old = time.mktime((2026, 9, 10, 12, 0, 0, 0, 0, -1))
+        os.utime(side / "NOW.md", (old, old))
+        # Hooks export a relative index path; inside another worktree `.git` is a file.
+        env = dict(os.environ, GIT_INDEX_FILE=".git/index")
+        out = subprocess.run([sys.executable, str(HERE / "kb_debts.py"), str(self.root), "--json"],
+                             capture_output=True, text=True, env=env, timeout=60)
+        data = json.loads(out.stdout)
+        self.assertEqual([w["branch"] for w in data["work"]["worktrees"]], ["side"])
+
+    def test_substring_of_a_file_name_is_not_a_description(self):
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-01\n")
+        for mod in ("shop", "core"):
+            for f in ("a.py", "b.py", "c.py"):
+                self.save(f"{mod}/{f}", "x\n")
+        self.save("docs/WORKSHOP.md", "# Workshop\n")
+        self.save("docs/SCORECARD.md", "# Score\n")
+        self.save("docs/shop-flows.md", "# Flows\n")
+        self.commit_at("2026-09-01", ".")
+        code = self.debts()["code"]
+        self.assertEqual([u["unit"] for u in code["missing"]], ["core"])
+
+    def test_short_message_id_is_not_traced_by_a_number(self):
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.save("_inbox/m.md", "---\ntype: agent-message\nmessage_id: 42\ncreated_at: 2026-09-01T00:00:00Z\n"
+                  "from_project: other\nto_project: project\n---\nx\n")
+        self.save("BUDGET.md", "Paid 1420 EUR.\n")
+        self.commit_at("2026-09-01", ".")
+        self.assertEqual(self.debts()["inbound"]["status"], "DEBT")
+
+    def test_packet_from_own_megamozg_profile_is_inbound(self):
+        self.init_git()
+        self.save("CLAUDE.md", "project_aliases: uad, uad-*\n")
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.save("_megamozg/uad-flow/profile.json", {"id": "uad-flow"})
+        self.save("_inbox/p.md", "---\ntype: agent-message\nmessage_id: flow-packet-001\n"
+                  "created_at: 2026-09-01T00:00:00Z\nfrom_project: uad-flow\nto_project: uad\n---\nx\n")
+        self.commit_at("2026-09-01", ".")
+        self.assertEqual(self.debts()["inbound"]["total"], 1)
+        self.assertNotIn("ИСХОДЯЩЕЕ В СОБСТВЕННОМ ИНБОКСЕ", self.run_tool("kb_check.py").stdout)
+
+    def test_empty_or_placeholder_receipt_is_not_a_verify(self):
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.save("a.md", "---\nstatus: sent\nsent_message_id:\nto: bob\n---\n")
+        self.save("b.md", "---\nstatus: sent\nevidence_receipt: <путь/id receipt либо none>\n---\n")
+        self.save("c.md", "---\nstatus: sent\nmessage_id: m-123456\n---\n")
+        out = self.run_tool("kb_check.py").stdout
+        for name in ("a.md", "b.md", "c.md"):
+            self.assertIn(name, out)
+
+    def test_area_filter_outside_stale_file_does_not_crash(self):
+        import kb_debts
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.save("STATE.md", "observed_at: 2026-08-01\n")
+        self.save("src/a.py", "x\n")
+        self.commit_at("2026-09-01", ".")
+        d = self.debts(area="src")
+        self.assertEqual(d["freshness"]["status"], "PASS")
+        kb_debts.summary_lines(d)
+
+    def test_squash_merged_remote_branch_is_not_a_debt(self):
+        remote = self.base / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+        self.init_git()
+        self.git("remote", "add", "origin", str(remote))
+        self.save("NOW.md", "Обновлено: 2026-09-01\n")
+        self.commit_at("2026-09-01", "NOW.md")
+        self.git("checkout", "-qb", "feat")
+        self.save("knowledge/a.md", "# A\n")
+        self.commit_at("2026-09-02", "knowledge")
+        self.save("knowledge/b.md", "# B\n")
+        self.commit_at("2026-09-03", "knowledge")
+        self.git("push", "-q", "origin", "feat")
+        self.git("checkout", "-q", "main")
+        subprocess.run(["git", "-C", str(self.root), "merge", "-q", "--squash", "feat"], check=True,
+                       capture_output=True)
+        self.commit_at("2026-09-04", ".")
+        self.git("branch", "-D", "feat")
+        self.assertEqual(self.debts()["work"]["branches"], [])
+
+    def test_day_first_observed_at_is_read(self):
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        self.save("knowledge/state.md", "---\nobserved_at: 01.08.2026\n---\nTariff Team.\n")
+        self.commit_at("2026-09-01", ".")
+        fresh = self.debts()["freshness"]
+        self.assertEqual([x["observed_at"] for x in fresh["stale"]], ["2026-08-01"])
+
+    def test_version_number_is_not_a_deadline(self):
+        import kb_debts
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-05\n\n## ЧТО ДАЛЬШЕ\n1. Обновить Python до 3.11.\n")
+        current = kb_debts.current(str(self.root), __import__("datetime").date(2026, 11, 10))
+        self.assertEqual(current["passed"], [])
+
+    def test_main_checkout_through_a_symlinked_temp_path(self):
+        self.init_git()
+        self.save("NOW.md", "x\n")
+        self.commit_at("2026-09-01", "NOW.md")
+        wt = self.base / "wt"
+        self.git("worktree", "add", "-q", "-b", "w", str(wt))
+        alias = str(wt).replace("/private/var/", "/var/", 1)
+        if alias == str(wt) or not os.path.isdir(alias):
+            self.skipTest("no symlinked temp prefix on this platform")
+        self.assertEqual(os.path.realpath(kb_paths.canonical_checkout(alias)),
+                         os.path.realpath(self.root))
+
+    def test_sweep_accepts_flags_and_survives_a_broken_project(self):
+        import kb_debts
+        parent = self.base / "projects"
+        good = parent / "good"
+        good.mkdir(parents=True)
+        self.init_git(root=good)
+        self.save("CLAUDE.md", "kb_standard_version: 7.2.0\n", root=good)
+        self.commit_at("2026-09-01", "CLAUDE.md", root=good)
+        out = subprocess.run([sys.executable, str(HERE / "kb_debts.py"), "--sweep", "--json", str(parent)],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual([r["project"] for r in json.loads(out.stdout)], ["good"])
+        with patch.object(kb_debts, "debts", side_effect=RuntimeError("boom")):
+            rows = kb_debts.sweep(str(parent))
+        self.assertIn("boom", rows[0]["error"])
 
 
 if __name__ == "__main__":

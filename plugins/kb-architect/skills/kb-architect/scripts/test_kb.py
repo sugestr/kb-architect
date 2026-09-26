@@ -170,7 +170,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 8_192
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "7.2.3"
+          and data.get("baseline_version") == "7.3.0"
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 6_144
@@ -2793,9 +2793,12 @@ def t_59_outgoing_message_in_own_inbox_is_a_finding():
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
     out = run("kb_check.py", d)
+    # 7.3: входящее без следа внесения называется ниже отдельным долгом знания;
+    # ожидание «входящее — не находка» относится к проверке адресации.
+    findings = out.split("ДОЛГИ ЗНАНИЯ")[0]
     check("исходящее в собственном инбоксе — находка, входящее — нет",
-          "ИСХОДЯЩЕЕ В СОБСТВЕННОМ ИНБОКСЕ" in out
-          and "zadanie" in out and "vhodyashchee" not in out
+          "ИСХОДЯЩЕЕ В СОБСТВЕННОМ ИНБОКСЕ" in findings
+          and "zadanie" in findings and "vhodyashchee" not in findings
           and "адресация инбокса" in out, out,
           "delivery_state: delivered не делает запись у себя доставкой")
     shutil.rmtree(os.path.dirname(d), ignore_errors=True)
@@ -5257,7 +5260,7 @@ def t_708_prepare_candidate_respects_accepted_not_applicable():
 
 
 def t_640_has_one_current_version_and_a_640_project_floor():
-    """The current skill is 7.2.0; projects below 7.2.0 update once."""
+    """The current skill is 7.3.0; projects below 7.2.0 update once."""
     import json
     import kb_paths
     import kb_skills
@@ -5295,7 +5298,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "7.2.3"
+          kb_paths.skill_version() == "7.3.0"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == "7.2.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

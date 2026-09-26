@@ -58,6 +58,7 @@ kb_check.py — целостность базы. Семь проверок, ко
 """
 
 import datetime
+import fnmatch
 import os
 import re
 import subprocess
@@ -74,7 +75,9 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv",
 
 FENCE = re.compile(r"```.*?```", re.DOTALL)
 INLINE = re.compile(r"`[^`]*`")
-LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+# Имя файла со скобками («скан (2).pdf») — одна пара вложенных скобок внутри
+# адреса; ранний `)` резал путь и давал ложную битую ссылку (медицинский проект 26.09).
+LINK = re.compile(r"\[[^\]]*\]\(((?:[^()]|\([^()]*\))+)\)")
 LINE_LOCATOR = re.compile(r"([^:]+):0*[1-9][0-9]*\Z")
 VALID_UNTIL = re.compile(r"^\s*valid_until\s*:\s*(\S+)", re.MULTILINE)
 VERIFY = re.compile(r"^\s*verify\s*:\s*(.*)$", re.MULTILINE)
@@ -88,6 +91,16 @@ EMPTY_VERIFY = {"", "-", "—", "tbd", "TBD", "?", "null", "none", "нет"}
 # не существует для проверки, но выглядит выполненным обязательством.
 FRONTMATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
 HAS_VERIFY = re.compile(r"^\s*verify\s*:", re.MULTILINE)
+# Квитанция внешней системы и есть способ перепроверки, который требует
+# контракт: `sent_message_id` у отправленного письма давал «действие без
+# verify» (налоговый проект, аудит проектов 26.09.2026). Пустое значение не считается.
+# Значение — на той же строке ([ \t], не \s: пустое поле не заимствует
+# следующую строку), не плейсхолдер шаблона `<…>`; собственный message_id
+# конверта квитанцией внешней системы не является (ревью 7.3.0).
+RECEIPT_FIELD = re.compile(r"^[ \t]*(?:sent_message_id|receipt\w*|evidence_receipt|"
+                           r"transaction_id|tracking\w*|registro\w*|justificante\w*)[ \t]*:[ \t]*"
+                           r"(?![\"'`]*(?:-|—|tbd|null|none|нет)?[\"'`]*[ \t]*$)(?![\"'`]*<)\S",
+                           re.MULTILINE | re.IGNORECASE)
 LOOKALIKE = re.compile(
     r"^\s*(verified|verify_at|подтверждено|proof)\s*:",
     re.MULTILINE | re.IGNORECASE)
@@ -156,8 +169,12 @@ MSG_FIELD = {
 }
 
 
-def imena_proekta(root):
-    """Exact local/repository identities plus explicitly declared aliases."""
+def imena_proekta(root, recipients=True):
+    """Exact local/repository identities plus explicitly declared aliases.
+
+    recipients=True добавляет адресатов внутри проекта — профили `_megamozg/*` и
+    шаблоны алиасов. Для отправителя они не годятся: пакет своего Мегамозга
+    проекту — входящее, а не исходящее в собственном инбоксе (ревью 7.3.0)."""
     imena = {os.path.basename(os.path.abspath(root))}
     git_root = kb_paths.find_git(root)
     if git_root:
@@ -165,19 +182,60 @@ def imena_proekta(root):
         if url:
             hvost = url.strip().rstrip("/").rsplit("/", 1)[-1]
             imena.add(hvost[:-4] if hvost.endswith(".git") else hvost)
-    aliases, _ = kb_paths.declared_value(root, ("project_aliases", "алиасы проекта"))
+    aliases, source = kb_paths.declared_value(root, ("project_aliases", "алиасы проекта"))
     if aliases:
-        imena.update(aliases.strip().strip("[]").split(","))
-    return {identity(i) for i in imena if identity(i)}
+        # declared_value снимает «*» как markdown-выделение; шаблон алиаса
+        # (`uad-*`) читается из той же строки как есть.
+        m = re.search(r"(?:project_aliases|алиасы проекта)[`*_\"']{0,2}[ \t]*:[ \t]*(.+)$",
+                      kb_paths.read(source), re.IGNORECASE | re.MULTILINE) if source else None
+        raw = m.group(1).strip().strip("`") if m else aliases
+        imena.update(a.strip().strip("`\"' ") for a in raw.strip().strip("[]").split(",")
+                     if recipients or not is_pattern(a))
+    # Профиль Мегамозга, живущий в самом проекте, — его собственный адресат.
+    # UAD 26.09.2026: 55 находок «адресат не сопоставлен» на подпрофили зон
+    # (uad-flow, uad-payments…) три недели горели известным шумом, и рядом с
+    # ними терялась единственная настоящая.
+    profiles = os.path.join(root, "_megamozg")
+    if recipients and os.path.isdir(profiles):
+        for name in os.listdir(profiles):
+            if os.path.isfile(os.path.join(profiles, name, "profile.json")):
+                imena.add(name)
+    # identity() снимает «*» как выделение (**shop**); у шаблона `uad-*`
+    # звёздочка — смысл, поэтому шаблон нормализуется без неё.
+    out = set()
+    for i in imena:
+        value = i.strip().strip("`\"' ").casefold() if is_pattern(i) else identity(i)
+        if value:
+            out.add(value)
+    return out
+
+
+def is_pattern(value):
+    v = (value or "").strip().strip("`\"' ")
+    return ("*" in v or "?" in v) and not (v.startswith("*") and v.endswith("*"))
 
 
 def identity(value):
     return (value or "").strip().strip("`*_\"' ").casefold()
 
 
+def _match(value, svoi):
+    # Объявленный алиас может быть шаблоном (`uad-*`); подстрока не ищется.
+    return value in svoi or any(("*" in s or "?" in s) and fnmatch.fnmatchcase(value, s)
+                                for s in svoi)
+
+
 def nash(znachenie, imena):
+    """Адресат совпал с проектом целиком или частью до пояснения « / роль».
+
+    `shop-odoo / next Claude supervisor` адресован проекту; пояснение
+    о роли адресата проект не меняет (продукт на Odoo 26.09.2026). Разделитель
+    только с пробелами: `shop/sub` остаётся одним именем, подстрока не ищется."""
+    svoi = {i if is_pattern(i) else identity(i) for i in imena}
     z = identity(znachenie)
-    return bool(z) and z in {identity(i) for i in imena}
+    if not z:
+        return False
+    return _match(z, svoi) or _match(identity(z.split(" / ", 1)[0]), svoi)
 
 
 def inbox_dir(root):
@@ -215,6 +273,12 @@ def report_inbox_state(root):
     if normalized_route in {"github", "github-issue", "remote",
                             "удалённый", "удаленный"}:
         return None, None, "GitHub issue (remote)"
+    # Честное «не принят» не хуже молчания: без принятого сервисного контура
+    # проект, объявивший отказ, получал находку, а не объявивший — «неприменимо»
+    # (проект стартапа, аудит проектов 26.09.2026).
+    if normalized_route and not accepted and not raw and (
+            kb_paths.declared_absent(route) or normalized_route.startswith(("не ", "not "))):
+        return None, None, f"неприменимо (объявлено: «{route}»)"
     if normalized_route and normalized_route not in {
             "local", "local-inbox", "локальный", "локальный инбокс"}:
         where = os.path.relpath(route_source, root) if route_source else "правила проекта"
@@ -235,6 +299,12 @@ def report_inbox_state(root):
     shown = path if os.path.isabs(value) else value
     if os.path.isdir(path):
         return path, None, shown
+    # Repo-relative адрес соседа принадлежит основному checkout, а не
+    # физическому месту linked worktree.
+    main = None if os.path.isabs(value) else kb_paths.canonical_checkout(root)
+    if main and os.path.isdir(os.path.normpath(os.path.join(main, value))):
+        resolved = os.path.normpath(os.path.join(main, value))
+        return resolved, None, f"{value} → {resolved} (от основного checkout)"
     if os.path.exists(path):
         return None, (f"{where}: «{raw}» указывает на файл, а нужен каталог "
                       "доставки"), None
@@ -360,7 +430,7 @@ def main():
             # `status: sent-duplicate`, и точное сравнение прошло бы мимо
             val = st.group(1).strip().strip('"\'').lower() if st else ""
             if val and any(val.split("-")[0] == a or val == a for a in ACTION_STATUS) \
-                    and not has_verify and not look:
+                    and not has_verify and not look and not RECEIPT_FIELD.search(head):
                 no_verify.append((rel, val))
 
     # 4. Объём project bootstrap — измерение, а не универсальный приговор.
@@ -447,6 +517,7 @@ def main():
     # prepared/delivered существовало и было нарушено, потому что записать
     # себе стоит нисколько, а доставить — надо знать чужой путь.
     svoi = imena_proekta(root)
+    otpraviteli = imena_proekta(root, recipients=False)
     inbox = inbox_dir(root)
     chuzhie, nedostavleno = [], []
     if inbox:
@@ -467,7 +538,7 @@ def main():
                 ot = MSG_FIELD["from"].search(head)
                 komu = MSG_FIELD["to"].search(head)
                 state = MSG_FIELD["state"].search(head)
-                if ot and nash(ot.group(1), svoi):
+                if ot and nash(ot.group(1), otpraviteli):
                     nedostavleno.append((rel, (komu.group(1).strip() if komu else "не назван"),
                                          state.group(1).strip() if state else "не назван"))
                 elif komu and not nash(komu.group(1), svoi):
@@ -649,6 +720,24 @@ def main():
         print("  Контракт требует verify именно здесь: отправлено, подано, оплачено,")
         print("  подписано. Утверждение без способа перепроверки — не факт.\n")
 
+    # 10. Долги знания — не находки целостности и exit-код не меняют (проект
+    # может держать kb_check в pre-commit), но «целостность: чисто» больше не
+    # печатается над базой, в которую не дошла работа: UAD FLOW 26.09 — 122
+    # находки и ни одной о пяти невнесённых пакетах; продукт на Odoo — «чисто»
+    # при 22 из 30 модулях кода без описания.
+    try:
+        import kb_debts
+        debt_lines, _ = kb_debts.summary_lines(kb_debts.debts(root))
+        debt_scope = f"долги знания — {len(debt_lines)}" if debt_lines else "долги знания — нет"
+    except Exception as exc:
+        debt_lines, debt_scope = [], f"долги знания — НЕ ПРОВЕРЕНЫ ({exc})"
+    if debt_lines:
+        print(f"ДОЛГИ ЗНАНИЯ — работа, не дошедшая до базы ({len(debt_lines)}; не находки "
+              "целостности, подробно: kb_debts.py):")
+        for line in debt_lines:
+            print(f"  • {line}")
+        print()
+
     # Отчёт всегда называет объём проверенного. «Чисто» без списка — это
     # утверждение шире выполненного: именно так пропуск измерения current
     # читался как пройденная проверка. И формулировка не шире сделанного:
@@ -697,9 +786,12 @@ def main():
         scope.append(f"достижимость знания — {cover['status']} "
                      f"({cover['reachable']}/{cover['files']} в {', '.join(cover['roots'])})")
     scope.append("generated_from (эфемерный · вне Git)")
+    scope.append(debt_scope)
 
     if not found:
-        print("целостность: чисто. Проверено: " + ", ".join(scope) + ".")
+        head = "целостность: чисто" if not debt_lines else \
+            "целостность: чисто, но работа не дошла до базы (см. долги выше)"
+        print(f"{head}. Проверено: " + ", ".join(scope) + ".")
         if entry_note:
             print(f"  {entry_note}.")
         return 0

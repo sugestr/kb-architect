@@ -179,6 +179,13 @@ def section(text, headings):
     return "\n".join(out).strip()
 
 
+def nested_project(path):
+    """Вложенный KB-проект, а не папка с обычным CLAUDE.md-инструктажем:
+    его правила объявляют собственную редакцию стандарта (ревью 7.3.0)."""
+    return any(re.search(r"kb_standard_version\s*:", read(os.path.join(path, r)))
+               for r in RULES_NAMES)
+
+
 def by_name(root, names, max_depth=2):
     """Известные имена в корне и на два уровня вглубь, ближние первыми."""
     root = os.path.abspath(root)
@@ -186,9 +193,13 @@ def by_name(root, names, max_depth=2):
     for dirpath, dirnames, filenames in os.walk(root):
         rel = os.path.relpath(dirpath, root)
         depth = 0 if rel == "." else rel.count(os.sep) + 1
+        # Каталог со своими правилами — вложенный проект со своим входом, а не
+        # второй вход этого (архивный проект 26.09: вложенный конфиг-проект давал
+        # «ВХОД НАЙДЕН В НЕСКОЛЬКИХ МЕСТАХ»).
         dirnames[:] = ([] if depth >= max_depth else
                        [d for d in dirnames
-                        if d not in SKIP_DIRS and not d.startswith(".")])
+                        if d not in SKIP_DIRS and not d.startswith(".")
+                        and not nested_project(os.path.join(dirpath, d))])
         for i, n in enumerate(names):
             if n in filenames:
                 hits.append((depth, i, os.path.join(dirpath, n)))
@@ -473,6 +484,32 @@ def find_git(start):
         return None
     top = git_record(probe.stdout)
     return os.path.abspath(top) if top and os.path.isdir(top) else None
+
+
+def canonical_checkout(root):
+    """Тот же путь проекта в основном checkout, если root лежит в linked worktree.
+
+    Правило параллельной записи отправляет сессию в отдельный worktree, часто
+    в /private/tmp или каталог runtime. Repo-relative адрес соседа
+    (`../kb-architect/inbox`) верен для основного checkout и ложен для такого
+    worktree (продукт на Odoo 26.09.2026). Git сам знает общий каталог
+    метаданных; диск не сканируется. Не linked worktree или bare-структура —
+    None: подмена адреса не угадывается.
+    """
+    top = find_git(root)
+    if not top:
+        return None
+    common, _ = git_out(top, "rev-parse", "--path-format=absolute", "--git-common-dir",
+                        timeout=10)
+    common = git_record(common or "")
+    if not common or os.path.basename(common) != ".git":
+        return None
+    main = os.path.dirname(common)
+    if os.path.realpath(main) == os.path.realpath(top):
+        return None
+    # realpath с обеих сторон: find_git разыменовывает /tmp → /private/tmp.
+    return os.path.normpath(os.path.join(
+        main, os.path.relpath(os.path.realpath(root), os.path.realpath(top))))
 
 
 def git_out(root, *args, timeout=30, ok_codes=(0,)):
