@@ -2,7 +2,8 @@
 """
 kb_debts.py — долги знания: работа, которая уже случилась, а в базу не дошла.
 
-    python3 kb_debts.py <корень базы> [--json] [--area <путь>]
+    python3 kb_debts.py <корень базы> [--json | --summary] [--area <путь>]
+    python3 kb_debts.py --sweep <каталог проектов> [--json]
 
 Остальные проверки сверяют базу саму с собой: ссылки, дороги, поля. База
 может пройти их все и при этом быть пустой там, где идёт основная работа.
@@ -1104,6 +1105,15 @@ def main():
     d = debts(root, area=area)
     if "--json" in args:
         print(json.dumps(d, ensure_ascii=False, indent=2, default=str))
+    elif "--summary" in args:
+        # Короткий блок для вывода внутри обновления (kb_update --project).
+        lines, clean = summary_lines(d)
+        for line in lines:
+            print(f"  • {line}")
+        for line in clean:
+            if "НЕ ПРОВЕРЕН" in line:
+                print(f"  · {line}")
+        print(f"KNOWLEDGE_DEBTS={len(lines)}")
     else:
         print_report(d)
     return 0

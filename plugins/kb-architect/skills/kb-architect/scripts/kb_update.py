@@ -344,7 +344,52 @@ def apply_project(skill, project, action_mode=False):
                   "runtime, push или иным отдельным owner gate.")
         else:
             print("SESSION_STATE=PROJECT_DELTA_OPEN")
+    debts_of_project(skill, root, action_mode)
     return result.returncode
+
+
+def debts_of_project(skill, root, action_mode):
+    """Обновление проекта включает долги знания, а не только версию.
+
+    7.3.0: «обнови» на принятом проекте отвечало «новой миграции нет», и
+    накопленные долги (входящие, ветки, модули без описания) ждали отдельной
+    длинной команды владельца. Долги — состояние проекта, не миграция: они
+    печатаются при каждом обновлении, exit-код update не меняют."""
+    script = os.path.join(skill, "scripts", "kb_debts.py")
+    if not os.path.isfile(script):
+        return
+    try:
+        result = subprocess.run([sys.executable, script, root, "--summary"],
+                                capture_output=True, text=True, timeout=180)
+    except Exception as exc:
+        print(f"ДОЛГИ ЗНАНИЯ НЕ ПРОВЕРЕНЫ: {exc}")
+        return
+    lines = [ln for ln in result.stdout.splitlines() if ln.startswith("  ")]
+    count = next((ln.split("=", 1)[1] for ln in result.stdout.splitlines()
+                  if ln.startswith("KNOWLEDGE_DEBTS=")), None)
+    if result.returncode != 0 or count is None:
+        print("ДОЛГИ ЗНАНИЯ НЕ ПРОВЕРЕНЫ: " + (result.stderr.strip().splitlines() or
+                                               [f"код {result.returncode}"])[-1])
+        return
+    print()
+    if count == "0":
+        print("ДОЛГИ ЗНАНИЯ: нет в проверенном охвате.")
+        for ln in lines:
+            print(ln)
+        return
+    print("ДОЛГИ ЗНАНИЯ — работа, не дошедшая до базы:")
+    for ln in lines:
+        print(ln)
+    if action_mode:
+        print("SESSION_ACTION=CLOSE_KNOWLEDGE_DEBTS")
+        print("  Если это команда владельца обновиться — обновление завершено, когда долги")
+        print("  закрыты или записаны PENDING с адресом в NOW (НЕЗАВЕРШЁННОЕ): внеси или отметь")
+        print("  входящие, влей или закрой ветки и worktree, опиши модули кода, обнови NOW.")
+        print("  В другой задаче — долги своей области (kb_debts.py --area <путь>), затем задача.")
+        print("  Параллельные писатели: общий бэклог закрывает один интегратор. Рецепты —")
+        print("  references/capture.md; owner gates и push — по правилам проекта.")
+    else:
+        print("SESSION_STATE=KNOWLEDGE_DEBTS_OPEN")
 
 
 def safe_replace(source, destination, old_version):

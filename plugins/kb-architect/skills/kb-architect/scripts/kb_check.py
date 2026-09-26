@@ -226,16 +226,18 @@ def _match(value, svoi):
 
 
 def nash(znachenie, imena):
-    """Адресат совпал с проектом целиком или частью до пояснения « / роль».
+    """Адресат совпал с проектом целиком или частью до пояснения роли.
 
-    `shop-odoo / next Claude supervisor` адресован проекту; пояснение
-    о роли адресата проект не меняет (продукт на Odoo 26.09.2026). Разделитель
-    только с пробелами: `shop/sub` остаётся одним именем, подстрока не ищется."""
+    `shop-odoo / next Claude supervisor`, `uad (супервизор Flow)`, `shop — сессия
+    на Mac` адресованы проекту; пояснение о роли адресата проект не меняет
+    (продукт на Odoo и UAD 26.09.2026, бухгалтерия — аудит проектов). Разделитель
+    только с пробелом перед ним: `shop/sub` остаётся одним именем, подстрока не ищется."""
     svoi = {i if is_pattern(i) else identity(i) for i in imena}
     z = identity(znachenie)
     if not z:
         return False
-    return _match(z, svoi) or _match(identity(z.split(" / ", 1)[0]), svoi)
+    head = re.split(r" (?:/|\(|—|–) ?", z, maxsplit=1)[0]
+    return _match(z, svoi) or _match(identity(head), svoi)
 
 
 def inbox_dir(root):

@@ -1171,6 +1171,10 @@ class WorktreeSignals2609Tests(unittest.TestCase):
         names = kb_check.imena_proekta(str(self.root))
         self.assertTrue(kb_check.nash("shop / next Claude supervisor", names))
         self.assertTrue(kb_check.nash("Shop-Agent / receiving supervisor", names))
+        self.assertTrue(kb_check.nash("shop (супервизор направления Flow)", names))
+        self.assertTrue(kb_check.nash("shop — сессия Claude на Mac владельца", names))
+        self.assertFalse(kb_check.nash("shop(x)", names))
+        self.assertFalse(kb_check.nash("other (shop)", names))
         for value in ("shop-sl / supervisor", "shop/sub", "other / shop"):
             self.assertFalse(kb_check.nash(value, names), value)
 
@@ -1641,6 +1645,47 @@ class Review73Tests(unittest.TestCase):
         with patch.object(kb_debts, "debts", side_effect=RuntimeError("boom")):
             rows = kb_debts.sweep(str(parent))
         self.assertIn("boom", rows[0]["error"])
+
+
+class UpdateClosesDebts2609Tests(unittest.TestCase):
+    """Owner 26.09.2026: «why must I say more than 'update'?» — the update now carries the debts."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+
+    def project(self, with_debt):
+        self.init_git()
+        self.save("CLAUDE.md", "# rules\nkb_standard_version: 7.2.0\n")
+        self.save("NOW.md", "Обновлено: 2026-09-26\n")
+        if with_debt:
+            self.save("_inbox/p.md", "---\ntype: agent-message\nmessage_id: packet-000001\n"
+                      "created_at: 2026-09-01T00:00:00Z\nfrom_project: specialist\nto_project: project\n"
+                      "---\nfact\n")
+        self.commit_at("2026-09-02", ".")
+
+    def run_apply(self, action):
+        import kb_update
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            kb_update.debts_of_project(str(HERE.parent), str(self.root), action)
+        return out.getvalue()
+
+    def test_owner_update_command_leads_to_the_debts(self):
+        self.project(with_debt=True)
+        out = self.run_apply(True)
+        self.assertIn("входящие без следа внесения: 1 из 1", out)
+        self.assertIn("SESSION_ACTION=CLOSE_KNOWLEDGE_DEBTS", out)
+        self.assertIn("долги своей области", out)
+        self.assertIn("SESSION_STATE=KNOWLEDGE_DEBTS_OPEN", self.run_apply(False))
+
+    def test_no_debts_is_said_not_silent(self):
+        self.project(with_debt=False)
+        out = self.run_apply(True)
+        self.assertIn("ДОЛГИ ЗНАНИЯ: нет в проверенном охвате.", out)
+        self.assertNotIn("CLOSE_KNOWLEDGE_DEBTS", out)
 
 
 if __name__ == "__main__":
