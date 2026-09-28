@@ -43,6 +43,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kb_check
@@ -411,7 +412,7 @@ def unique_commits(top, base, ref):
 
 def knowledge_paths(root, files):
     """Что считается знанием: документация, правила, current, индекс, роли."""
-    roots, _ = kb_index.knowledge_roots(__import__("pathlib").Path(root))
+    roots, _ = kb_index.knowledge_roots(Path(root))
     inbox = kb_check.inbox_dir(root)
     inbox_rel = os.path.relpath(inbox, root) + "/" if inbox else None
     out = set()
@@ -678,7 +679,7 @@ def freshness(root, files, today, limit):
     observed_at; ни один скрипт это поле не читал, и честная запись стала
     невидимой (UAD PAYS 26.09: карта зоны 11 дней держала «блокер» после
     двух выкладок)."""
-    roots, _ = kb_index.knowledge_roots(__import__("pathlib").Path(root))
+    roots, _ = kb_index.knowledge_roots(Path(root))
     scope = [f for f in files or [] if os.path.splitext(f)[1].lower() in DOC_EXT
              and ("/" not in f or any(f.startswith(r.rstrip("/") + "/") for r in roots))]
     old, counted = [], 0
@@ -818,6 +819,48 @@ def roles(root):
             "total": len(hits)}
 
 
+# ---------------------------------------------------------------- память агента
+
+MEMORY_TYPE = re.compile(r"^\s*type\s*:\s*project\b", re.MULTILINE)
+MEMORY_POINTER = re.compile(r"[\w./-]+\.[A-Za-z0-9]{1,5}\b")
+
+
+def memory(root, files):
+    """Факт о проекте, который живёт только в личной памяти агента.
+
+    Память Claude Code видна следующим сессиям этого агента, а не другим
+    ролям, агентам и владельцу; записать туда дешевле, чем в главу, current и
+    журнал (tg-archive 29.09.2026: итоги пяти дней правок хоста легли в память,
+    11 из 12 записей о проекте без адреса в каноне). Долг — запись типа project
+    без ссылки на tracked файл: факт переносится в канон, в памяти остаётся адрес."""
+    base = Path(os.environ.get("KB_AGENT_MEMORY_ROOT") or
+                os.path.expanduser("~/.claude/projects"))
+    roots = {os.path.realpath(root)}
+    main = kb_paths.canonical_checkout(root)
+    if main:
+        roots.add(os.path.realpath(main))
+    dirs = [base / re.sub(r"[^A-Za-z0-9]", "-", r) / "memory" for r in sorted(roots)]
+    dirs = [d for d in dirs if d.is_dir()]
+    if not dirs:
+        return {"status": "NOT_APPLICABLE", "reason": "памяти Claude Code для этого проекта нет"}
+    tracked_set = set(files or [])
+    facts, loose = 0, []
+    for d in dirs:
+        for f in sorted(d.glob("*.md")):
+            if f.name == "MEMORY.md":
+                continue
+            text = kb_paths.read(str(f))
+            if not MEMORY_TYPE.search(text):
+                continue
+            facts += 1
+            pointers = [t.lstrip("./") for t in MEMORY_POINTER.findall(text)]
+            if not any(t in tracked_set for t in pointers):
+                loose.append({"memory": f.name, "dir": str(d)})
+    if not facts:
+        return {"status": "PASS", "facts": 0, "loose": []}
+    return {"status": "DEBT" if loose else "PASS", "facts": facts, "loose": loose}
+
+
 # ---------------------------------------------------------------- сборка
 
 def debts(root, today=None, area=None):
@@ -830,7 +873,8 @@ def debts(root, today=None, area=None):
         return {"root": root, "today": today.isoformat(), "thresholds": t,
                 "inbound": inbound(root, None, today, t["inbound_grace_days"]),
                 "work": base, "code": base, "flow": base, "freshness": base,
-                "current": current(root, today), "roles": roles(root)}
+                "current": current(root, today), "roles": roles(root),
+                "memory": memory(root, [])}
     if area:
         area = area.strip("/")
     result = {
@@ -842,6 +886,7 @@ def debts(root, today=None, area=None):
         "freshness": freshness(root, files, today, t["freshness_days"]),
         "current": current(root, today),
         "roles": roles(root),
+        "memory": memory(root, files),
     }
     if area:
         inside = lambda p: p == area or p.startswith(area + "/")
@@ -949,6 +994,12 @@ def summary_lines(d):
         out.append(f"роль-метод держит датированное состояние: {kb_check.skl(ro['total'], 'строка', 'строки', 'строк')} "
                    f"(первая {ro['lines'][0]['path']}). Метод обновляют реже фактов — перенеси "
                    f"состояние в знание и дай роли ссылку")
+    mem = d.get("memory", {})
+    if mem.get("status") == "DEBT":
+        names = ", ".join(m["memory"] for m in mem["loose"][:3])
+        out.append(f"память агента держит факты проекта без адреса в каноне: {len(mem['loose'])} из "
+                   f"{mem['facts']} ({names}" + (" …" if len(mem["loose"]) > 3 else "") + "). "
+                   f"Другим сессиям и ролям они не видны: перенеси факт в канон, в памяти оставь адрес")
     for key, label in (("inbound", "входящие"), ("work", "невлитая работа"), ("code", "код"),
                        ("freshness", "свежесть"), ("current", "вход")):
         if d[key]["status"] in ("NOT_CHECKED",):
@@ -989,6 +1040,10 @@ def print_report(d):
         print("\n  Вход: даты после «Обновлено», которые уже прошли:")
         for p in d["current"]["passed"][:10]:
             print(f"    {p['date']} — {p['line']}")
+    if d.get("memory", {}).get("loose"):
+        print("\n  Память агента без адреса в каноне:")
+        for m in d["memory"]["loose"][:15]:
+            print(f"    {m['memory']} ({m['dir']})")
     if d.get("roles", {}).get("lines"):
         print("\n  Роль-метод с датированным состоянием:")
         for r in d["roles"]["lines"][:10]:
@@ -1054,6 +1109,7 @@ def sweep(parent):
             "deadlines_passed": cur.get("passed_total", 0),
             "stale_present": len(d["freshness"].get("stale", [])),
             "role_state": d["roles"].get("total", 0),
+            "memory_loose": len(d["memory"].get("loose", [])),
         })
     return rows
 
@@ -1062,7 +1118,7 @@ def print_sweep(rows):
     minimum = kb_paths.skill_contract_line() or "?"
     print(f"ДОЛГИ ЗНАНИЯ ПО ПРОЕКТАМ (минимальный уровень проекта {minimum}):")
     print("  проект | уровень | последний коммит | NOW | входящие без следа | код без описания/"
-          "отстал | невлитая работа | сроки прошли | свежесть | роль-факт")
+          "отстал | невлитая работа | сроки прошли | свежесть | роль-факт | память")
     for r in rows:
         if r.get("error"):
             print(f"  {r['project']} | НЕ ПРОВЕРЕН: {r['error']}")
@@ -1070,7 +1126,7 @@ def print_sweep(rows):
         print(f"  {r['project']} | {r['version']} | {r['last_commit']} | {r['now_updated']} | "
               f"{r['inbound_open']}/{r['inbound_total']} | {r['code_missing']}+{r['code_lagging']}"
               f"/{r['code_units']} | {r['work']} | {r['deadlines_passed']} | "
-              f"{r['stale_present']} | {r['role_state']}")
+              f"{r['stale_present']} | {r['role_state']} | {r['memory_loose']}")
     print("  Подробно по проекту: kb_debts.py <корень>. Закрывает долги сессия этого проекта.")
 
 

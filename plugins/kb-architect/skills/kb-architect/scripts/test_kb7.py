@@ -1688,5 +1688,101 @@ class UpdateClosesDebts2609Tests(unittest.TestCase):
         self.assertNotIn("CLOSE_KNOWLEDGE_DEBTS", out)
 
 
+class AgentMemory2909Tests(unittest.TestCase):
+    """tg-archive 29.09.2026: five days of host changes went to the agent's own memory."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+
+    def test_project_fact_without_a_canon_address_is_a_debt(self):
+        import kb_debts
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-29\n")
+        self.save("docs/operator.md", "# Operator\n")
+        self.commit_at("2026-09-29", ".")
+        projects = self.base / "claude-projects"
+        mem = projects / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(self.root)) / "memory"
+        mem.mkdir(parents=True)
+        (mem / "MEMORY.md").write_text("- index\n", encoding="utf-8")
+        (mem / "slice-limits.md").write_text("---\nname: slice-limits\nmetadata:\n  type: project\n---\n"
+                                             "MemoryMax 6G on the host.\n", encoding="utf-8")
+        (mem / "pointer.md").write_text("---\nname: pointer\ntype: project\n---\n"
+                                        "See docs/operator.md for the unit layout.\n", encoding="utf-8")
+        (mem / "style.md").write_text("---\nname: style\ntype: feedback\n---\nShort answers.\n",
+                                      encoding="utf-8")
+        with patch.dict(os.environ, {"KB_AGENT_MEMORY_ROOT": str(projects)}):
+            got = kb_debts.memory(str(self.root), kb_debts.tracked(str(self.root)))
+        self.assertEqual(got["status"], "DEBT")
+        self.assertEqual(got["facts"], 2)
+        self.assertEqual([m["memory"] for m in got["loose"]], ["slice-limits.md"])
+
+    def test_no_memory_is_not_applicable(self):
+        import kb_debts
+        self.init_git()
+        with patch.dict(os.environ, {"KB_AGENT_MEMORY_ROOT": str(self.base / "none")}):
+            self.assertEqual(kb_debts.memory(str(self.root), [])["status"], "NOT_APPLICABLE")
+
+
+class OwnerGateClaudeSession2909Tests(unittest.TestCase):
+    """Owner 29.09.2026: the desktop Code tab needed a manual root export for every
+    maintenance commit. The gate now reads Claude Code's own session record, and a
+    forged or foreign record never passes (queued since 18.09 «with the owner present»)."""
+
+    def setUp(self):
+        import kb_owner_gate
+        self.gate = kb_owner_gate
+        self.temp = tempfile.TemporaryDirectory(prefix="kb-gate-")
+        self.addCleanup(self.temp.cleanup)
+        base = Path(self.temp.name).resolve()
+        self.owner, self.consumer = base / "owner", base / "consumer"
+        for root, remote in ((self.owner, "git@github.com:sugestr/kb-architect-lab.git"),
+                             (self.consumer, "https://github.com/example/consumer.git")):
+            root.mkdir()
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(root), "remote", "add", "origin", remote], check=True)
+        self.projects = base / "claude-projects"
+
+    def record(self, sid, rows, folder="-slug"):
+        path = self.projects / folder / f"{sid}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    def evaluate(self, sid):
+        env = {"CLAUDE_CODE_SESSION_ID": sid} if sid else {}
+        return self.gate.evaluate(self.owner, True, env, Path(self.temp.name) / "none",
+                                  claude_projects_root=self.projects)
+
+    def test_session_started_in_the_lab_passes(self):
+        self.record("s-owner", [{"type": "queue-operation", "sessionId": "s-owner"},
+                                {"type": "user", "sessionId": "s-owner", "cwd": str(self.owner)}])
+        result = self.evaluate("s-owner")
+        self.assertEqual(result["state"], "PASS")
+        self.assertEqual(result["evidence"], "claude-session:s-owner")
+
+    def test_session_started_elsewhere_is_blocked_even_after_cd_into_the_lab(self):
+        self.record("s-uad", [{"type": "user", "sessionId": "s-uad", "cwd": str(self.consumer)},
+                              {"type": "user", "sessionId": "s-uad", "cwd": str(self.owner)}])
+        self.assertEqual(self.evaluate("s-uad")["state"], "BLOCKED_WRONG_EXECUTOR")
+
+    def test_forged_or_missing_record_stays_unknown(self):
+        self.record("s-forged", [{"type": "user", "sessionId": "someone-else", "cwd": str(self.owner)}])
+        forged = self.evaluate("s-forged")
+        self.assertEqual(forged["state"], "OWNER_CONTEXT_UNKNOWN")
+        self.assertEqual(forged["evidence"], "claude-session-record-missing:s-forged")
+        self.assertEqual(self.evaluate("s-none")["state"], "OWNER_CONTEXT_UNKNOWN")
+        self.assertEqual(self.evaluate("../escape")["state"], "OWNER_CONTEXT_UNKNOWN")
+        self.assertEqual(self.evaluate(None)["state"], "OWNER_CONTEXT_UNKNOWN")
+
+    def test_codex_and_explicit_root_keep_priority(self):
+        self.record("s-owner", [{"type": "user", "sessionId": "s-owner", "cwd": str(self.owner)}])
+        env = {"CLAUDE_CODE_SESSION_ID": "s-owner", "CLAUDE_PROJECT_DIR": str(self.consumer)}
+        result = self.gate.evaluate(self.owner, True, env, Path(self.temp.name) / "none",
+                                    claude_projects_root=self.projects)
+        self.assertEqual(result["state"], "BLOCKED_WRONG_EXECUTOR")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
