@@ -2,6 +2,7 @@
 """Observed 6.x failures and 7.0 heterogeneous-project contracts, in isolation."""
 
 import contextlib
+import hashlib
 import os
 import io
 import json
@@ -1724,6 +1725,268 @@ class AgentMemory2909Tests(unittest.TestCase):
         self.init_git()
         with patch.dict(os.environ, {"KB_AGENT_MEMORY_ROOT": str(self.base / "none")}):
             self.assertEqual(kb_debts.memory(str(self.root), [])["status"], "NOT_APPLICABLE")
+
+
+class ReportsAndEntry2909Tests(unittest.TestCase):
+    """Prime 20–29.09.2026: reports stranded in a lookalike folder, stale checkout, false
+    alarms at entry, a half-read entry at handoff, decisions left in a plan file."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+
+    def fake_gh(self, private=True):
+        bin_dir = self.base / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        log = self.base / "gh.log"
+        script = bin_dir / "gh"
+        script.write_text("#!/bin/sh\n"
+                          f"echo \"$@\" >> '{log}'\n"
+                          'case "$1 $2" in\n'
+                          f'  "repo view") {"echo PRIVATE" if private else "echo nope >&2; exit 1"} ;;\n'
+                          '  "issue list") echo "" ;;\n'
+                          '  "issue create") echo https://github.com/sugestr/kb-architect-lab/issues/7 ;;\n'
+                          "esac\n", encoding="utf-8")
+        script.chmod(0o755)
+        return dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}"), log
+
+    def lookalike_project(self):
+        projects = self.base / "projects"
+        project = projects / "shop"
+        (projects / "kb-architect" / "inbox").mkdir(parents=True)
+        project.mkdir(parents=True)
+        (project / "CLAUDE.md").write_text("# rules\nмаршрут отчётов: local-inbox\n"
+                                           "инбокс отчётов: ../kb-architect/inbox\n", encoding="utf-8")
+        (project / "report.md").write_text("# Defect\n\nрежим подробности: детальный\n", encoding="utf-8")
+        return project, projects / "kb-architect" / "inbox"
+
+    def report(self, project, env, *extra):
+        return subprocess.run([sys.executable, str(HERE / "kb_report.py"), "--project", str(project),
+                               "--report", str(project / "report.md"), *extra],
+                              capture_output=True, text=True, env=env, timeout=60)
+
+    def test_lookalike_lab_folder_is_not_a_delivery_target(self):
+        project, lookalike = self.lookalike_project()
+        env, log = self.fake_gh()
+        preview = self.report(project, env)
+        self.assertIn("PREPARED lab-issue", preview.stdout)
+        done = self.report(project, env, "--do")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("DELIVERED lab-issue: https://github.com/sugestr/kb-architect-lab/issues/7",
+                      done.stdout)
+        self.assertEqual(list(lookalike.iterdir()), [], "nothing is written into the lookalike")
+        self.assertIn("issue create --repo sugestr/kb-architect-lab", log.read_text())
+        self.assertNotIn("sugestr/kb-architect ", log.read_text(), "never the public repository")
+
+    def test_without_private_lab_access_the_report_stays_at_the_source(self):
+        project, lookalike = self.lookalike_project()
+        env, _ = self.fake_gh(private=False)
+        done = self.report(project, env, "--do")
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("BLOCKED_LOCAL", done.stdout)
+        self.assertNotIn("DELIVERED", done.stdout)
+        self.assertEqual(list(lookalike.iterdir()), [])
+
+    def test_check_names_the_issue_route_instead_of_trusting_the_lookalike(self):
+        project, _ = self.lookalike_project()
+        out = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(project)],
+                             capture_output=True, text=True, timeout=60).stdout
+        self.assertIn("не checkout лаборатории", out)
+        self.assertNotIn("ИНБОКС ОТЧЁТОВ НЕ ПРОВЕРЕН", out)
+
+    def test_checkout_behind_origin_is_named_with_the_fetch_moment(self):
+        remote = self.base / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], check=True)
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-29\n")
+        self.commit_at("2026-09-29", ".")
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-q", "-u", "origin", "main")
+        other = self.base / "other"
+        subprocess.run(["git", "clone", "-q", str(remote), str(other)], check=True)
+        self.init_git(root=other)
+        (other / "x.md").write_text("x\n", encoding="utf-8")
+        self.commit_at("2026-09-29", "x.md", root=other)
+        subprocess.run(["git", "-C", str(other), "push", "-q"], check=True)
+        self.git("fetch", "-q")
+        out = self.run_tool("kb_due.py").stdout
+        self.assertIn("checkout отстаёт от origin на 1 коммитов", out)
+        self.assertNotIn("всё закоммичено и запушено", out)
+
+    def test_waiting_table_header_and_yearless_dates(self):
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-29\n\n## ЧЕГО ЖДЁМ\n| Вопрос | Кто / когда |\n"
+                  "|---|---|\n| Ответ банка | банк, с 07.07 |\n| Подпись | нотариус, с 2026-09-20 |\n")
+        out = self.run_tool("kb_due.py").stdout
+        self.assertNotIn("ожиданий без даты начала", out)
+        self.assertRegex(out, r"ожиданий: 2, самое давнее ждём с 20\d\d-07-07")
+
+    def test_handoff_to_the_next_session_of_the_same_project_is_inbound(self):
+        import kb_debts
+        self.init_git()
+        self.save("CLAUDE.md", "project_aliases: shop\n")
+        self.save("NOW.md", "Обновлено: 2026-09-29\n")
+        self.save("_inbox/handoff.md", "---\ntype: agent-message\nmessage_id: handoff-000001\n"
+                  "created_at: 2026-09-20T00:00:00Z\nfrom_project: shop (супервизор, Claude)\n"
+                  "to_project: shop\ndelivery_state: delivered\n---\nnext steps\n")
+        self.commit_at("2026-09-20", ".")
+        self.assertNotIn("ИСХОДЯЩЕЕ В СОБСТВЕННОМ ИНБОКСЕ", self.run_tool("kb_check.py").stdout)
+        inbound = kb_debts.debts(str(self.root), today=__import__("datetime").date(2026, 9, 29))["inbound"]
+        self.assertEqual(inbound["total"], 1)
+
+    def test_plan_with_owner_decisions_outside_git_is_a_debt(self):
+        import kb_debts
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-29\n")
+        self.save("kb/05_catalog.md", "# Catalog\n")
+        self.commit_at("2026-09-29", ".")
+        plans_dir = self.base / "plans"
+        plans_dir.mkdir()
+        plan = plans_dir / "cuddly-plan.md"
+        plan.write_text(f"# Consumables\nWork in {self.root}. Owner: four kinds, weekly order.\n",
+                        encoding="utf-8")
+        other = plans_dir / "other.md"
+        other.write_text("# Unrelated project plan\n", encoding="utf-8")
+        today = __import__("datetime").date.today()
+        with patch.dict(os.environ, {"KB_AGENT_PLANS_ROOT": str(plans_dir)}):
+            got = kb_debts.plans(str(self.root), kb_debts.tracked(str(self.root)), today)
+            self.assertEqual([x["plan"] for x in got["loose"]], ["cuddly-plan.md"])
+            plan.write_text(plan.read_text() + "\nВнесено в kb/05_catalog.md §1.7.\n", encoding="utf-8")
+            self.assertEqual(kb_debts.plans(str(self.root), [], today)["status"], "PASS")
+
+    def entry_fixture(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-29\n")
+        self.save("kb/99_invariants.md", "# Invariants\nNever overwrite a card code.\n")
+        self.save("kb/05_catalog.md", "# Catalog\nNew consumables: series C00001.\n")
+        self.save("skills/dev/SKILL.md", "# Dev method\n")
+        self.save("KNOWLEDGE_INDEX.json", {"schema": 1, "current": "now", "routes": [
+            {"id": "now", "load_when": ["any task start"], "paths": ["NOW.md"]},
+            {"id": "invariants", "load_when": ["before any write to Odoo"], "paths": ["kb/99_invariants.md"]},
+            {"id": "catalog", "load_when": ["creating product cards"], "paths": ["kb/05_catalog.md"]}]})
+        self.save("PROJECT_ROLES.json", {"roles": [{"id": "dev", "skill": "dev", "load_when": ["any write"],
+                                                    "knowledge_routes": ["invariants", "catalog"]}],
+                                         "skills": [{"name": "dev", "canonical": "skills/dev"}]})
+        self.commit_at("2026-09-29", ".")
+
+    def test_full_entry_is_one_command_with_a_receipt(self):
+        self.entry_fixture()
+        bundle = self.base / "ENTRY.md"
+        out = self.run_tool("kb_entry.py", "--role", "dev", "--out", bundle)
+        text = bundle.read_text(encoding="utf-8")
+        self.assertIn("Never overwrite a card code.", text)
+        self.assertIn("# Dev method", text)
+        self.assertNotIn("series C00001", text, "task routes are addresses, not entry reads")
+        self.assertIn("- catalog: creating product cards", out.stdout)
+        self.assertIn("ENTRY_RECEIPT: kb-architect", out.stdout)
+        self.assertIn("SESSION_ACTION=READ_ENTRY_BUNDLE_WHOLE", out.stdout)
+        with_route = self.run_tool("kb_entry.py", "--role", "dev", "--route", "catalog", "--out", bundle)
+        self.assertIn("series C00001", bundle.read_text(encoding="utf-8"))
+        self.assertEqual(with_route.returncode, 0, with_route.stdout)
+        unknown = self.run_tool("kb_entry.py", "--role", "nobody", "--out", bundle)
+        self.assertEqual(unknown.returncode, 1)
+        self.assertIn("роль «nobody» не найдена", unknown.stdout)
+
+
+class Review733Tests(unittest.TestCase):
+    """Fresh-context review of the 7.3.3 candidate, 29.09.2026."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    lookalike_project = ReportsAndEntry2909Tests.lookalike_project
+    report = ReportsAndEntry2909Tests.report
+    entry_fixture = ReportsAndEntry2909Tests.entry_fixture
+
+    def test_an_issue_that_only_links_the_report_is_not_its_delivery(self):
+        project, _ = self.lookalike_project()
+        report_id = "sha256:" + hashlib.sha256((project / "report.md").read_bytes()).hexdigest()
+        child = json.dumps([{"url": "https://x/issues/2", "title":
+                             f"[kb-report] Child · shop · sha256:{'b' * 16} · amends {report_id[:23]}"}])
+        bin_dir = self.base / "bin"
+        bin_dir.mkdir()
+        (self.base / "list.json").write_text(child, encoding="utf-8")
+        gh = bin_dir / "gh"
+        gh.write_text("#!/bin/sh\n"
+                      'case "$1 $2" in\n'
+                      '  "repo view") echo PRIVATE ;;\n'
+                      f'  "issue list") cat \'{self.base / "list.json"}\' ;;\n'
+                      '  "issue create") echo https://x/issues/3 ;;\n'
+                      "esac\n", encoding="utf-8")
+        gh.chmod(0o755)
+        env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+        done = self.report(project, env, "--do")
+        self.assertIn("DELIVERED lab-issue: https://x/issues/3", done.stdout)
+        self.assertNotIn("already present", done.stdout)
+
+    def waits(self, rows, today):
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-09-29\n\n## ЧЕГО ЖДЁМ\n| Что | Кто |\n|---|---|\n" + rows)
+        with patch.object(kb_due.datetime, "date", wraps=__import__("datetime").date) as fake:
+            fake.today.return_value = today
+            out = io.StringIO()
+            with patch.object(sys, "argv", ["kb_due.py", str(self.root)]), \
+                    contextlib.redirect_stdout(out):
+                kb_due.main()
+        return out.getvalue()
+
+    def test_waits_survive_leap_days_versions_times_and_empty_rows(self):
+        date = __import__("datetime").date
+        out = self.waits("| Ответ | банк, с 29.02 |\n", date(2027, 1, 15))
+        self.assertIn("ожиданий: 1", out)
+        out = self.waits("| Ответ по релизу 7.3 | звонок в 12.05 |\n", date(2026, 9, 29))
+        self.assertIn("ожиданий без даты начала: 1", out)
+        out = self.waits("| A | с 2026-08-01 |\n|  |  |\n| B | с 2026-09-01 |\n", date(2026, 9, 29))
+        self.assertIn("ожиданий: 2, самое давнее ждём с 2026-08-01", out)
+
+    def test_entry_reads_a_section_caps_big_files_and_never_writes_the_tree(self):
+        self.entry_fixture()
+        self.save("kb/big.md", "# Big\n\n## Invariants\nOnly this.\n\n## Other\n" + "x" * 500_000 + "\n")
+        index = json.loads((self.root / "KNOWLEDGE_INDEX.json").read_text())
+        index["routes"].append({"id": "sec", "load_when": ["always"],
+                                "targets": [{"kind": "section", "path": "kb/big.md", "section": "Invariants"}]})
+        index["routes"].append({"id": "huge", "load_when": ["huge data"], "paths": ["kb/big.md"]})
+        self.save("KNOWLEDGE_INDEX.json", index)
+        bundle = self.base / "E.md"
+        out = self.run_tool("kb_entry.py", "--route", "huge", "--out", bundle)
+        text = bundle.read_text(encoding="utf-8")
+        self.assertIn("Only this.", text)
+        self.assertNotIn("x" * 1000, text)
+        self.assertIn("больше предела", out.stdout)
+        blocked = self.run_tool("kb_entry.py", "--out", self.root / "ENTRY.md")
+        self.assertEqual(blocked.returncode, 2)
+        self.assertFalse((self.root / "ENTRY.md").exists())
+
+    def test_entry_falls_back_when_the_git_dir_is_read_only(self):
+        self.entry_fixture()
+        git_dir = self.root / ".git"
+        git_dir.chmod(0o555)
+        try:
+            out = self.run_tool("kb_entry.py")
+        finally:
+            git_dir.chmod(0o755)
+        self.assertIn("ENTRY_BUNDLE=", out.stdout, out.stderr)
+        self.assertNotIn("Traceback", out.stderr)
+
+    def test_sibling_project_plan_is_not_this_projects_debt(self):
+        import kb_debts
+        self.init_git()
+        self.save("NOW.md", "Обновлено: 2026-09-29\n")
+        self.commit_at("2026-09-29", ".")
+        plans_dir = self.base / "plans"
+        plans_dir.mkdir()
+        (plans_dir / "p.md").write_text(f"# Plan\nWork in {self.root}-odoo/addons.\n", encoding="utf-8")
+        with patch.dict(os.environ, {"KB_AGENT_PLANS_ROOT": str(plans_dir)}):
+            got = kb_debts.plans(str(self.root), [], __import__("datetime").date.today())
+        self.assertEqual(got["loose"], [])
 
 
 class OwnerGateClaudeSession2909Tests(unittest.TestCase):

@@ -6,6 +6,15 @@ address remains local even when the current runtime cannot write it: that is
 ``BLOCKED_LOCAL``, never permission to disclose the report on GitHub. Projects
 whose declared route is GitHub may publish an anonymised issue. Preview is the
 default; --do performs delivery and never calls a prepared report delivered.
+
+The owner's laboratory runs on one machine while sessions also run on a server.
+There a declared ``../kb-architect/inbox`` resolved to a plain folder with the
+lab's name, the report was printed DELIVERED and nobody read it (five reports,
+20-29.09.2026).  A path named ``kb-architect/inbox`` is therefore accepted only
+when it is the lab checkout itself; otherwise the report goes to a private issue
+of the lab repository (``lab-issue``), which the lab collects into its inbox.
+The lab repository is private, so this is not public disclosure; without access
+to it the report stays PREPARED/BLOCKED_LOCAL at the source.
 """
 
 from __future__ import annotations
@@ -26,6 +35,14 @@ import kb_paths
 
 
 GITHUB_REPOSITORY = "sugestr/kb-architect"
+LAB_REPOSITORY = "sugestr/kb-architect-lab"
+LAB_LABEL = "kb-report"
+LAB_TITLE = "[kb-report]"
+ISSUE_BODY_LIMIT = 60_000
+LAB_REMOTE = re.compile(r"[:/]sugestr/kb-architect-lab(?:\.git)?/?$")
+# The report's own id is the last «· sha256:…» field, optionally followed by one
+# link field; an id quoted in a link or in the heading is not the report's id.
+OWN_ID = re.compile(r" · (sha256:[0-9a-f]{16})(?: · (?:amends|supersedes) sha256:[0-9a-f]{16})?$")
 GITHUB_ISSUES = f"https://github.com/{GITHUB_REPOSITORY}/issues"
 REPORT_KEYS = ("инбокс отчётов", "report inbox", "defect report inbox")
 ROUTE_KEYS = ("маршрут отчётов", "report route", "defect report route")
@@ -80,10 +97,23 @@ def private_lab_inbox(root: Path) -> Path | None:
         seen.add(candidate)
         remote = git(candidate, "remote", "get-url", "origin")
         inbox = candidate / "inbox"
-        if (remote and remote.rstrip("/").removesuffix(".git").endswith(
-                "sugestr/kb-architect-lab") and inbox.is_dir()):
+        if remote and LAB_REMOTE.search(remote.strip()) and inbox.is_dir():
             return inbox.resolve()
     return None
+
+
+def is_lab_checkout_inbox(path: Path) -> bool:
+    """The inbox directory of a checkout whose origin is the private lab."""
+    top = git(path, "rev-parse", "--show-toplevel") if path.is_dir() else None
+    if not top or not (Path(top) / "inbox").is_dir():
+        return False
+    remote = git(Path(top), "remote", "get-url", "origin") or ""
+    # samefile, not a string compare: macOS paths differ in letter case.
+    return bool(LAB_REMOTE.search(remote.strip())) and os.path.samefile(path, Path(top) / "inbox")
+
+
+def names_the_lab(path: Path) -> bool:
+    return path.name == "inbox" and path.parent.name == "kb-architect"
 
 
 def local_target(root: Path) -> Path | None:
@@ -92,6 +122,81 @@ def local_target(root: Path) -> Path | None:
     # explicitly declared local address even when this sandbox cannot write it;
     # the caller must receive BLOCKED_LOCAL, never a silent public fallback.
     return target
+
+
+def lab_access() -> tuple[bool, str]:
+    """Whether this actor can open the private lab repository through gh."""
+    try:
+        result = subprocess.run(
+            ["gh", "repo", "view", LAB_REPOSITORY, "--json", "visibility",
+             "-q", ".visibility"], capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        return False, "gh is unavailable"
+    except Exception as exc:
+        return False, f"gh did not answer: {exc}"
+    if result.returncode != 0:
+        why = (result.stderr.strip().splitlines() or [f"exit {result.returncode}"])[0]
+        return False, why
+    if result.stdout.strip().upper() != "PRIVATE":
+        return False, f"{LAB_REPOSITORY} is not private: {result.stdout.strip()}"
+    return True, "private lab repository reachable"
+
+
+def lab_title(text: str, report: Path, root: Path, identifier: str,
+              relation: tuple[str, str] | None) -> str:
+    base = title(text, report).removeprefix("[kb-architect] ")
+    tail = f" · {root.name} · {identifier[:23]}"
+    if relation:
+        tail += f" · {relation[0]} {relation[1][:23]}"
+    return f"{LAB_TITLE} {base[:200 - len(tail) - len(LAB_TITLE)]}{tail}"
+
+
+def publish_lab_issue(report: Path, text: str, root: Path,
+                      relation: tuple[str, str] | None) -> tuple[int, str]:
+    identifier = report_id(report)
+    if len(text) > ISSUE_BODY_LIMIT:
+        return 2, (f"BLOCKED_LOCAL: report is {len(text)} characters, above the issue "
+                   f"limit {ISSUE_BODY_LIMIT}; split it or deliver from the lab machine")
+    if relation and not relation[1].startswith("sha256:"):
+        return 2, "BLOCKED_LOCAL: lab-issue linkage needs a report id (sha256:...), not a file name"
+    try:
+        found = subprocess.run(
+            ["gh", "issue", "list", "--repo", LAB_REPOSITORY, "--state", "all",
+             "--search", f"{identifier[:23]} in:title", "--json", "url,title"],
+            capture_output=True, text=True, timeout=60)
+    except Exception as exc:
+        return 1, f"PREPARED lab-issue: gh did not answer: {exc}"
+    if found.returncode != 0:
+        why = (found.stderr.strip().splitlines() or [f"exit {found.returncode}"])[0]
+        return 1, f"PREPARED lab-issue: existing issues not checked: {why}"
+    try:
+        existing = json.loads((found.stdout or "").strip() or "[]")
+    except ValueError:
+        existing = None
+    if not isinstance(existing, list):
+        return 1, "PREPARED lab-issue: existing issues not checked: unexpected gh output"
+
+    def own_id(item):
+        m = OWN_ID.search(item.get("title", "")) if isinstance(item, dict) else None
+        return m.group(1) if m else None
+    same = [i for i in existing if own_id(i) == identifier[:23]]
+    if same:
+        return 0, f"DELIVERED lab-issue (already present): {same[0].get('url')}; report_id={identifier}"
+    command = ["gh", "issue", "create", "--repo", LAB_REPOSITORY,
+               "--title", lab_title(text, report, root, identifier, relation),
+               "--body-file", str(report)]
+    try:
+        result = subprocess.run(command + ["--label", LAB_LABEL], capture_output=True,
+                                text=True, timeout=60)
+        if result.returncode != 0 and "label" in (result.stderr or "").lower():
+            result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+    except Exception as exc:
+        return 1, f"PREPARED lab-issue: delivery not confirmed: {exc}"
+    if result.returncode != 0:
+        why = (result.stderr.strip().splitlines() or [f"exit {result.returncode}"])[0]
+        return 1, f"PREPARED lab-issue: delivery not confirmed: {why}"
+    url = (result.stdout.strip().splitlines() or [""])[0]
+    return 0, f"DELIVERED lab-issue: {url}; report_id={identifier}"
 
 
 def declared_route(root: Path) -> str | None:
@@ -276,7 +381,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", required=True)
     parser.add_argument("--report", required=True)
-    parser.add_argument("--target", choices=("auto", "local", "github"),
+    parser.add_argument("--target", choices=("auto", "local", "lab-issue", "github"),
                         default="auto")
     parser.add_argument("--do", "--сделать", action="store_true", dest="do_send")
     parser.add_argument("--public-safe", action="store_true",
@@ -301,8 +406,23 @@ def main() -> int:
     route = args.target
     if route == "auto":
         route = declared_route(root) or ("local" if inbox else "github")
+    lab_reason = None
+    if route == "local" and (inbox is None or names_the_lab(inbox)) and not (
+            inbox is not None and is_lab_checkout_inbox(inbox)):
+        # The owner's lab is not on this machine (a server session, a folder that
+        # only carries the lab's name): its private issue queue is the inbox.
+        ok, why = lab_access()
+        if ok:
+            route = "lab-issue"
+        else:
+            lab_reason = why
     if route == "local" and not inbox:
-        print("BLOCKED_LOCAL: no declared/private laboratory report inbox")
+        print("BLOCKED_LOCAL: no declared/private laboratory report inbox"
+              + (f"; private lab issues unavailable: {lab_reason}" if lab_reason else ""))
+        return 2
+    if route == "local" and names_the_lab(inbox) and not is_lab_checkout_inbox(inbox):
+        print(f"BLOCKED_LOCAL: {inbox} carries the lab's name but is not the lab checkout; "
+              f"private lab issues unavailable: {lab_reason}")
         return 2
     if route == "local" and (not inbox.is_dir() or not os.access(inbox, os.W_OK)):
         print(f"BLOCKED_LOCAL: declared/private report inbox unavailable: {inbox}")
@@ -314,6 +434,10 @@ def main() -> int:
         return 2
 
     if not args.do_send:
+        if route == "lab-issue":
+            print(f"PREPARED lab-issue: private issue in {LAB_REPOSITORY}; "
+                  f"report_id={report_id(report)}")
+            return 1
         if route == "local":
             relation_note = (f"; {relation_value[0]}={relation_value[1]}"
                              if relation_value else "")
@@ -326,6 +450,12 @@ def main() -> int:
 
     if route == "local":
         code, message = copy_local(report, inbox, relation_value)
+    elif route == "lab-issue":
+        ok, why = lab_access()
+        if not ok:
+            print(f"BLOCKED_LOCAL: private lab issues unavailable: {why}")
+            return 2
+        code, message = publish_lab_issue(report, text, root, relation_value)
     else:
         if not args.public_safe:
             print("BLOCKED: --public-safe is required before public GitHub delivery")

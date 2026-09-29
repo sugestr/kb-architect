@@ -299,14 +299,30 @@ def report_inbox_state(root):
     path = os.path.normpath(path)
     where = os.path.relpath(source, root) if source else "правила проекта"
     shown = path if os.path.isabs(value) else value
-    if os.path.isdir(path):
-        return path, None, shown
     # Repo-relative адрес соседа принадлежит основному checkout, а не
     # физическому месту linked worktree.
     main = None if os.path.isabs(value) else kb_paths.canonical_checkout(root)
-    if main and os.path.isdir(os.path.normpath(os.path.join(main, value))):
-        resolved = os.path.normpath(os.path.join(main, value))
-        return resolved, None, f"{value} → {resolved} (от основного checkout)"
+    if not os.path.isdir(path) and main and os.path.isdir(
+            os.path.normpath(os.path.join(main, value))):
+        path = os.path.normpath(os.path.join(main, value))
+        shown = f"{value} → {path} (от основного checkout)"
+    # Инбокс лаборатории владельца есть только на машине с её checkout. На
+    # сервере тот же адрес вёл в папку-двойник, и отчёты «доставлялись» туда,
+    # где их никто не читал (20–29.09.2026). Не checkout лаборатории — не адрес
+    # доставки: kb_report отправит приватный issue лаборатории.
+    if (os.path.basename(path) == "inbox"
+            and os.path.basename(os.path.dirname(path)) == "kb-architect"):
+        top = kb_paths.find_git(path) if os.path.isdir(path) else None
+        remote, _ = kb_paths.git_out(top, "remote", "get-url", "origin", timeout=10) \
+            if top else (None, None)
+        lab_inbox = os.path.join(top, "inbox") if top else None
+        if (top and re.search(r"[:/]sugestr/kb-architect-lab(?:\.git)?/?$", (remote or "").strip())
+                and os.path.isdir(lab_inbox) and os.path.samefile(path, lab_inbox)):
+            return path, None, shown
+        return None, None, (f"{shown} — на этой машине не checkout лаборатории; "
+                            "kb_report доставит приватный issue лаборатории")
+    if os.path.isdir(path):
+        return path, None, shown
     if os.path.exists(path):
         return None, (f"{where}: «{raw}» указывает на файл, а нужен каталог "
                       "доставки"), None
@@ -540,7 +556,10 @@ def main():
                 ot = MSG_FIELD["from"].search(head)
                 komu = MSG_FIELD["to"].search(head)
                 state = MSG_FIELD["state"].search(head)
-                if ot and nash(ot.group(1), otpraviteli):
+                # Передача дел следующей сессии того же проекта — не исходящее:
+                # конверт лежит у адресата, адресат — сам проект (сервер, 26.09.2026).
+                if ot and nash(ot.group(1), otpraviteli) and not (
+                        komu and nash(komu.group(1), svoi)):
                     nedostavleno.append((rel, (komu.group(1).strip() if komu else "не назван"),
                                          state.group(1).strip() if state else "не назван"))
                 elif komu and not nash(komu.group(1), svoi):

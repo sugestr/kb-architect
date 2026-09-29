@@ -3,7 +3,7 @@ name: kb-architect
 description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "7.3.2"
+  version: "7.3.3"
   minimum_project_version: "7.2.0"
   author: "sugestr"
 ---
@@ -21,7 +21,7 @@ metadata:
 |---|---|
 | Объяснить возможности, найти команду | этот файл |
 | Обычная работа в принятом проекте | правила проекта + current |
-| Новый локальный запуск | этот файл + current; updater после первого безопасного результата |
+| Новый запуск, передача сессии | этот файл; вход — `scripts/kb_entry.py <root> --role <id>` |
 | Создать базу | `references/contract.md` + `references/start-new.md` |
 | Присоединить/перестроить существующую | `references/contract.md` + `references/adopt-existing.md` |
 | Перенести checkout для Claude/Codex | `references/move-project.md` |
@@ -72,8 +72,8 @@ Current → роль/адрес → полезный проверенный ре
 `SOURCE / FACT / INTERPRETATION / DECISION / OPEN` служебный tail не нужен.
 Изменение — в каноне и зависимых представлениях; проверки пакетом, точечный коммит
 при полномочиях. Работа оставляет знание в том же коммите: модуль — описание,
-входящий — провенанс `message_id`, внешнее действие и правка вне репозитория —
-квитанцию, главу и current сразу; память агента — не база. Незавершённое —
+входящий — провенанс `message_id`, внешнее действие, правка вне репозитория и
+решение владельца — главу и current сразу; память и план агента — не база. Незавершённое —
 `DURABLE_TAIL=PENDING` с адресом продолжения при коммите. Объявленный вход
 сохраняется целиком; часть не выдаётся за партию. Перед записью в область —
 `kb_debts.py <root> --area <путь>`; относящееся закрой или PENDING.

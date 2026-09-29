@@ -378,11 +378,38 @@ def main():
         # Счёт по строкам таблицы, а не по датам: в одной строке ожидания
         # легально стоят две даты (с какого числа и что делать, если не будет),
         # и подсчёт дат давал двойной результат — контрпример внешней критики.
-        rows = [ln for ln in wait.splitlines()
+        # Заголовок таблицы — строка перед разделителем |---|, как бы ни
+        # назывались колонки; раньше его узнавали только по «с какого числа»
+        # (сервер, 26.09.2026: «| Вопрос | Кто / когда |» считался ожиданием).
+        wlines = wait.splitlines()
+        # Разделитель — строка с «---»; пустая строка таблицы «|  |  |» им не является.
+        header = {i - 1 for i, ln in enumerate(wlines)
+                  if ln.lstrip().startswith("|") and re.match(r"^[\s|:]*-{3,}[\s|:-]*$", ln)
+                  and i > 0}
+        rows = [ln for i, ln in enumerate(wlines)
                 if ln.lstrip().startswith("|") and not re.match(r"^[\s|:-]+$", ln)
-                and "с какого числа" not in ln.lower()]
-        per_row = [min(d) for d in
-                   (dates_in(ln, past_only=True, today=today) for ln in rows) if d]
+                and i not in header and "с какого числа" not in ln.lower()]
+
+        def row_start(ln):
+            got = dates_in(ln, past_only=True, today=today)
+            if got:
+                return min(got)
+            # «с 07.07» без года: ближайшая прошедшая такая дата. Только после
+            # «с/since/from/от»: «релиз 7.3», «звонок в 12.05» — не даты начала.
+            found = []
+            for d, m in re.findall(r"(?:\bс|\bот|\bsince|\bfrom)\s+(\d{1,2})\.(\d{1,2})(?![\d.]|\.\d)",
+                                   ln, re.IGNORECASE):
+                # Ближайшая прошедшая такая дата; 29.02 ищется до високосного года.
+                for year in range(today.year, today.year - 5, -1):
+                    try:
+                        cand = datetime.date(year, int(m), int(d))
+                    except ValueError:
+                        continue
+                    if cand <= today:
+                        found.append(cand)
+                        break
+            return min(found) if found else None
+        per_row = [d for d in (row_start(ln) for ln in rows) if d]
         started = per_row if rows else dates_in(wait, past_only=True, today=today)
         undated = len(rows) - len(per_row) if rows else 0
         if undated:
@@ -584,6 +611,24 @@ def main():
 
         if dirty is not None:
             ahead = git("rev-list", "--count", "@{u}..HEAD")
+            # Отставание видно только по последнему fetch: kb_due в сеть не ходит.
+            # «Всё запушено» при checkout, отставшем на 6 коммитов, прочиталось как
+            # «git в порядке», и проверки судили о старом дереве (сервер, 20.09.2026:
+            # один checkout делят несколько сессий, origin уезжает во время входа).
+            behind = git("rev-list", "--count", "HEAD..@{u}")
+            fetched = None
+            # FETCH_HEAD у linked worktree свой: спрашиваем git, где он.
+            head_file = git("rev-parse", "--git-path", "FETCH_HEAD")
+            if head_file:
+                if not os.path.isabs(head_file):
+                    head_file = os.path.join(git_root, head_file)
+                try:
+                    fetched = (datetime.datetime.now().timestamp()
+                               - os.path.getmtime(head_file)) / 3600
+                except OSError:
+                    fetched = None
+            when = (f"последний fetch {fetched:.0f} ч назад" if fetched is not None
+                    else "время fetch неизвестно")
             if ahead is None:
                 # Отсутствие upstream — законное состояние, а не сбой; но и
                 # «запушено» отсюда не следует. Раньше обе ситуации давали ""
@@ -591,11 +636,16 @@ def main():
                 ok.append("git: незапушенное не проверено — удалённой ветки не видно "
                           "(upstream не настроен или git не ответил). Незакоммиченного "
                           + ("нет" if not dirty else f"{len(dirty)}"))
-            elif ahead.isdigit() and int(ahead) > 0:
-                due.append(f"коммитов не запушено: {ahead} — для второй линии и для завтра "
-                           f"этого не существует")
-            elif not dirty:
-                ok.append("git: всё закоммичено и запушено")
+            else:
+                if ahead.isdigit() and int(ahead) > 0:
+                    due.append(f"коммитов не запушено: {ahead} — для второй линии и для завтра "
+                               f"этого не существует")
+                if behind and behind.isdigit() and int(behind) > 0:
+                    due.append(f"checkout отстаёт от origin на {behind} коммитов ({when}) — "
+                               f"git pull до работы, иначе проверки судят о старом дереве")
+                elif not dirty and ahead == "0":
+                    ok.append(f"git: всё закоммичено, неотправленного нет; отставания от origin "
+                              f"нет на момент fetch ({when}). Новее этого без fetch НЕ ПРОВЕРЕНО")
 
         # Commit ancestry identifies refs to inspect; it does not prove that
         # their knowledge is absent after cherry-pick or later canonical edits.

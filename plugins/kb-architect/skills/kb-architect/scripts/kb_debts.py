@@ -153,6 +153,7 @@ def envelopes(root):
     if not inbox:
         return None, []
     svoi = kb_check.imena_proekta(root, recipients=False)
+    own = kb_check.imena_proekta(root)
     out = []
     for dirpath, dirnames, filenames in os.walk(inbox):
         dirnames[:] = [d for d in dirnames if not d.startswith(".")
@@ -170,8 +171,12 @@ def envelopes(root):
             if not tip or "agent-message" not in tip.group(1).lower():
                 continue
             ot = kb_check.MSG_FIELD["from"].search(head)
-            if ot and kb_check.nash(ot.group(1), svoi):
-                continue        # исходящее — забота проверки 6 kb_check
+            komu = kb_check.MSG_FIELD["to"].search(head)
+            # Исходящее — забота проверки 6 kb_check; передача дел самому проекту
+            # — входящее следующей сессии и требует следа разбора.
+            if ot and kb_check.nash(ot.group(1), svoi) and not (
+                    komu and kb_check.nash(komu.group(1), own)):
+                continue
             mid = MESSAGE_ID.search(head)
             created = CREATED.search(head)
             sender = SENDER.search(head)
@@ -861,6 +866,74 @@ def memory(root, files):
     return {"status": "DEBT" if loose else "PASS", "facts": facts, "loose": loose}
 
 
+# ---------------------------------------------------------------- план агента
+
+PLAN_RECORDED = re.compile(r"(?:внесено|записано|recorded|written)\s+(?:в|to|in)\s+`?[\w./-]+\.md",
+                           re.IGNORECASE)
+
+
+def plans(root, files, today, window_days=30):
+    """План режима планирования с решениями по проекту, не дошедший до канона.
+
+    Решение владельца, принятое словами, не создаёт коммита; режим планирования
+    Claude Code кладёт его в ~/.claude/plans вне Git, и при сжатии контекста или
+    передаче сессии оно живёт только там (продукт на Odoo 28–29.09.2026: три часа
+    решений о расходниках, kb_check и kb_debts — «чисто»). План закрыт, когда
+    канон называет его файл или сам план говорит «внесено в <файл>.md»."""
+    base = Path(os.environ.get("KB_AGENT_PLANS_ROOT") or os.path.expanduser("~/.claude/plans"))
+    if not base.is_dir():
+        return {"status": "NOT_APPLICABLE", "reason": "каталога планов Claude Code нет"}
+    names = {os.path.realpath(root), os.path.abspath(root)}
+    main = kb_paths.canonical_checkout(root)
+    if main:
+        names.add(os.path.realpath(main))
+    dirname = os.path.basename(os.path.realpath(main or root))
+    # Путь — целиком: «…/shop» не совпадает с «…/shop-odoo»; путь, уходящий во
+    # вложенный KB-проект, принадлежит ему, а не этому проекту.
+    nested = sorted({os.path.dirname(f) for f in (files or [])
+                     if os.path.basename(f) in kb_paths.RULES_NAMES and "/" in f
+                     and kb_paths.nested_project(os.path.join(root, os.path.dirname(f)))})
+
+    class PathMention:
+        def __init__(self, base):
+            self.rx = re.compile(re.escape(base) + r"(?![\w-])")
+
+        def search(self, text):
+            for m in self.rx.finditer(text):
+                rest = text[m.end():m.end() + 300]
+                if not any(rest.startswith("/" + n + "/") or rest == "/" + n
+                           or re.match(re.escape("/" + n) + r"(?![\w-])", rest) for n in nested):
+                    return True
+            return False
+    patterns = [PathMention(n) for n in names]
+    # Имя каталога — признак, только если оно отличительное: «project» или
+    # «docs» встречаются в любом плане; «shop-odoo» — нет.
+    if len(dirname) >= 4 and re.search(r"[-_.\d]", dirname):
+        patterns.append(re.compile(r"(?<![\w-])" + re.escape(dirname) + r"(?![\w-])"))
+    canon = "\n".join(read(root, f, 400000) for f in (files or [])
+                      if os.path.splitext(f)[1].lower() in DOC_EXT)
+    mine, loose = 0, []
+    cutoff = datetime.datetime.combine(today - datetime.timedelta(days=window_days),
+                                       datetime.time()).timestamp()
+    for plan in sorted(base.glob("*.md")):
+        try:
+            if plan.stat().st_mtime < cutoff:
+                continue
+        except OSError:
+            continue
+        text = kb_paths.read(str(plan))
+        if not any(p.search(text) for p in patterns):
+            continue
+        mine += 1
+        if plan.name in canon or plan.stem in canon or PLAN_RECORDED.search(text):
+            continue
+        loose.append({"plan": plan.name,
+                      "modified": datetime.date.fromtimestamp(plan.stat().st_mtime).isoformat()})
+    if not mine:
+        return {"status": "PASS", "plans": 0, "loose": []}
+    return {"status": "DEBT" if loose else "PASS", "plans": mine, "loose": loose}
+
+
 # ---------------------------------------------------------------- сборка
 
 def debts(root, today=None, area=None):
@@ -874,7 +947,7 @@ def debts(root, today=None, area=None):
                 "inbound": inbound(root, None, today, t["inbound_grace_days"]),
                 "work": base, "code": base, "flow": base, "freshness": base,
                 "current": current(root, today), "roles": roles(root),
-                "memory": memory(root, [])}
+                "memory": memory(root, []), "plans": plans(root, [], today)}
     if area:
         area = area.strip("/")
     result = {
@@ -887,6 +960,7 @@ def debts(root, today=None, area=None):
         "current": current(root, today),
         "roles": roles(root),
         "memory": memory(root, files),
+        "plans": plans(root, files, today),
     }
     if area:
         inside = lambda p: p == area or p.startswith(area + "/")
@@ -994,6 +1068,11 @@ def summary_lines(d):
         out.append(f"роль-метод держит датированное состояние: {kb_check.skl(ro['total'], 'строка', 'строки', 'строк')} "
                    f"(первая {ro['lines'][0]['path']}). Метод обновляют реже фактов — перенеси "
                    f"состояние в знание и дай роли ссылку")
+    pl = d.get("plans", {})
+    if pl.get("status") == "DEBT":
+        names = ", ".join(x["plan"] for x in pl["loose"][:3])
+        out.append(f"план агента с решениями по проекту не внесён в канон: {len(pl['loose'])} "
+                   f"({names}). Решение владельца — в главу сразу; в плане — «внесено в <файл>»")
     mem = d.get("memory", {})
     if mem.get("status") == "DEBT":
         names = ", ".join(m["memory"] for m in mem["loose"][:3])
@@ -1109,7 +1188,7 @@ def sweep(parent):
             "deadlines_passed": cur.get("passed_total", 0),
             "stale_present": len(d["freshness"].get("stale", [])),
             "role_state": d["roles"].get("total", 0),
-            "memory_loose": len(d["memory"].get("loose", [])),
+            "memory_loose": len(d["memory"].get("loose", [])) + len(d["plans"].get("loose", [])),
         })
     return rows
 
