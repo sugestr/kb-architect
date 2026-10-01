@@ -540,7 +540,10 @@ def main():
     chuzhie, nedostavleno = [], []
     if inbox:
         for dirpath, dirnames, filenames in os.walk(inbox):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            # Архив — разобранное со следом: kb_debts его не считает, адресация тоже
+            # (tg-archive 01.10: 44 строки ложных находок после переноса в _inbox/archive/).
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")
+                           and d not in ("archive", "архив", "Archive")]
             for fn in sorted(filenames):
                 if not fn.lower().endswith(".md"):
                     continue

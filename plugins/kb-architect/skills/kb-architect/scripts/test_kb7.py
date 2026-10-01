@@ -2047,5 +2047,477 @@ class OwnerGateClaudeSession2909Tests(unittest.TestCase):
         self.assertEqual(result["state"], "BLOCKED_WRONG_EXECUTOR")
 
 
+class ExecutableEntry0110Tests(unittest.TestCase):
+    """01.10.2026: a new chat of the Odoo product worked six hours without its role; the entry
+    steps written as prose were skipped, the step with a command ran. 7.4.0 makes the entry run
+    itself (session hook), locks writes until the entry file is read and confirmed by its part
+    marks, and stays silent outside KB projects."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+
+    def project(self, big_now=False, seed_due=True):
+        ReportsAndEntry2909Tests.entry_fixture(self)
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
+        if seed_due:   # дневной кэш kb_due: старт не платит его в каждом тесте
+            import datetime as _dt
+            import kb_start
+            cache = self.base / "state" / "due" / (
+                f"{kb_start.root_key(self.root)}-{_dt.date.today().isoformat()}.txt")
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text("  • fixture due line", encoding="utf-8")
+        if big_now:
+            self.save("NOW.md", "Обновлено: 2026-09-29\n" + "Строка состояния проекта.\n" * 900
+                      + "ПОСЛЕДНЯЯ СТРОКА NOW\n")
+        roles = json.loads((self.root / "PROJECT_ROLES.json").read_text())
+        roles["roles"].append({"id": "ops", "skill": "dev", "load_when": ["shop operations"]})
+        roles["entry_role"] = "dev"
+        self.save("PROJECT_ROLES.json", roles)
+
+    def env(self, **extra):
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")}
+        env["KB_ENTRY_STATE"] = str(self.base / "state")
+        env.update(extra)
+        return env
+
+    def hook(self, event, agent="claude", cwd=None, **env):
+        event = dict({"session_id": "s1", "cwd": str(cwd or self.root)}, **event)
+        out = subprocess.run([sys.executable, str(HERE / "kb_start.py"), "hook", "--agent", agent],
+                             input=json.dumps(event), capture_output=True, text=True, timeout=90,
+                             env=self.env(**env))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout) if out.stdout.strip() else None
+
+    def start(self, source="startup", **kw):
+        return self.hook({"hook_event_name": "SessionStart", "source": source}, **kw)
+
+    def tool(self, name, **tool_input):
+        got = self.hook({"hook_event_name": "PreToolUse", "tool_name": name, "tool_input": tool_input})
+        return (got or {}).get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+
+    def marks(self, bundle):
+        return re.findall(r"\[kb-entry · часть \d+/\d+ · метка ([0-9a-f]{4})\]",
+                          Path(bundle).read_text(encoding="utf-8"))
+
+    def confirm(self, token, *extra):
+        return subprocess.run([sys.executable, str(HERE / "kb_start.py"), "confirm", str(self.root),
+                               "--token", token, *extra], capture_output=True, text=True,
+                              timeout=60, env=self.env())
+
+    def bundle_of(self, context):
+        return re.search(r"(/\S+ENTRY-\S+\.md)", context).group(1)
+
+    def test_outside_a_kb_project_the_hook_is_silent(self):
+        plain = self.base / "plain"
+        plain.mkdir()
+        (plain / "CLAUDE.md").write_text("# Not a KB project\n", encoding="utf-8")
+        self.assertIsNone(self.start(cwd=plain))
+        got = self.hook({"hook_event_name": "PreToolUse", "tool_name": "Edit", "tool_input": {}},
+                        cwd=plain)
+        self.assertIsNone(got)
+        self.project()
+        profile = self.root / "_bot" / "profile"
+        profile.mkdir(parents=True)
+        (profile / "CLAUDE.md").write_text("# Bot profile\n", encoding="utf-8")
+        self.assertIsNone(self.start(cwd=profile), "the nearest non-KB rules file is a boundary")
+        deep = self.root / "kb" / "sub"
+        deep.mkdir(parents=True)
+        self.assertIsNotNone(self.start(cwd=deep, session_id="deep"))
+
+    def test_start_puts_a_short_entry_in_context_and_locks_writes(self):
+        self.project(big_now=True, seed_due=False)
+        got = self.start()
+        context = got["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("ПОРА (kb_due, раз в день):", context)
+        self.assertLessEqual(len(context), 10_000, "Claude Code keeps only 10 000 characters")
+        self.assertIn("ENTRY_RECEIPT: kb-architect", context)
+        self.assertIn("роль dev", context)
+        self.assertIn("- ops: shop operations", context)
+        self.assertNotIn("ПОСЛЕДНЯЯ СТРОКА NOW", context, "a big entry is a file, not context")
+        self.assertIn("ПОСЛЕДНЯЯ СТРОКА NOW", Path(self.bundle_of(context)).read_text())
+        self.assertIn("правки закрыты", got["systemMessage"])
+        self.assertEqual(self.tool("Edit", file_path=str(self.root / "NOW.md")), "deny")
+        self.assertEqual(self.tool("Write", file_path="x"), "deny")
+        self.assertEqual(self.tool("mcp__odoo__create_record"), "deny")
+        self.assertEqual(self.tool("mcp__odoo__search_records"), "allow")
+        self.assertEqual(self.tool("Read", file_path="x"), "allow")
+        for cmd in ("cat NOW.md | head -5", "git status --short", "ls -la && wc -c NOW.md",
+                    "sed -n 1,20p NOW.md 2>/dev/null", "grep -rn x kb/ 2>&1 | head",
+                    "pdftotext -layout in.pdf - | head -50"):
+            self.assertEqual(self.tool("Bash", command=cmd), "allow", cmd)
+        for cmd in ("rm -rf kb", "echo x > NOW.md", "git commit -qm x", "sed -i '' s/a/b/ NOW.md",
+                    "find . -delete", "cat $(ls)", "python3 - <<'EOF'\nprint(1)\nEOF",
+                    "ssh prime 'ls'", "git push origin main", "pdftotext in.pdf"):
+            self.assertEqual(self.tool("Bash", command=cmd), "deny", cmd)
+        reason = self.hook({"hook_event_name": "PreToolUse", "tool_name": "Edit", "tool_input": {}})
+        reason = reason["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("kb_start.py confirm", reason)
+        self.assertIn("kb_entry.py", reason)
+
+    def test_only_every_part_mark_in_order_opens_the_lock(self):
+        self.project(big_now=True)
+        bundle = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        marks = self.marks(bundle)
+        self.assertGreaterEqual(len(marks), 3)
+        self.assertNotIn(marks[0], json.dumps(json.loads(Path(bundle + ".json").read_text())),
+                         "the sidecar keeps hashes, not marks")
+        wrong = self.confirm("-".join(marks[:-1] + ["0000"]), "--session", "s1")
+        self.assertEqual(wrong.returncode, 1)
+        self.assertIn(f"не совпали части: {len(marks)}", wrong.stdout)
+        self.assertEqual(self.tool("Edit"), "deny")
+        ok = self.confirm("-".join(marks), "--session", "s1")
+        self.assertEqual(ok.returncode, 0, ok.stdout)
+        self.assertIn("ENTRY_CONFIRMED: роль dev", ok.stdout)
+        self.assertEqual(self.tool("Edit"), "allow")
+        self.assertIsNone(self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"}))
+
+    def test_the_read_file_names_the_session_when_the_command_cannot(self):
+        self.project(big_now=True)
+        bundle = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        ok = self.confirm("-".join(self.marks(bundle)))
+        self.assertEqual(ok.returncode, 0, ok.stdout)
+        self.assertIn("сессия s1", ok.stdout)
+        self.assertEqual(self.tool("Bash", command="git commit -qm x"), "allow")
+
+    def test_another_role_is_entered_with_its_own_file(self):
+        self.project(big_now=True)
+        self.start()
+        out = self.run_tool("kb_entry.py", "--role", "ops")
+        bundle = re.search(r"ENTRY_BUNDLE=(\S+)", out.stdout).group(1)
+        ok = self.confirm("-".join(self.marks(bundle)), "--session", "s1")
+        self.assertIn("ENTRY_CONFIRMED: роль ops", ok.stdout)
+        self.assertEqual(self.tool("Edit"), "allow")
+
+    def test_compaction_locks_again_with_the_confirmed_role(self):
+        self.project(big_now=True)
+        self.start()
+        out = self.run_tool("kb_entry.py", "--role", "ops")
+        bundle = re.search(r"ENTRY_BUNDLE=(\S+)", out.stdout).group(1)
+        self.confirm("-".join(self.marks(bundle)), "--session", "s1")
+        got = self.start(source="compact")
+        context = got["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("контекст сжат", context)
+        self.assertIn("роль ops", context)
+        self.assertEqual(self.tool("Edit"), "deny")
+        resumed = self.start(source="resume")
+        self.assertIn("возобновление без подтверждённого входа",
+                      resumed["hookSpecificOutput"]["additionalContext"])
+
+    def test_a_session_older_than_the_hook_gets_its_entry_at_the_first_write(self):
+        self.project(big_now=True)
+        self.assertEqual(self.tool("Edit"), "deny")
+        reminder = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "fix it"})
+        self.assertIn("KB-вход не подтверждён", reminder["hookSpecificOutput"]["additionalContext"])
+
+    def test_two_hooks_one_entry(self):
+        self.project()
+        self.assertIsNotNone(self.start())
+        self.assertIsNone(self.start(), "user-level and project-level hooks inject once")
+
+    def test_small_entry_is_inlined(self):
+        self.project()
+        context = self.start()["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Never overwrite a card code.", context)
+        self.assertIn("метка", context)
+        self.assertNotIn("======== CLAUDE.md", context, "Claude loads CLAUDE.md itself")
+
+    def test_codex_gets_the_whole_file_with_the_rules_it_does_not_load(self):
+        self.project(big_now=True)
+        codex = self.hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "c1"},
+                          agent="codex")["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("ПОСЛЕДНЯЯ СТРОКА NOW", codex)
+        self.assertIn("======== CLAUDE.md", codex, "Codex loads AGENTS.md, which is absent here")
+
+    def test_own_failure_opens_the_lock_visibly_instead_of_blocking_the_machine(self):
+        self.project(big_now=True)
+        broken = self.base / "state-is-a-file"
+        broken.write_text("x", encoding="utf-8")
+        got = self.start(KB_ENTRY_STATE=str(broken))
+        self.assertIn("hook упал", got["systemMessage"])
+        out = subprocess.run([sys.executable, str(HERE / "kb_start.py"), "hook"],
+                             input=json.dumps({"hook_event_name": "PreToolUse", "session_id": "s1",
+                                               "cwd": str(self.root), "tool_name": "Edit"}),
+                             capture_output=True, text=True, timeout=60,
+                             env=self.env(KB_ENTRY_STATE=str(broken)))
+        self.assertNotIn('"deny"', out.stdout)
+
+    def test_archived_inbox_is_not_addressed_again(self):
+        """tg-archive 01.10: after moving processed packets to _inbox/archive/, kb_debts went
+        quiet but kb_check kept 44 lines of «own outgoing» and «unmatched addressee»."""
+        self.init_git()
+        self.save("CLAUDE.md", "project_aliases: shop\n")
+        self.save("NOW.md", "Обновлено: 2026-09-29\n")
+        sent = ("---\ntype: agent-message\nmessage_id: out-000001\ncreated_at: 2026-09-20T00:00:00Z\n"
+                "from_project: shop\nto_project: other\ndelivery_state: delivered\n---\nreply\n")
+        self.save("_inbox/archive/2026-09/out.md", sent)
+        self.commit_at("2026-09-20", ".")
+        self.assertNotIn("ИСХОДЯЩЕЕ В СОБСТВЕННОМ ИНБОКСЕ", self.run_tool("kb_check.py").stdout)
+        self.save("_inbox/out.md", sent)
+        self.assertIn("ИСХОДЯЩЕЕ В СОБСТВЕННОМ ИНБОКСЕ", self.run_tool("kb_check.py").stdout)
+
+    def test_unknown_role_is_never_named_in_the_receipt(self):
+        self.project()
+        out = self.run_tool("kb_entry.py", "--role", "odoo-engineer")
+        receipt = next(l for l in out.stdout.splitlines() if l.startswith("ENTRY_RECEIPT"))
+        self.assertIn("роль не выбрана", receipt)
+        self.assertNotIn("odoo-engineer", receipt)
+        self.assertEqual(out.returncode, 1)
+
+    def test_install_merges_once_keeps_foreign_hooks_and_removes_cleanly(self):
+        home = self.base / "home"
+        settings = home / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        foreign = {"matcher": "Bash", "hooks": [{"type": "command", "command": "audit.sh"}]}
+        settings.write_text(json.dumps({"theme": "dark", "hooks": {"PreToolUse": [foreign]}}))
+
+        def run(*args):
+            return subprocess.run([sys.executable, str(HERE / "kb_start.py"), "install", *args],
+                                  capture_output=True, text=True, timeout=30, env=self.env(HOME=str(home)))
+        self.assertEqual(run("--check").returncode, 1)
+        self.assertIn("INSTALLED claude", run().stdout)
+        first = settings.read_text()
+        run()
+        self.assertEqual(settings.read_text(), first, "idempotent")
+        data = json.loads(first)
+        self.assertEqual(data["theme"], "dark")
+        self.assertIn(foreign, data["hooks"]["PreToolUse"])
+        self.assertEqual(sum("kb_start.py" in json.dumps(g) for g in data["hooks"]["PreToolUse"]), 1)
+        self.assertEqual(data["hooks"]["SessionStart"][0]["matcher"], "startup|resume|clear|compact")
+        self.assertEqual(run("--check").returncode, 0)
+        run("--remove")
+        data = json.loads(settings.read_text())
+        self.assertEqual(data["hooks"], {"PreToolUse": [foreign]})
+        codex = run("--agent", "codex")
+        self.assertIn("Review hooks", codex.stdout)
+        hooks = json.loads((home / ".codex" / "hooks.json").read_text())["hooks"]
+        self.assertEqual(hooks["SessionStart"][0]["hooks"][0]["additionalContextLimit"], 0)
+        self.assertIn("apply_patch", hooks["PreToolUse"][0]["matcher"])
+        self.assertIn("--agent codex", hooks["SessionStart"][0]["hooks"][0]["command"])
+
+
+class ExecutableEntryReview0210Tests(unittest.TestCase):
+    """Fresh-context review of the 7.4.0 candidate, 02.10.2026: locks that could not be opened,
+    marks that outlived compaction, an unenforced role, read-only commands that write."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+    start = ExecutableEntry0110Tests.start
+    tool = ExecutableEntry0110Tests.tool
+    marks = ExecutableEntry0110Tests.marks
+    confirm = ExecutableEntry0110Tests.confirm
+    bundle_of = ExecutableEntry0110Tests.bundle_of
+
+    def shell(self, cmd, cwd=None):
+        got = self.hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                         "tool_input": {"command": cmd}}, cwd=cwd)
+        return got
+
+    def decision(self, got):
+        return (got or {}).get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+
+    def test_inline_current_still_gives_a_part_with_a_mark(self):
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n\n## СЕЙЧАС\nWork in progress.\n")
+        context = self.start()["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("current (NOW.md) не найден", context)
+        bundle = self.bundle_of(context)
+        marks = self.marks(bundle)
+        self.assertGreaterEqual(len(marks), 1, "every entry has at least the roles part")
+        self.assertEqual(self.confirm("-".join(marks), "--session", "s1").returncode, 0)
+        self.assertEqual(self.tool("Edit"), "allow")
+
+    def test_the_hook_confirms_the_command_itself_without_session_env_or_cache_writes(self):
+        self.project(big_now=True)
+        bundle = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        marks = self.marks(bundle)
+        bad = self.shell(f"python3 {HERE}/kb_start.py confirm {self.root} --token {'-'.join(['0000'] * len(marks))}")
+        self.assertEqual(self.decision(bad), "deny")
+        self.assertIn("не совпали части", bad["hookSpecificOutput"]["permissionDecisionReason"])
+        ok = self.shell(f"python3 {HERE}/kb_start.py confirm {self.root} --token {'-'.join(marks)}")
+        self.assertEqual(self.decision(ok), "allow")
+        self.assertEqual(self.tool("Edit"), "allow", "the hook recorded the confirmation itself")
+
+    def test_marks_from_before_compaction_do_not_reopen_the_lock(self):
+        self.project(big_now=True)
+        old = self.marks(self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"]))
+        self.assertEqual(self.decision(self.shell(
+            f"python3 {HERE}/kb_start.py confirm {self.root} --token {'-'.join(old)}")), "allow")
+        self.start(source="compact")
+        self.assertEqual(self.tool("Edit"), "deny")
+        replay = self.shell(f"python3 {HERE}/kb_start.py confirm {self.root} --token {'-'.join(old)}")
+        self.assertEqual(self.decision(replay), "deny")
+        self.assertEqual(self.confirm("-".join(old), "--session", "s1").returncode, 1)
+
+    def test_second_compaction_after_the_dedup_window_locks_again(self):
+        self.project(big_now=True)
+        self.start()
+        self.start(source="compact")
+        context = self.start(source="compact")
+        self.assertIsNone(context, "the same event twice within seconds is one entry")
+        time.sleep(5.5)
+        again = self.start(source="compact")
+        self.assertIsNotNone(again)
+
+    def test_a_role_is_required_when_the_project_has_roles_and_no_default(self):
+        self.project(big_now=True)
+        roles = json.loads((self.root / "PROJECT_ROLES.json").read_text())
+        roles.pop("entry_role")
+        self.save("PROJECT_ROLES.json", roles)
+        context = self.start()["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Роль по умолчанию не объявлена", context)
+        marks = "-".join(self.marks(self.bundle_of(context)))
+        refused = self.shell(f"python3 {HERE}/kb_start.py confirm {self.root} --token {marks}")
+        self.assertIn("у проекта есть роли", refused["hookSpecificOutput"]["permissionDecisionReason"])
+        out = self.run_tool("kb_entry.py", "--role", "ops", "--agent", "claude")
+        role_bundle = re.search(r"ENTRY_BUNDLE=(\S+)", out.stdout).group(1)
+        self.assertNotIn("======== CLAUDE.md", Path(role_bundle).read_text(), "--agent skips loaded rules")
+        ok = self.confirm("-".join(self.marks(role_bundle)), "--session", "s1")
+        self.assertIn("ENTRY_CONFIRMED: роль ops", ok.stdout)
+
+    def test_no_role_is_an_explicit_reasoned_choice(self):
+        self.project(big_now=True)
+        roles = json.loads((self.root / "PROJECT_ROLES.json").read_text())
+        roles.pop("entry_role")
+        self.save("PROJECT_ROLES.json", roles)
+        marks = "-".join(self.marks(self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])))
+        ok = self.shell(f"python3 {HERE}/kb_start.py confirm {self.root} --token {marks} "
+                        "--no-role 'question about the calendar only'")
+        self.assertEqual(self.decision(ok), "allow")
+        self.assertEqual(self.tool("Edit"), "allow")
+
+    def test_role_file_outside_git_is_confirmed_by_its_path(self):
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
+        self.save("NOW.md", "Обновлено: 2026-09-29\n" + "state\n" * 3000)
+        self.save("skills/dev/SKILL.md", "# Dev\n")
+        self.save("PROJECT_ROLES.json", {"roles": [{"id": "dev", "skill": "dev", "load_when": ["x"]},
+                                                   {"id": "ops", "skill": "dev", "load_when": ["y"]}],
+                                         "skills": [{"name": "dev", "canonical": "skills/dev"}]})
+        self.start()
+        out = self.run_tool("kb_entry.py", "--role", "ops")
+        bundle = re.search(r"ENTRY_BUNDLE=(\S+)", out.stdout).group(1)
+        self.assertNotIn(str(self.root), bundle, "no git dir: the file lives in a temp folder")
+        marks = "-".join(self.marks(bundle))
+        self.assertIn("--bundle", self.confirm(marks, "--session", "s1").stdout)
+        ok = self.confirm(marks, "--session", "s1", "--bundle", bundle)
+        self.assertIn("ENTRY_CONFIRMED: роль ops", ok.stdout)
+
+    def test_paths_with_spaces_survive_copying_the_printed_command(self):
+        self.root = self.base / "Foxio LTD "
+        self.root.mkdir()
+        self.project(big_now=True)
+        context = self.start()["hookSpecificOutput"]["additionalContext"]
+        bundle = re.search(r"целиком: (.+ENTRY-\S+\.md)", context).group(1)
+        line = next(l.strip() for l in context.splitlines() if "kb_start.py" in l and " confirm " in l)
+        cmd = line.replace("<метки>", "-".join(self.marks(bundle)))
+        out = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True, timeout=60,
+                             env=self.env(CLAUDE_CODE_SESSION_ID="s1"))
+        self.assertIn("ENTRY_CONFIRMED", out.stdout, out.stdout + out.stderr)
+
+    def test_no_session_id_never_locks(self):
+        self.project(big_now=True)
+        got = subprocess.run([sys.executable, str(HERE / "kb_start.py"), "hook"],
+                             input=json.dumps({"hook_event_name": "PreToolUse", "cwd": str(self.root),
+                                               "tool_name": "Edit", "tool_input": {}}),
+                             capture_output=True, text=True, timeout=60, env=self.env())
+        self.assertEqual(got.stdout.strip(), "")
+        self.assertFalse((self.root / ".git" / "kb-entry").exists())
+
+    def test_the_lock_follows_the_edited_file_not_only_cwd(self):
+        self.project(big_now=True)
+        outside = self.base / "elsewhere"
+        outside.mkdir()
+        got = self.hook({"hook_event_name": "PreToolUse", "tool_name": "Edit",
+                         "tool_input": {"file_path": str(self.root / "NOW.md")}}, cwd=outside)
+        self.assertEqual(self.decision(got), "deny")
+        patch_in = {"command": f"*** Begin Patch\n*** Update File: {self.root}/NOW.md\n@@\n-a\n+b\n*** End Patch"}
+        got = self.hook({"hook_event_name": "PreToolUse", "tool_name": "apply_patch",
+                         "tool_input": patch_in, "session_id": "c9"}, agent="codex", cwd=outside)
+        self.assertEqual(self.decision(got), "deny")
+
+    def test_read_only_shell_check_closes_the_writes_the_review_found(self):
+        self.project(big_now=True)
+        self.start()
+        for cmd in ("git branch new-x", "git log -1 --output=NOW.md", "git diff --output=f",
+                    "sort -o NOW.md NOW.md", "uniq a NOW.md", "sed -n --in-place 's/a/b/p' f",
+                    "sed -n '1w out' f", "cat f & rm -rf kb", "find . -fprint0 out", "tree -o out",
+                    "rg --pre ./x y", f"python3 {HERE}/kb_start.py install",
+                    f"python3 {HERE}/kb_entry.py . --out x", "awk '{print > \"f\"}' x",
+                    "xargs rm < list", "env FOO=1 rm x", "echo hi >> NOW.md"):
+            self.assertEqual(self.decision(self.shell(cmd)), "deny", cmd)
+        self.assertEqual(self.tool("mcp__gmail__get_or_create_label"), "deny")
+        for cmd in ("git -C /tmp status", "git -c core.pager=cat log -1", "git tag", "git stash list",
+                    "git rev-list HEAD -3", "grep -n '->' NOW.md", "rg '=>' NOW.md",
+                    f"python3 -u {HERE}/kb_due.py .", f"python3.11 {HERE}/kb_check.py .", "ps aux",
+                    "cat NOW.md 2>&1 | head -5", "git config --get user.name", "ls > /dev/null"):
+            self.assertEqual(self.decision(self.shell(cmd)), "allow", cmd)
+
+    def test_template_placeholder_is_not_a_kb_project(self):
+        self.save("CLAUDE.md", "# Template\nkb_standard_version: <минимальная версия, сейчас 7.2.0>\n")
+        self.assertIsNone(self.start())
+
+    def test_non_utf8_locale_still_emits_valid_json(self):
+        self.project(big_now=True)
+        out = subprocess.run([sys.executable, str(HERE / "kb_start.py"), "hook"],
+                             input=json.dumps({"hook_event_name": "SessionStart", "session_id": "s1",
+                                               "cwd": str(self.root), "source": "startup"}),
+                             capture_output=True, text=True, timeout=90,
+                             env=self.env(PYTHONIOENCODING="latin-1", LC_ALL="C"))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("KB-", json.loads(out.stdout)["hookSpecificOutput"]["additionalContext"])
+
+    def test_install_keeps_symlinks_modes_history_and_odd_files(self):
+        home = self.base / "home"
+        real = self.base / "dotfiles" / "settings.json"
+        real.parent.mkdir(parents=True)
+        real.write_text(json.dumps({"hooks": None, "theme": "dark"}))
+        real.chmod(0o600)
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "settings.json").symlink_to(real)
+
+        def run(*args):
+            return subprocess.run([sys.executable, str(HERE / "kb_start.py"), "install", *args],
+                                  capture_output=True, text=True, timeout=30, env=self.env(HOME=str(home)))
+        self.assertIn("INSTALLED claude", run().stdout)
+        self.assertTrue((home / ".claude" / "settings.json").is_symlink())
+        self.assertEqual(real.stat().st_mode & 0o777, 0o600)
+        self.assertIn("UNCHANGED", run().stdout)
+        self.assertEqual(len(list(real.parent.glob("settings.json.kb-start-backup-*"))), 1)
+        self.assertIn("NOTHING_TO_REMOVE", run("--agent", "codex", "--remove").stdout)
+        self.assertFalse((home / ".codex" / "hooks.json").exists())
+        real.write_text(json.dumps({"hooks": {"PreToolUse": {"matcher": "x"}}}))
+        self.assertEqual(run().returncode, 2)
+
+    def test_codex_skips_rules_it_loads_through_a_symlink(self):
+        self.project(big_now=True)
+        (self.root / "AGENTS.md").symlink_to("CLAUDE.md")
+        codex = self.hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "c1"},
+                          agent="codex")["hookSpecificOutput"]["additionalContext"]
+        self.assertNotIn("======== CLAUDE.md", codex)
+
+    def test_text_entry_does_not_relock_a_confirmed_session(self):
+        self.project(big_now=True)
+        marks = "-".join(self.marks(self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])))
+        self.confirm(marks, "--session", "s1")
+        subprocess.run([sys.executable, str(HERE / "kb_start.py"), "text", str(self.root)],
+                       capture_output=True, text=True, timeout=90, env=self.env(CLAUDE_CODE_SESSION_ID="s1"))
+        self.assertEqual(self.tool("Edit"), "allow")
+
+    def test_switch_off_per_session(self):
+        self.project(big_now=True)
+        self.assertIsNone(self.hook({"hook_event_name": "SessionStart", "source": "startup"},
+                                    KB_ENTRY_HOOK="off"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

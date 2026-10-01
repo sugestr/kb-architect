@@ -791,6 +791,22 @@ def main():
                        f"скриптов делай по установленной")
         # Diagnostics never fetch or pull the tree whose code is executing.
         # Stable updates have one owner, kb_update.py, at a safe service boundary.
+        # 7.4.0: вход исполняет hook сессии; без него вход снова держится на памяти
+        # сессии — 01.10.2026 так прошли шесть часов работы без роли.
+        try:
+            import kb_start
+            entry_lines = kb_start.install_status()
+        except Exception as exc:
+            entry_lines = [f"исполняемый вход: НЕ ПРОВЕРЕН ({type(exc).__name__})"]
+        start_cmd = os.path.join(os.path.dirname(os.path.realpath(__file__)), "kb_start.py")
+        for line in entry_lines:
+            if ": INSTALLED" in line:
+                ok.append(line)
+            else:
+                agent = "codex" if " codex " in line else "claude"
+                due.append(f"{line.split(' · ')[0]} — новые сессии на этой машине входят по памяти. "
+                           f"Установка — решение владельца для машины: "
+                           f"`python3 {start_cmd} install --agent {agent}`")
         ok.append("public freshness здесь НЕ ПРОВЕРЕНА; kb_due read-only. "
                   "Принятый сервисный контур использует kb_update.py --public "
                   "на безопасной границе, без hot reload и поднятия project marker.")

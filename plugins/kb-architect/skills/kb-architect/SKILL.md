@@ -3,7 +3,7 @@ name: kb-architect
 description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "7.3.3"
+  version: "7.4.0"
   minimum_project_version: "7.2.0"
   author: "sugestr"
 ---
@@ -21,7 +21,7 @@ metadata:
 |---|---|
 | Объяснить возможности, найти команду | этот файл |
 | Обычная работа в принятом проекте | правила проекта + current |
-| Новый запуск, передача сессии | этот файл; вход — `scripts/kb_entry.py <root> --role <id>` |
+| Новый чат, передача сессии | hook `scripts/kb_start.py`; вручную — `kb_entry.py <root> --role <id>` |
 | Создать базу | `references/contract.md` + `references/start-new.md` |
 | Присоединить/перестроить существующую | `references/contract.md` + `references/adopt-existing.md` |
 | Перенести checkout для Claude/Codex | `references/move-project.md` |
@@ -65,7 +65,8 @@ metadata:
 ## Рабочий цикл
 
 Current → роль/адрес → полезный проверенный результат → долговременная дельта.
-Новый turn — не новый вход; неизменное прочитанное переиспользуется.
+Новый turn — не новый вход; неизменное прочитанное переиспользуется. Новый чат, `/clear`,
+сжатие — новый вход, его исполняет hook.
 
 Локальный источник — сразу, обязательные проверки — параллельно, reference — только
 относящийся. Для ответа без новой

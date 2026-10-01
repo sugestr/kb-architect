@@ -22,6 +22,13 @@ kb_entry.py — полный вход в проект одной командо�
 
 Скрипт ничего не пишет в проект: файл входа ложится в git-каталог (не
 отслеживается) либо во временный каталог.
+
+С 7.4.0 каждая часть файла заканчивается меткой «часть i/n · метка xxxx». Метки
+случайны и видны только в файле: `kb_start.py confirm <корень> --token <метки>`
+принимает их как доказательство, что файл прочитан до конца, и снимает замок
+правок, который ставит hook входа. Рядом с файлом лежит `<файл>.json` с хэшами
+меток (не с самими метками). Несуществующая роль не попадает в квитанцию:
+01.10.2026 `--role odoo-engineer` давал «роль odoo-engineer» без роли в файле.
 """
 
 import argparse
@@ -30,9 +37,12 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -74,7 +84,11 @@ def route_units(route):
     return out
 
 
-def role_files(root, registry, index, wanted, chosen_routes):
+def part_hash(fragment):
+    return hashlib.sha256(f"kb-entry-part:{fragment}".encode()).hexdigest()
+
+
+def role_files(root, registry, index, wanted, chosen_routes, found=None):
     """[(rel, why)] для выбранных ролей, их прочие маршруты и ненайденное."""
     out, missing, optional = [], [], []
     roles = registry.get("roles", []) if isinstance(registry, dict) else []
@@ -87,6 +101,8 @@ def role_files(root, registry, index, wanted, chosen_routes):
         if not role:
             missing.append(f"роль «{want}» не найдена в PROJECT_ROLES.json")
             continue
+        if found is not None:
+            found.append(role["id"])
         skill = skills.get(role.get("skill"))
         canonical = skill.get("canonical") if skill else None
         if canonical and os.path.isfile(os.path.join(root, canonical, "SKILL.md")):
@@ -107,27 +123,40 @@ def role_files(root, registry, index, wanted, chosen_routes):
     return out, missing, optional
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("root")
-    parser.add_argument("--role", action="append", default=[])
-    parser.add_argument("--route", action="append", default=[],
-                        help="маршрут индекса, нужный задаче: читается целиком")
-    parser.add_argument("--out")
-    args = parser.parse_args()
-    root = os.path.abspath(args.root)
-    if not os.path.isdir(root):
-        print(f"нет такой папки: {root}")
-        return 2
+def declared_roles(root):
+    """(роли реестра, роль входа по умолчанию) из PROJECT_ROLES.json.
 
+    Роль по умолчанию — поле `entry_role` (строка или список); единственная роль
+    проекта — она же. Иначе роли нет: выбор по задаче остаётся сессии."""
+    registry = load_json(os.path.join(root, "PROJECT_ROLES.json")) or {}
+    roles = [r for r in registry.get("roles", []) if isinstance(r, dict) and r.get("id")]
+    default = registry.get("entry_role")
+    if isinstance(default, str):
+        default = [default]
+    if not isinstance(default, list):
+        default = [roles[0]["id"]] if len(roles) == 1 else []
+    return roles, [d for d in default if isinstance(d, str) and d]
+
+
+def build(root, roles_wanted=(), routes_wanted=(), skip=()):
+    """Состав входа без записи: файлы, ненайденное, маршруты роли по поводу.
+
+    `skip` — имена файлов правил, которые агент уже загружает сам (CLAUDE.md
+    у Claude, AGENTS.md у Codex): hook входа не кладёт их второй раз. Сравнение
+    по realpath: `AGENTS.md -> CLAUDE.md` — один файл, Codex его уже прочитал.
+    Последняя часть файла — роли проекта и маршруты по поводу: так у любого
+    входа есть хотя бы одна метка, а выбор роли лежит рядом с её подтверждением."""
     plan, missing = [], []
+    skipped = {os.path.realpath(os.path.join(root, n)) for n in skip
+               if os.path.exists(os.path.join(root, n))}
     for path in kb_paths.rules_files(root):
+        if os.path.realpath(path) in skipped:
+            continue
         plan.append((os.path.relpath(path, root), "правила проекта", None))
     entry = kb_paths.locate(root, "entry")
     if entry.path:
         plan.append((os.path.relpath(entry.path, root), "current", None))
-    else:
+    elif entry.section is None:
         missing.append("current (NOW.md) не найден")
     raw, _ = kb_paths.declared_value(root, MANDATORY_KEYS)
     for item in re.split(r"[,;]", raw or ""):
@@ -139,19 +168,20 @@ def main():
     index = load_json(os.path.join(root, kb_index.DEFAULT_INDEX))
     roles = [r for r in (registry or {}).get("roles", []) if isinstance(r, dict)]
     for route in (index or {}).get("routes", []):
-        if isinstance(route, dict) and (route.get("id") in args.route or (
+        if isinstance(route, dict) and (route.get("id") in routes_wanted or (
                 route.get("id") != (index or {}).get("current")
                 and ALWAYS.search("; ".join(route.get("load_when", []))))):
             for rel, section in route_units(route):
                 plan.append((rel, f"маршрут {route['id']}"
-                                  + ("" if route.get("id") in args.route else " (всегда)"), section))
-    optional = []
-    if args.role:
-        extra, lost, optional = role_files(root, registry or {}, index, args.role, set(args.route))
+                                  + ("" if route.get("id") in routes_wanted else " (всегда)"), section))
+    optional, found_roles = [], []
+    if roles_wanted:
+        extra, lost, optional = role_files(root, registry or {}, index, list(roles_wanted),
+                                           set(routes_wanted), found_roles)
         plan.extend(extra)
         missing.extend(lost)
     known_routes = {r.get("id") for r in (index or {}).get("routes", []) if isinstance(r, dict)}
-    missing.extend(f"маршрута «{r}» нет в индексе" for r in args.route if r not in known_routes)
+    missing.extend(f"маршрута «{r}» нет в индексе" for r in routes_wanted if r not in known_routes)
 
     seen, files, total = set(), [], 0
     for rel, why, section in plan:
@@ -185,45 +215,135 @@ def main():
         files.append((rel, why, data))
         total += len(data)
 
-    out = args.out
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    base = git_dir(root)
-    if out:
-        real_out = os.path.realpath(out)
-        inside_tree = real_out.startswith(os.path.realpath(root) + os.sep)
-        if inside_tree and not (base and real_out.startswith(os.path.realpath(base) + os.sep)):
-            print(f"BLOCKED: --out внутри рабочего дерева проекта ({out}); вход в проект не пишется")
-            return 2
-    else:
-        # Свой файл на каждый вызов: сессии в одном checkout не затирают вход
-        # друг друга. Git-каталог не отслеживается; недоступен — временный каталог.
-        folder = None
-        if base:
-            try:
-                folder = os.path.join(base, "kb-entry")
-                os.makedirs(folder, exist_ok=True)
-                probe = os.path.join(folder, f".probe-{os.getpid()}")
-                open(probe, "w").close()
-                os.remove(probe)
-            except OSError:
-                folder = None
-        if not folder:
-            folder = tempfile.mkdtemp(prefix="kb-entry-")
-        out = os.path.join(folder, f"ENTRY-{stamp}-{os.getpid()}.md")
-    digest = hashlib.sha256(b"".join(d for _, _, d in files)).hexdigest()
-    with open(out, "w", encoding="utf-8") as f:
-        f.write(f"# Вход в проект {os.path.basename(root)} — "
-                f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
-        f.write("Прочитай этот файл целиком. Каждый раздел — полный файл проекта.\n")
-        for rel, why, data in files:
-            f.write(f"\n\n======== {rel} · {why} · {len(data)} B ========\n\n")
-            f.write(data.decode("utf-8", errors="replace"))
+    roles_text = ["Роли проекта (id: поводы). Роль выбирается по задаче владельца; другая —",
+                  "`kb_entry.py <корень> --role <id>` и подтверждение метками её файла.", ""]
+    for r in roles:
+        roles_text.append(f"- {r.get('id')}: {'; '.join(r.get('load_when', []))}")
+    if not roles:
+        roles_text.append("- ролей в PROJECT_ROLES.json нет")
+    if found_roles:
+        roles_text += ["", f"В этом файле метод роли: {', '.join(found_roles)}."]
+    if optional:
+        roles_text += ["", "Маршруты роли по поводу (адреса, не чтение на входе):"]
+        roles_text += [f"- {rid}: {when}" for rid, when in optional]
+    data = ("\n".join(roles_text) + "\n").encode("utf-8")
+    files.append(("роли проекта", "выбор роли", data))
+    total += len(data)
 
     now_stamp = None
-    if entry.path:
+    if entry.found:
         import kb_due
         stamp = kb_due.freshness_of(entry.text())
         now_stamp = re.split(r"[.;]| -->", stamp)[0].strip()[:32] if stamp else None
+    return {"files": files, "missing": missing, "optional": optional, "roles": roles,
+            "found_roles": found_roles, "total": total, "now_stamp": now_stamp}
+
+
+def default_out(root):
+    """Свой файл на каждый вызов: сессии в одном checkout не затирают вход
+    друг друга. Git-каталог не отслеживается; недоступен — временный каталог."""
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    base = git_dir(root)
+    folder = None
+    if base:
+        try:
+            folder = os.path.join(base, "kb-entry")
+            os.makedirs(folder, exist_ok=True)
+            probe = os.path.join(folder, f".probe-{os.getpid()}")
+            open(probe, "w").close()
+            os.remove(probe)
+        except OSError:
+            folder = None
+    if folder:
+        # hook входа собирает файл на каждом старте и сжатии: старше недели — мусор
+        limit = time.time() - 7 * 86400
+        for name in os.listdir(folder):
+            if name.startswith("ENTRY-"):
+                try:
+                    if os.path.getmtime(os.path.join(folder, name)) < limit:
+                        os.remove(os.path.join(folder, name))
+                except OSError:
+                    pass
+    if not folder:
+        folder = tempfile.mkdtemp(prefix="kb-entry-")
+    return os.path.join(folder, f"ENTRY-{stamp}-{os.getpid()}-{secrets.token_hex(2)}.md")
+
+
+def out_blocked(root, out):
+    real_out = os.path.realpath(out)
+    base = git_dir(root)
+    inside_tree = real_out.startswith(os.path.realpath(root) + os.sep)
+    return inside_tree and not (base and real_out.startswith(os.path.realpath(base) + os.sep))
+
+
+def receipt_line(result, digest):
+    roles = result["found_roles"]
+    return (f"ENTRY_RECEIPT: kb-architect {kb_paths.skill_version() or '?'} · "
+            f"current {result['now_stamp'] or 'без «Обновлено»'} · роль "
+            f"{', '.join(roles) if roles else 'не выбрана'} · файлы: {len(result['files'])}, "
+            f"{result['total']} B, {digest[:12]}")
+
+
+def write(root, result, out, header_note=""):
+    """Пишет файл входа с метками частей и спутник `<файл>.json`.
+
+    Возвращает (digest, метки по порядку). Метки не печатаются: их видно только
+    в файле, по одной в конце каждой части."""
+    files = result["files"]
+    digest = hashlib.sha256(b"".join(d for _, _, d in files)).hexdigest()
+    fragments = [secrets.token_hex(2) for _ in files]
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(f"# Вход в проект {os.path.basename(root)} — "
+                f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
+        f.write("Прочитай этот файл целиком. Каждый раздел — полный файл проекта; в конце "
+                "каждой части — метка. Метки всех частей по порядку через «-» подтверждают "
+                "вход: kb_start.py confirm.\n")
+        if header_note:
+            f.write(header_note.rstrip() + "\n")
+        for n, (rel, why, data) in enumerate(files, 1):
+            f.write(f"\n\n======== {rel} · {why} · {len(data)} B ========\n\n")
+            f.write(data.decode("utf-8", errors="replace"))
+            f.write(f"\n\n[kb-entry · часть {n}/{len(files)} · метка {fragments[n - 1]}]\n")
+    sidecar = {"schema": 1, "root": os.path.realpath(root), "bundle": os.path.realpath(out),
+               "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+               "roles": result["found_roles"], "parts": len(files),
+               "part_sha256": [part_hash(x) for x in fragments],
+               "receipt": receipt_line(result, digest)}
+    try:
+        with open(out + ".json", "w", encoding="utf-8") as f:
+            json.dump(sidecar, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+    return digest, fragments
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("root")
+    parser.add_argument("--role", action="append", default=[])
+    parser.add_argument("--route", action="append", default=[],
+                        help="маршрут индекса, нужный задаче: читается целиком")
+    parser.add_argument("--out")
+    parser.add_argument("--agent", choices=("claude", "codex"),
+                        help="не класть правила, которые этот агент загружает сам")
+    args = parser.parse_args()
+    root = os.path.abspath(args.root)
+    if not os.path.isdir(root):
+        print(f"нет такой папки: {root}")
+        return 2
+    out = args.out
+    if out and out_blocked(root, out):
+        print(f"BLOCKED: --out внутри рабочего дерева проекта ({out}); вход в проект не пишется")
+        return 2
+    skip = {"claude": ("CLAUDE.md",), "codex": ("AGENTS.md",)}.get(args.agent, ())
+    result = build(root, args.role, args.route, skip=skip)
+    files, missing, optional, roles = (result["files"], result["missing"], result["optional"],
+                                       result["roles"])
+    total = result["total"]
+    if not out:
+        out = default_out(root)
+    digest, _ = write(root, result, out)
     print(f"ENTRY_BUNDLE={out}")
     print(f"  файлов: {len(files)}, байт: {total}")
     for rel, why, data in files:
@@ -238,12 +358,12 @@ def main():
         print("  РОЛЬ НЕ ВЫБРАНА. Роли проекта (выбери по задаче и повтори с --role <id>):")
         for r in roles:
             print(f"    - {r.get('id')}: {'; '.join(r.get('load_when', [])[:2])}")
-    print(f"ENTRY_RECEIPT: kb-architect {kb_paths.skill_version() or '?'} · "
-          f"current {now_stamp or 'без «Обновлено»'} · роль "
-          f"{', '.join(args.role) if args.role else 'не выбрана'} · файлы: {len(files)}, "
-          f"{total} B, {digest[:12]}")
-    print("SESSION_ACTION=READ_ENTRY_BUNDLE_WHOLE — прочитай файл целиком одним чтением "
-          "(без head/limit), затем строку ENTRY_RECEIPT — в первый ответ.")
+    print(receipt_line(result, digest))
+    start = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kb_start.py")
+    print(f"ENTRY_CONFIRM: python3 {shlex.quote(start)} confirm {shlex.quote(root)} "
+          f"--bundle {shlex.quote(out)} --token <метки {len(files)} частей по порядку через «-»>")
+    print("SESSION_ACTION=READ_ENTRY_BUNDLE_WHOLE — прочитай файл целиком (большой — частями до "
+          "конца, без пропусков), подтверди метками, строку ENTRY_RECEIPT — в первый ответ.")
     return 1 if missing else 0
 
 
