@@ -209,6 +209,17 @@ def actual_transition_parent(root, source_commit, source, from_version, to_versi
             return head, None
         return None, "working-tree marker is not based on the declared from_version"
 
+    if expected_from is None:
+        # Новый проект рождается с маркером: состояния «до» нет. Переход — коммит, где
+        # маркер появился впервые (обычно первый коммит репозитория); он и есть
+        # source.commit (02.10.2026: kb_init пишет from_version null, а поиск ждал
+        # перехода после source и не находил его).
+        parent = git(root, "rev-parse", "--verify", "--quiet", f"{source_commit}^1")
+        before = (marker_line_at_commit(root, parent.stdout.strip(), source)
+                  if parent.returncode == 0 else None)
+        if marker_line_at_commit(root, source_commit, source) == expected_to and before is None:
+            return source_commit, None
+
     history = git(root, "rev-list", "--first-parent", "--reverse",
                   f"{source_commit}..HEAD")
     if history.returncode:

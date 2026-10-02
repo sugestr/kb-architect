@@ -2659,5 +2659,88 @@ class ReleaseActions0210Tests(unittest.TestCase):
         self.assertIn("SESSION_ACTION=APPLY_RELEASE_ACTIONS", out.getvalue())
 
 
+class FoxKb0210Tests(unittest.TestCase):
+    """A company knowledge base, 02.10.2026: delivering a letter into another project's inbox
+    required a full entry into that project; a `%20` link to an existing file was «broken»;
+    a project born at 7.2.0 could not finalize its release receipt."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    env = ExecutableEntry0110Tests.env
+
+    def kb_project(self, name):
+        root = self.base / name
+        root.mkdir()
+        (root / "CLAUDE.md").write_text("# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n",
+                                        encoding="utf-8")
+        (root / "NOW.md").write_text("Обновлено: 2026-10-02\n" + "state\n" * 3000, encoding="utf-8")
+        (root / "_inbox").mkdir()
+        return root
+
+    def tool(self, cwd, name, **tool_input):
+        out = subprocess.run([sys.executable, str(HERE / "kb_start.py"), "hook"],
+                             input=json.dumps({"hook_event_name": "PreToolUse", "session_id": "s1",
+                                               "cwd": str(cwd), "tool_name": name,
+                                               "tool_input": tool_input}),
+                             capture_output=True, text=True, timeout=60, env=self.env())
+        got = json.loads(out.stdout) if out.stdout.strip() else {}
+        return got.get("hookSpecificOutput", {}).get("permissionDecision", "allow"), got
+
+    def test_a_new_letter_in_another_inbox_needs_the_senders_entry_only(self):
+        sender, recipient = self.kb_project("fox"), self.kb_project("invest")
+        letter = str(recipient / "_inbox" / "2026-10-02_fox.md")
+        decision, got = self.tool(sender, "Write", file_path=letter)
+        self.assertEqual(decision, "deny")
+        self.assertIn("(fox)", got["hookSpecificOutput"]["permissionDecisionReason"])
+        import kb_start
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            state = kb_start.load_state("s1", str(sender))
+            state["confirmed"] = {"at": "now", "roles": [], "receipt": ""}
+            kb_start.save_state(state)
+        self.assertEqual(self.tool(sender, "Write", file_path=letter)[0], "allow")
+        (recipient / "_inbox" / "old.md").write_text("x", encoding="utf-8")
+        self.assertEqual(self.tool(sender, "Write", file_path=str(recipient / "_inbox" / "old.md"))[0],
+                         "deny", "rewriting the recipient's file is work in its project")
+        self.assertEqual(self.tool(sender, "Edit", file_path=str(recipient / "NOW.md"))[0], "deny")
+        self.assertEqual(self.tool(sender, "Write", file_path=str(recipient / "_inbox" / ".." / "x.md"))[0],
+                         "deny", "a path that leaves the inbox is not a delivery")
+        patch_add = f"*** Begin Patch\n*** Add File: {recipient}/_inbox/codex.md\n+hi\n*** End Patch"
+        self.assertEqual(self.tool(sender, "apply_patch", command=patch_add)[0], "allow")
+        patch_upd = f"*** Begin Patch\n*** Update File: {recipient}/_inbox/old.md\n@@\n-x\n+y\n*** End Patch"
+        self.assertEqual(self.tool(sender, "apply_patch", command=patch_upd)[0], "deny")
+
+    def test_percent_encoded_link_to_an_existing_file_is_not_broken(self):
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-10-02\n")
+        self.save("reports/Доступ агента к GYG.md", "# Report\n")
+        self.save("INDEX.md", "[r](reports/Доступ%20агента%20к%20GYG.md)\n[bad](reports/Нет%20такого.md)\n")
+        out = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root)],
+                             capture_output=True, text=True, timeout=60).stdout
+        self.assertIn("БИТЫЕ ССЫЛКИ — 1", out)
+        self.assertIn("Нет%20такого", out)
+        self.assertNotIn("Доступ%20агента", out)
+
+    def test_project_born_at_its_version_finalizes_its_receipt(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
+        self.save("NOW.md", "Обновлено: 2026-10-02\n")
+        self.git("add", "CLAUDE.md", "NOW.md")
+        self.git("commit", "-qm", "born")
+        first = self.git("rev-parse", "HEAD")
+        self.save("KB_RELEASE_APPLICATION.json", {"schema": 3, "application": {
+            "from_version": None, "to_version": "7.2.0", "status": "finalized",
+            "source": {"commit": first, "version_source": "CLAUDE.md"},
+            "owner": {"accepted_by": "owner", "accepted_at": "2026-10-02"},
+            "finalized_at": "2026-10-02", "open": []}})
+        self.git("add", "KB_RELEASE_APPLICATION.json")
+        self.git("commit", "-qm", "receipt")
+        out = subprocess.run([sys.executable, str(HERE / "kb_apply.py"), str(self.root)],
+                             capture_output=True, text=True, timeout=60)
+        self.assertIn("APPLICATION_RECEIPT_OK", out.stdout, out.stdout)
+        self.assertEqual(out.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

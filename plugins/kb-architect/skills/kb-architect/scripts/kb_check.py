@@ -63,6 +63,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from kb_dates import parse_dates, infer_order
@@ -398,6 +399,15 @@ def main():
             clean = target.split("#")[0].split("?")[0].strip()
             if not clean:
                 continue
+            # Markdown-ссылка на имя с пробелами пишется `%20`; файл на диске —
+            # с пробелом (02.10.2026: имя отчёта deep-research с пробелами).
+            decoded = urllib.parse.unquote(clean)
+            if decoded != clean and not os.path.exists(os.path.normpath(
+                    os.path.join(os.path.dirname(path), clean))) and any(
+                    os.path.exists(os.path.normpath(p)) for p in (
+                        os.path.join(os.path.dirname(path), decoded),
+                        os.path.join(root, decoded.lstrip("/")))):
+                clean = decoded
             # путь может быть задан относительно файла или относительно корня
             # базы — оба написания встречаются в живых репозиториях, и считать
             # второе поломкой значит производить шум вместо находок

@@ -375,6 +375,9 @@ def local_links(root: Path, rel: str) -> list[str]:
         bases.append(bases[-1].parent)
     for a, b in candidates:
         target = (a or b).split("?")[0]
+        if "%" in target:
+            import urllib.parse
+            target = urllib.parse.unquote(target)
         for candidate in [base / target for base in bases] + [root / target.lstrip("/")]:
             try:
                 resolved = candidate.resolve().relative_to(root.resolve()).as_posix()

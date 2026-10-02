@@ -94,7 +94,7 @@ MCP_READ = re.compile(r"^(?:get|list|search|read|find|query|describe|fetch|whoam
 MCP_WRITE = re.compile(r"create|update|delete|remove|set_|send|post|write|modify|archive|move|"
                        r"trash|complete|enroll|register|publish|revoke|pin|edit|forward|copy|"
                        r"import|execute|upload|apply|install|merge|push|approve", re.IGNORECASE)
-PATCH_PATH = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
+PATCH_PATH = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$", re.MULTILINE)
 # (событие, matcher Claude, matcher Codex, timeout, статус). Строка команды и
 # состав записи — ключ доверия Codex: их правка требует нового одобрения владельца.
 HOOK_EVENTS = (
@@ -752,24 +752,45 @@ def mcp_read_only(tool):
     return bool(MCP_READ.match(name)) and not MCP_WRITE.search(name)
 
 
+def inbox_delivery(tool, path, root):
+    """Новый файл в каталоге входящих другого проекта — доставка, а не работа в нём.
+
+    02.10.2026: письмо в инбокс соседнего проекта потребовало полного входа в
+    чужой проект и загрузки его роли. Доставке нужен вход отправителя (cwd), а
+    не адресата; правка существующего файла адресата — уже работа в его проекте."""
+    if tool not in ("Write", "apply_patch:Add") or os.path.exists(path):
+        return False
+    try:
+        import kb_check
+        inbox = kb_check.inbox_dir(root)
+    except Exception:
+        inbox = None
+    inbox = os.path.realpath(inbox) if inbox else None
+    real = os.path.realpath(os.path.dirname(path)) + os.sep
+    return bool(inbox) and real.startswith(inbox + os.sep)
+
+
 def touched_roots(event):
     """KB-проекты, которых касается инструмент: путь правимого файла, иначе cwd."""
     tool, tool_input = event.get("tool_name") or "", event.get("tool_input") or {}
     cwd = event.get("cwd") or os.getcwd()
-    paths = []
+    paths = []                               # (путь, вид записи)
     if tool in FILE_TOOLS and isinstance(tool_input, dict):
         value = tool_input.get(FILE_TOOLS[tool])
         if isinstance(value, str) and value:
-            paths.append(value if os.path.isabs(value) else os.path.join(cwd, value))
+            paths.append((value if os.path.isabs(value) else os.path.join(cwd, value), tool))
     if tool == "apply_patch":
         raw = command_of(tool_input) or (tool_input.get("input", "")
                                          if isinstance(tool_input, dict) else "")
-        for rel in PATCH_PATH.findall(str(raw)):
+        for op, rel in PATCH_PATH.findall(str(raw)):
             rel = rel.strip()
-            paths.append(rel if os.path.isabs(rel) else os.path.join(cwd, rel))
+            paths.append((rel if os.path.isabs(rel) else os.path.join(cwd, rel), f"apply_patch:{op}"))
     roots = []
-    for path in paths:
+    own = find_root(cwd)
+    for path, kind in paths:
         root = find_root(path)
+        if root and root != own and inbox_delivery(kind, path, root):
+            root = own                       # конверт в чужой инбокс: вход отправителя
         if root and root not in roots:
             roots.append(root)
     if not paths:
