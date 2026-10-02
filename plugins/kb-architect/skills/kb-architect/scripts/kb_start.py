@@ -169,7 +169,8 @@ def iso_time(value):
 def prune_old(days=30):
     limit = time.time() - days * 86400
     for folder in (os.path.join(state_root(), "sessions"),
-                   os.path.join(state_root(), "turns", "snap")):
+                   os.path.join(state_root(), "turns", "snap"),
+                   os.path.join(state_root(), "service", "said")):
         try:
             for name in os.listdir(folder):
                 path = os.path.join(folder, name)
@@ -878,16 +879,24 @@ def on_session_start(event, agent):
     label = {"compact": "контекст сжат — вход заново", "clear": "/clear — вход заново",
              "resume": "возобновление без подтверждённого входа"}.get(source, "новая сессия")
     due = None if source == "compact" else due_summary(root)
+    service = ""
+    if source != "compact":
+        try:
+            import kb_service
+            service = kb_service.due_text(root, once_a_day=True)
+        except Exception:
+            service = ""
     project = project_update(root)
     skill = skill or {"status": "SKIPPED", "line": "скилл после сжатия не перепроверялся"}
     state["project_update"] = project["short"]
     save_state(state)
     text = entry_message(state, all_roles, label, due, agent,
-                         update=update_section(root, skill, project))
+                         update=update_section(root, skill, project) +
+                         (["", "## Пора обслужить базу", service] if service else []))
     notice = (f"KB-вход {os.path.basename(root)}: файл входа собран, правки закрыты до "
               f"подтверждения ({state['parts']} частей, роль "
               f"{', '.join(state['roles']) or 'не выбрана'}); {skill['line']}; проект: "
-              f"{project['short']}.")
+              f"{project['short']}" + ("; пора обслужить базу" if service else "") + ".")
     return context_payload("SessionStart", text, notice)
 
 

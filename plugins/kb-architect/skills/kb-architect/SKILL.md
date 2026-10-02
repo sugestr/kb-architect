@@ -3,7 +3,7 @@ name: kb-architect
 description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "7.5.0"
+  version: "7.6.0"
   minimum_project_version: "7.2.0"
   author: "sugestr"
 ---
@@ -21,7 +21,7 @@ metadata:
 |---|---|
 | Объяснить возможности, найти команду | этот файл |
 | Обычная работа в принятом проекте | правила проекта + current |
-| Новый чат, передача сессии | hook `scripts/kb_start.py`; вручную — `kb_entry.py <root> --role <id>` |
+| Новый чат, передача сессии | hook `scripts/kb_start.py`; вручную — `kb_entry.py --role` |
 | Создать базу | `references/contract.md` + `references/start-new.md` |
 | Присоединить/перестроить существующую | `references/contract.md` + `references/adopt-existing.md` |
 | Перенести checkout для Claude/Codex | `references/move-project.md` |
@@ -38,6 +38,7 @@ metadata:
 | Проверить целостность или просрочку | `scripts/kb_check.py`, `kb_due.py`; дороги — `kb_index.py --coverage` |
 | Работа не дошла до базы | `references/capture.md` + `scripts/kb_debts.py` |
 | Отделить факт, интерпретацию и решение | `references/knowledge-roles.md` |
+| Обслужить базу | `scripts/kb_service.py plan` |
 | Собрать мусор | `references/garbage-collection.md` |
 | Понять authority и границы публикации | `references/authority.md` |
 | Измерить пользу/стоимость слоёв | `references/measurement.md` + `scripts/kb_cost.py --check` |

@@ -2995,5 +2995,134 @@ class TurnRegistry0210Tests(unittest.TestCase):
             self.assertIn("Stop", json.loads((home / path).read_text())["hooks"])
 
 
+
+class ServicePass0210Tests(unittest.TestCase):
+    """Owner 02.10.2026: no nightly jobs — «хорошо бы, чтобы какой-нибудь агент время от времени
+    говорил: ой, пора обслужить базу». The entry hook says when (once a day, can be postponed);
+    the owner says «обслужи базу»; the session follows the plan; a clean-context exam checks the
+    structure. Review of the candidate: counting, nesting, closure marks, isolation, failures."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+
+    def service(self, *args, env=None):
+        return subprocess.run([sys.executable, str(HERE / "kb_service.py"), *args, str(self.root)],
+                              capture_output=True, text=True, timeout=120, env=env or self.env())
+
+    def due(self):
+        return json.loads(self.service("due", "--json").stdout)
+
+    def piled_up(self, rows=50):
+        self.project()
+        today = __import__("datetime").date.today().isoformat()
+        entries = "".join(f"- 2026-09-{(d % 28) + 1:02d} · правка {d}: факт {d}\n" for d in range(rows))
+        self.save("CORRECTIONS.md", "# Канал правок\n\n" + entries)
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nканал правок: CORRECTIONS.md\n"
+                  "kb_standard_version: 7.2.0\n")
+        self.commit_at(today, ".")
+
+    def test_due_names_what_piled_up_and_a_service_commit_resets_it(self):
+        self.piled_up()
+        self.assertTrue(self.due()["due"])
+        self.assertIn("ждут разнесения записей канала правок: 50", self.service("due").stdout)
+        context = self.hook({"hook_event_name": "SessionStart", "source": "startup"})
+        self.assertIn("## Пора обслужить базу", context["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("пора обслужить базу", context["systemMessage"])
+        again = self.hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "s2"})
+        self.assertNotIn("Пора обслужить", again["hookSpecificOutput"]["additionalContext"],
+                         "said once a day per project")
+        entries = "".join(f"- 2026-09-{(d % 28) + 1:02d} · правка {d}: ✔ учтено → kb/05.md\n" for d in range(50))
+        self.save("CORRECTIONS.md", "# Канал правок\n\n" + entries)
+        self.git("add", ".")
+        self.git("commit", "-qm", "Сервисный обход базы: разнесено 50 записей")
+        state = self.due()
+        self.assertEqual(state["since"], __import__("datetime").date.today().isoformat())
+        self.assertFalse(state["due"])
+
+    def test_closure_marks_of_real_projects_count_as_closed(self):
+        self.piled_up(rows=0)
+        self.save("CORRECTIONS.md", "# Канал\n\n- 2026-09-01 · a — статус CLOSED\n"
+                  "- 2026-09-02 · b ✔ код исправлен\n- 2026-09-03 · c [x]\n- 2026-09-04 · d открыто\n")
+        self.assertEqual(self.due()["corrections"], 1)
+
+    def test_postponed_and_quiet_projects_are_not_nagged(self):
+        self.piled_up()
+        self.service("later", "--days", "3")
+        import kb_service
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            self.assertEqual(kb_service.due_text(str(self.root)), "")
+        self.assertTrue(self.service("due").stdout.startswith("SERVICE_LATER"))
+        quiet = self.base / "quiet"
+        quiet.mkdir()
+        self.root = quiet
+        self.project()
+        self.git("add", ".")
+        self.git("commit", "-qm", "base")
+        self.assertFalse(self.due()["due"])
+
+    def test_plan_lists_the_pile_and_the_steps(self):
+        self.piled_up()
+        out = self.service("plan").stdout
+        for part in ("## 1. Разнести накопленное (50", "## 2. Работа без описания", "## 3. Починить",
+                     "## 4. Экзамен", "## 6. Отметка", "Сервисный обход базы:", "карта проекта"):
+            self.assertIn(part, out)
+
+    def fake(self, mode="good"):
+        fake = self.base / "fake_agent.py"
+        fake.write_text(r"""
+import json, os, sys
+args = sys.argv[1:]
+cwd, out, prompt = args[args.index("--cwd") + 1], args[args.index("--out") + 1], args[-1]
+mode = os.environ.get("FAKE_MODE", "good")
+if prompt.startswith("ИЗВЛЕЧЕНИЕ"):
+    reply = [{"id": "1", "question": "Какая серия у расходников?", "expected": "C00001"},
+             {"id": "1", "question": "Столица?", "expected": "Мадрид"}]
+elif prompt.startswith("ЭКЗАМЕН"):
+    if mode == "dead":
+        sys.exit(1)
+    leak = os.path.exists(os.path.join(cwd, "QUESTIONS.md"))
+    source = {"leak": "QUESTIONS.md", "outside": "~/work/proj/kb/05_catalog.md",
+              "inside": os.path.join(cwd, "kb", "05_catalog.md") + " / раздел"}.get(mode, "kb/05_catalog.md")
+    reply = [{"id": "1", "answer": "LEAK" if leak else "C00001", "source": source, "confidence": "высокая"},
+             {"id": "2", "answer": "Мадрид", "source": "kb/geo.md", "confidence": "высокая"}]
+else:
+    data = json.loads(prompt[prompt.index("Данные:") + 7:])
+    good = {"C00001", "Мадрид"}
+    reply = [{"id": d["id"], "verdict": "PASS" if d["answer"] in good else "FAIL", "reason": "-"} for d in data]
+open(out, "w").write("Источник: [QUESTIONS.md] — см. ниже\n" + json.dumps(reply, ensure_ascii=False))
+""", encoding="utf-8")
+        return self.env(KB_AGENT_CMD=f"{sys.executable} {fake}", FAKE_MODE=mode)
+
+    def exam_project(self):
+        self.project()
+        self.save("QUESTIONS.md", "# Контрольные вопросы\n| Вопрос | Ответ |\n|---|---|\n"
+                  "| Какая серия у расходников? | C00001 |\n| Столица? | Мадрид |\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "base")
+
+    def test_exam_hides_the_answers_renumbers_and_grades(self):
+        self.exam_project()
+        out = self.service("exam", env=self.fake("good"))
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("верно 2", out.stdout, "duplicate ids renumbered, brackets in text tolerated")
+        self.assertEqual(self.due()["exam_age"], 0)
+
+    def test_a_leaking_or_dead_exam_is_not_a_pass(self):
+        self.exam_project()
+        leak = self.service("exam", env=self.fake("leak"))
+        self.assertIn("неверно 1", leak.stdout)
+        self.assertIn("неверно 1", self.service("exam", env=self.fake("outside")).stdout)
+        inside = self.service("exam", env=self.fake("inside"))
+        self.assertIn("верно 2", inside.stdout, "a full path inside the exam copy is not a leak")
+        dead = self.service("exam", env=self.fake("dead"))
+        self.assertIn("EXAM_FAILED", dead.stdout)
+        self.assertEqual(dead.returncode, 1)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
