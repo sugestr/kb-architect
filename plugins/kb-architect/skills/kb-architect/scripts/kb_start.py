@@ -62,7 +62,11 @@ import kb_paths
 CONTEXT_LIMIT = 9000          # Claude Code: 10 000 символов на additionalContext
 # Codex: предел задаёт сам hook (`additionalContextLimit: 0` — без предела).
 INLINE_WHOLE = {"codex"}
-KB_MARK = re.compile(r"^\s*kb_standard_version\s*:\s*\d", re.MULTILINE)
+# Та же разметка, что принимает kb_paths.declared_value (маркер списка, кавычки, `…`,
+# **…**, регистр); заглушка шаблона «<…>» — не номер. tg-archive пишет номер в обратных
+# кавычках, и hook 7.4.0 его не видел.
+KB_MARK = re.compile(r"^[ \t]*(?:[-*>+][ \t]*)?[`*_\"']{0,2}[ \t]*kb_standard_version"
+                     r"[`*_\"']{0,2}[ \t]*:[ \t`*_\"']*v?\d", re.MULTILINE | re.IGNORECASE)
 AUTO_RULES = {"claude": ("CLAUDE.md",), "codex": ("AGENTS.md",)}
 SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")
 DEDUP_SECONDS = 5             # два hook'а одного события приходят почти одновременно
@@ -265,6 +269,122 @@ def due_summary(root, limit=1800):
     return text
 
 
+# ---------------------------------------------------------------- обновление до входа
+
+OFF = ("off", "0", "no", "false")
+
+
+UPDATE_DEADLINE = 15         # сек.: старт не ждёт сеть дольше, а host даёт hook'у 120
+
+
+def update_skill():
+    """Свежий stable скилла до входа: сессия ещё ничего не прочитала — граница
+    безопаснее некуда. «Автообновление» до 7.4.1 было шагом 2 правил проекта,
+    той же прозой, что и пропущенный вход: ни планировщика, ни hook'а (02.10).
+    Проверка — ls-remote (~0,6 с без новой версии); недоступная сеть не мешает
+    входу, а называется. Выключатель — `KB_ENTRY_UPDATE=off`."""
+    if os.environ.get("KB_ENTRY_UPDATE", "").strip().lower() in OFF:
+        return {"status": "OFF", "line": "обновление скилла на входе выключено (KB_ENTRY_UPDATE)"}
+    home = os.path.realpath(os.path.expanduser("~"))
+    if not os.path.realpath(scripts_dir()).startswith(home + os.sep):
+        # Prime: копию ставит адаптер выпуска лаборатории (ссылка в /srv/…); свой
+        # updater там только клонировал бы public на каждом старте.
+        return {"status": "EXTERNAL", "line": f"скилл {kb_paths.skill_version() or '?'} ставит "
+                "установщик выпуска лаборатории, не сессия"}
+    cache = os.path.join(state_root(), "update-last.json")
+    try:
+        with open(cache, encoding="utf-8") as f:
+            last = json.load(f)
+        if last.get("status") not in ("CURRENT", "INSTALLED") and \
+                time.time() - last.get("at", 0) < 3600:
+            return {"status": "SKIPPED", "line": f"обновление скилла: прошлая проверка — "
+                    f"{last.get('status')}, повтор через час; вручную — kb_update.py --public"}
+    except (OSError, ValueError, AttributeError):
+        pass
+    import fcntl
+    os.makedirs(state_root(), exist_ok=True)
+    lock = open(os.path.join(state_root(), "update.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        return {"status": "BUSY", "line": "скилл обновляется в другой сессии прямо сейчас"}
+    try:
+        proc = subprocess.Popen([sys.executable, os.path.join(scripts_dir(), "kb_update.py"),
+                                 "--public", "--fast", "--сделать"], stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+        try:
+            out, _ = proc.communicate(timeout=UPDATE_DEADLINE)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, 9)          # вместе с git clone, без сирот
+            except OSError:
+                pass
+            proc.communicate()
+            out = "UPDATE_STATUS=TIMEOUT\n"
+    except Exception as exc:
+        out = f"UPDATE_STATUS=FAILED ({type(exc).__name__})\n"
+    finally:
+        lock.close()
+    status = next((l.split("=", 1)[1].strip() for l in out.splitlines()
+                   if l.startswith("UPDATE_STATUS=")), "UNKNOWN")
+    try:
+        with open(cache, "w", encoding="utf-8") as f:
+            json.dump({"at": time.time(), "status": status.split()[0]}, f)
+    except OSError:
+        pass
+    changed = [l.strip() for l in out.splitlines() if "→" in l][:2]
+    edition = next((l.split(":", 1)[1].strip() for l in out.splitlines()
+                    if l.strip().startswith("редакция:")), None) or kb_paths.skill_version() or "?"
+    line = {"CURRENT": f"скилл {edition} — свежий (public)",
+            "INSTALLED": "скилл обновлён до входа: " + ("; ".join(changed) or "новая редакция")}.get(
+        status, f"обновление скилла: {status} — kb_update.py --public вручную")
+    return {"status": status, "line": line}
+
+
+def project_update(root):
+    """Уровень проекта против установленного скилла: дельта и действия выпуска.
+
+    Сессия их видит до первой правки и называет в первом ответе; сама миграция —
+    работа «обновись» с owner gates проекта, не условие замка."""
+    try:
+        out = subprocess.run([sys.executable, os.path.join(scripts_dir(), "kb_apply.py"), root],
+                             capture_output=True, text=True, timeout=60)
+    except Exception as exc:
+        return {"open": None, "short": "уровень проекта не проверен", "lines": [str(exc)]}
+    text = out.stdout
+    actions = [l.strip()[2:] for l in text.splitlines() if l.strip().startswith("• ")]
+    head = next((l for l in text.splitlines()
+                 if l.startswith(("NEEDS_APPLICATION", "APPLICATION_UNPROVEN"))), None)
+    if out.returncode == 1 and head:
+        version = re.search(r"цель (\d+\.\d+\.\d+)", text)
+        short = "дельта проекта открыта" + (f" (цель {version.group(1)})" if version else "")
+        return {"open": True, "short": short, "lines": [head.strip()] + actions}
+    if out.returncode != 0 or "НЕ ПРОВЕРЕНЫ" in text:
+        return {"open": None, "short": "уровень проекта не проверен",
+                "lines": [((text + out.stderr).strip().splitlines()
+                           or [f"kb_apply код {out.returncode}"])[-1]]}
+    if actions:
+        return {"open": True, "short": f"действий выпуска: {len(actions)}", "lines": actions}
+    return {"open": False, "short": "проект на уровне скилла", "lines": []}
+
+
+def update_section(root, skill, project):
+    lines = ["", "## Обновление (hook сделал до входа)", f"- {skill['line']}"]
+    if project["open"] is False:
+        lines.append("- проект на уровне скилла, действий выпуска нет")
+        return lines
+    lines.append(f"- проект: {project['short']}")
+    lines += [f"  · {l[:400]}" for l in project["lines"][:8]]
+    if project["open"]:
+        cmd = (f"python3 {q(os.path.join(scripts_dir(), 'kb_update.py'))} --public --fast "
+               f"--сделать --project {q(root)}")
+        lines += ["- Дотянуть проект — работа этой сессии: назови это в первом ответе; задача не "
+                  "срочная — начни с «обновись» (" + cmd + "); срочная — сначала она, а "
+                  "незакрытое — PENDING в NOW с адресом. Приёмка и push — по правилам проекта."]
+    return lines
+
+
 # ---------------------------------------------------------------- вход
 
 def needs_role(root, roles):
@@ -309,7 +429,7 @@ def entry_command(root, agent):
     return f"python3 {q(os.path.join(scripts_dir(), 'kb_entry.py'))} {q(root)} --role <id>{tail}"
 
 
-def entry_message(state, all_roles, event, due=None, agent="claude", inline=True):
+def entry_message(state, all_roles, event, due=None, agent="claude", inline=True, update=None):
     root, bundle = state["root"], state["bundle"]
     roles = ", ".join(state["roles"]) or "не выбрана"
     rules = ", ".join(AUTO_RULES.get(agent, ())) or "правила проекта"
@@ -339,6 +459,8 @@ def entry_message(state, all_roles, event, due=None, agent="claude", inline=True
             f"Квитанция этого файла: {state['receipt']}"]
     for line in state.get("missing", [])[:6]:
         head.append(f"! {line}")
+    if update:
+        head += update
     head += ["", "Роли проекта (id: поводы):", role_lines(all_roles)]
     if due:
         head += ["", "ПОРА (kb_due, раз в день):", due]
@@ -441,8 +563,11 @@ def verify(root, state, token, bundle=None, no_role=None):
         return None, ("у проекта есть роли, а в этом файле входа — ни одной. Собери вход роли по "
                       f"задаче ({entry_command(root, (state or {}).get('agent'))}) и подтверди "
                       "его метками, либо добавь --no-role \"<почему задача вне ролей>\".")
+    receipt = found.get("receipt", "")
+    if state and state.get("project_update"):
+        receipt += f" · проект: {state['project_update']}"
     return {"at": now_iso(), "bundle": found.get("bundle"), "roles": found.get("roles", []),
-            "receipt": found.get("receipt", ""), "no_role": (no_role or "").strip() or None}, None
+            "receipt": receipt, "no_role": (no_role or "").strip() or None}, None
 
 
 def parse_confirm(cmd):
@@ -686,9 +811,9 @@ def on_session_start(event, agent):
     root = find_root(event.get("cwd"))
     if not root or not sid:
         return None
-    if not claim(sid, root, f"start-{source}"):
+    rerun = os.environ.get("KB_ENTRY_RERUN") == "1"
+    if not rerun and not claim(sid, root, f"start-{source}"):
         return None
-    prune_old()
     previous = load_state(sid, root)
     if previous and source == "resume" and previous.get("confirmed"):
         c = previous["confirmed"]
@@ -696,6 +821,26 @@ def on_session_start(event, agent):
                                f"KB-вход в эту сессию подтверждён {c['at']} (роль "
                                f"{', '.join(c.get('roles') or []) or 'не выбрана'}): "
                                f"{c.get('receipt', '')}")
+    mark_starting(sid, root)
+    skill = None
+    if rerun:
+        skill = {"status": "INSTALLED", "line": os.environ.get("KB_ENTRY_SKILL_LINE", "")}
+    elif source != "compact":
+        skill = update_skill()
+        if skill["status"] == "INSTALLED":
+            # Вход строит уже новая редакция: тот же hook по той же ссылке на скилл.
+            try:
+                child = subprocess.run([sys.executable, os.path.abspath(__file__), "hook",
+                                        "--agent", agent], input=json.dumps(event),
+                                       capture_output=True, text=True, timeout=90,
+                                       env=dict(os.environ, KB_ENTRY_RERUN="1",
+                                                KB_ENTRY_SKILL_LINE=skill["line"]))
+                payload = json.loads(child.stdout) if child.stdout.strip() else None
+            except Exception:
+                payload = None
+            if payload:
+                return payload
+    prune_old()
     roles = None
     if previous and source in ("compact", "resume"):
         roles = (previous.get("confirmed") or {}).get("roles") or previous.get("roles") or None
@@ -703,19 +848,48 @@ def on_session_start(event, agent):
     label = {"compact": "контекст сжат — вход заново", "clear": "/clear — вход заново",
              "resume": "возобновление без подтверждённого входа"}.get(source, "новая сессия")
     due = None if source == "compact" else due_summary(root)
-    text = entry_message(state, all_roles, label, due, agent)
+    project = project_update(root)
+    skill = skill or {"status": "SKIPPED", "line": "скилл после сжатия не перепроверялся"}
+    state["project_update"] = project["short"]
+    save_state(state)
+    text = entry_message(state, all_roles, label, due, agent,
+                         update=update_section(root, skill, project))
     notice = (f"KB-вход {os.path.basename(root)}: файл входа собран, правки закрыты до "
               f"подтверждения ({state['parts']} частей, роль "
-              f"{', '.join(state['roles']) or 'не выбрана'}).")
+              f"{', '.join(state['roles']) or 'не выбрана'}); {skill['line']}; проект: "
+              f"{project['short']}.")
     return context_payload("SessionStart", text, notice)
+
+
+def starting_path(sid, root):
+    return os.path.join(state_root(), "sessions", f"{safe_name(sid)}--{root_key(root)}.starting")
+
+
+def mark_starting(sid, root):
+    try:
+        os.makedirs(os.path.dirname(starting_path(sid, root)), exist_ok=True)
+        open(starting_path(sid, root), "w").close()
+    except OSError:
+        pass
 
 
 def session_state(sid, root, agent):
     """Состояние сессии; сессия старше установки hook'а получает вход сейчас.
-    Параллельные hook'и строят один файл: второй ждёт первого."""
+    Параллельные hook'и строят один файл: второй ждёт первого. Пока старт сессии
+    обновляет скилл, реплика и инструмент ждут его вход, а не строят свой."""
     state = load_state(sid, root)
     if state:
         return state, False
+    try:
+        starting = time.time() - os.path.getmtime(starting_path(sid, root)) < UPDATE_DEADLINE + 30
+    except OSError:
+        starting = False
+    if starting:
+        for _ in range(int((UPDATE_DEADLINE + 3) / 0.2)):
+            time.sleep(0.2)
+            state = load_state(sid, root)
+            if state:
+                return state, False
     if claim(sid, root, "late"):
         state, _ = start_entry(root, sid, agent, "late")
         return state, True
@@ -897,6 +1071,54 @@ def status(root, sid):
     for line in install_status():
         print(f"  {line}")
     return 0
+
+
+# ---------------------------------------------------------------- что выпуск 7.4 просит от проекта
+
+def foreign_entry_hooks(root):
+    """Собственные hook'и старта сессии проекта (не kb_start) — вход станет двойным."""
+    found = []
+    for agent in ("claude", "codex"):
+        path = settings_path(agent, root)
+        try:
+            data, _ = read_settings(path)
+        except (ValueError, OSError):
+            continue
+        for group in (data.get("hooks") or {}).get("SessionStart", []):
+            if isinstance(group, dict) and not ours(group):
+                for hook in group.get("hooks", []) or []:
+                    if isinstance(hook, dict) and hook.get("command"):
+                        found.append((os.path.relpath(path, root), str(hook["command"])[:120]))
+    return found
+
+
+def project_actions(root):
+    """Действия выпуска 7.4 для проекта, номер которого менять не нужно.
+
+    02.10.2026: после 7.4.0 «обновись» и kb_due отвечали «миграция не нужна», а
+    продукт на Odoo оставался с пятью ролями без `entry_role` и своим hook'ом
+    входа — требования выпуска лежали только в migration.md, который читают при
+    поднятом номере (повтор 7.3.0 → 7.3.1). Номер проекта и действия выпуска —
+    разные вещи; действия печатаются, пока не сделаны."""
+    if not find_root(root):
+        return []
+    root = os.path.realpath(root)
+    actions = []
+    roles, default = kb_entry.declared_roles(root)
+    if len(roles) > 1 and not default:
+        actions.append(f"ролей {len(roles)}, а `entry_role` в PROJECT_ROLES.json нет: объяви роль "
+                       "большинства задач — иначе каждый новый чат сначала собирает вход роли, "
+                       "без неё замок входа не откроется (migration.md, 7.4, п. 1)")
+    for path, command in foreign_entry_hooks(root):
+        actions.append(f"свой hook старта сессии в {path} ({command}): если он собирает вход, "
+                       "сними его, когда общий kb_start установлен на машине, иначе вход двойной; "
+                       "hook другого назначения оставь (migration.md, 7.4, п. 2)")
+    rules = "".join(kb_paths.read(p) for p in kb_paths.rules_files(root))
+    if rules and "kb_start" not in rules:
+        actions.append("правила проекта не называют исполняемый вход: шаг входа замени шаблонным "
+                       "(hook kb_start; без hook — kb_entry.py --role) вместо порядка чтения прозой "
+                       "(migration.md, 7.4, п. 3; assets/templates/CLAUDE.md, шаг 1)")
+    return actions
 
 
 # ---------------------------------------------------------------- установка hook'ов

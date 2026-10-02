@@ -25,8 +25,8 @@ Acceptance, secrets/private runtime и push требуют отдельной au
    Без hook — `kb_entry.py <корень> --role <id>`; `ENTRY_RECEIPT` — в первый ответ;
    передача сессии пишет эту команду.
    Прочитай `NOW.md` и приложенный источник; весь пакет не загружай.
-2. Если update не отключён, запусти `kb_update.py --public --fast --сделать
-   --project <корень-проекта>` после первого безопасного результата. До durable/external шага
+2. Обновление скилла и уровень проекта проверяет hook входа; без hook — `kb_update.py
+   --public --fast --сделать --project <корень-проекта>` после первого безопасного результата. До durable/external шага
    после `INSTALLED` перечитай entry/route. Явный project pre-work gate имеет приоритет.
 3. Если в «Соответствии» **явно принята диагностика** при входе, запусти один
    объявленный readiness command/manifest. Не дублируй здесь его внутренний список.

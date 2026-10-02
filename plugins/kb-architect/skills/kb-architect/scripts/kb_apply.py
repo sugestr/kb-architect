@@ -481,6 +481,22 @@ APPLICABLE = [
 ]
 
 
+def release_actions(root):
+    """Действия выпуска без нового номера проекта (7.4: вход исполняет среда)."""
+    try:
+        import kb_start
+        actions = kb_start.project_actions(root)
+    except Exception as exc:
+        print(f"PROJECT_RELEASE_ACTIONS: НЕ ПРОВЕРЕНЫ ({type(exc).__name__}: {exc})")
+        return
+    if not actions:
+        print("PROJECT_RELEASE_ACTIONS: нет — действий выпуска для проекта не осталось.")
+        return
+    print(f"PROJECT_RELEASE_ACTIONS: {len(actions)} — номер не меняется, но сделать:")
+    for line in actions:
+        print(f"  • {line}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Проверить применение release delta к конкретной базе")
@@ -556,13 +572,14 @@ def main():
                   f"{line_text(proj)}.")
         if project_line == target_line and ver_key(proj) != target_key:
             print(f"PROJECT_VERSION_OK: проект принят на версии {line_text(proj)}; "
-                  f"выпуск {target} не открывает новую миграцию.")
+                  f"номер проекта для выпуска {target} менять не нужно.")
         elif target != inst:
             print(f"TARGET_APPLICATION_OK: версия проекта {line_text(proj)} уже покрывает "
                   f"цель {line_text(target)}.")
         else:
             print(f"версия проекта {line_text(proj)}, установлен скилл {inst} — "
-                  "миграции нет")
+                  "номер проекта менять не нужно")
+        release_actions(root)
         return 0
 
     # A migration applies the current minimum project level directly. Patch

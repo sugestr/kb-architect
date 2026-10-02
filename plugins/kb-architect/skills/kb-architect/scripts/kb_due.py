@@ -761,7 +761,13 @@ def main():
                        f"значит соврать")
         elif skill_v and skill_line_now:
             ok.append(f"версия проекта: {proj_v} — совместима со скиллом {skill_v}; "
-                      "выпуск не требует миграции")
+                      "номер проекта менять не нужно")
+            try:
+                import kb_start
+                for line in kb_start.project_actions(root):
+                    due.append(f"действие выпуска {skill_v} для проекта: {line}")
+            except Exception as exc:
+                due.append(f"действия выпуска для проекта НЕ ПРОВЕРЕНЫ ({type(exc).__name__})")
         elif skill_v:
             due.append(f"установлен скилл {skill_v}, но metadata.minimum_project_version отсутствует "
                        "или некорректна — migration state неизвестен")

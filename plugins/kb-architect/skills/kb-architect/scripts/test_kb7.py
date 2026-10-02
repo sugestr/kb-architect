@@ -2082,6 +2082,7 @@ class ExecutableEntry0110Tests(unittest.TestCase):
         env = {k: v for k, v in os.environ.items()
                if k not in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")}
         env["KB_ENTRY_STATE"] = str(self.base / "state")
+        env["KB_ENTRY_UPDATE"] = "off"     # тест не ставит скилл в настоящий HOME
         env.update(extra)
         return env
 
@@ -2517,6 +2518,145 @@ class ExecutableEntryReview0210Tests(unittest.TestCase):
         self.project(big_now=True)
         self.assertIsNone(self.hook({"hook_event_name": "SessionStart", "source": "startup"},
                                     KB_ENTRY_HOOK="off"))
+
+
+class ReleaseActions0210Tests(unittest.TestCase):
+    """02.10.2026: after 7.4.0 «обновись» and kb_due answered «no migration» while the Odoo
+    product kept five roles without entry_role and its own entry hook; tg-archive writes its
+    version in backticks and the entry hook did not recognise it as a KB project."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+    start = ExecutableEntry0110Tests.start
+
+    def actions(self):
+        import kb_start
+        return kb_start.project_actions(str(self.root))
+
+    def test_version_in_backticks_is_a_kb_project(self):
+        self.project()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\n`kb_standard_version: 7.0.0`\n")
+        self.assertIsNotNone(self.start())
+
+    def test_actions_name_what_the_release_asks_and_disappear_when_done(self):
+        self.project()
+        roles = json.loads((self.root / "PROJECT_ROLES.json").read_text())
+        roles.pop("entry_role")
+        self.save("PROJECT_ROLES.json", roles)
+        self.save(".claude/settings.json", {"hooks": {"SessionStart": [{"hooks": [
+            {"type": "command", "command": "python3 agents/scripts/cold_start.py"}]}]}})
+        got = " | ".join(self.actions())
+        self.assertIn("`entry_role`", got)
+        self.assertIn("cold_start.py", got)
+        self.assertIn("не называют исполняемый вход", got)
+        roles["entry_role"] = "dev"
+        self.save("PROJECT_ROLES.json", roles)
+        self.save(".claude/settings.json", {"theme": "dark"})
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md — исполняет hook kb_start\nkb_standard_version: 7.2.0\n")
+        self.assertEqual(self.actions(), [])
+
+    def test_start_names_the_project_level_and_puts_it_in_the_receipt(self):
+        self.project(big_now=True)
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.0.0\n")
+        got = self.start()
+        context = got["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("## Обновление (hook сделал до входа)", context)
+        self.assertIn("дельта проекта открыта", context)
+        self.assertIn("--project", context)
+        self.assertIn("проект: дельта проекта открыта", got["systemMessage"])
+        bundle = ExecutableEntry0110Tests.bundle_of(self, context)
+        marks = "-".join(ExecutableEntry0110Tests.marks(self, bundle))
+        ok = ExecutableEntry0110Tests.confirm(self, marks, "--session", "s1")
+        receipt = next(l for l in ok.stdout.splitlines() if l.startswith("ENTRY_RECEIPT"))
+        self.assertIn("проект: дельта проекта открыта", receipt)
+
+    def test_update_runs_before_entry_and_a_new_edition_builds_the_entry(self):
+        import kb_start
+        calls = []
+
+        class Done:
+            def __init__(self, out):
+                self.stdout, self.returncode = out, 0
+
+        def fake(cmd, **kw):
+            calls.append(cmd)
+            return Done("Claude Code  копия обновлена: 7.4.0 → 7.4.1\nUPDATE_STATUS=INSTALLED\n")
+        class Proc:
+            pid = 0
+            def communicate(self, timeout=None):
+                return fake(calls_args[0]).stdout, ""
+        calls_args = []
+
+        def popen(cmd, **kw):
+            calls_args.append(cmd)
+            return Proc()
+        with patch.object(kb_start.subprocess, "Popen", popen), \
+                patch.dict(os.environ, {"KB_ENTRY_UPDATE": "", "KB_ENTRY_STATE": str(self.base / "st")}):
+            got = kb_start.update_skill()
+        self.assertEqual(got["status"], "INSTALLED")
+        self.assertIn("7.4.0 → 7.4.1", got["line"])
+        self.assertIn("--сделать", calls[0])
+        with patch.dict(os.environ, {"KB_ENTRY_UPDATE": "off"}):
+            self.assertEqual(kb_start.update_skill()["status"], "OFF")
+
+    def test_review_741_receipt_kb_apply_failures_and_version_shapes(self):
+        import kb_start
+        self.project(big_now=True)
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.0.0\n")
+        context = self.start()["hookSpecificOutput"]["additionalContext"]
+        marks = "-".join(ExecutableEntry0110Tests.marks(self, ExecutableEntry0110Tests.bundle_of(self, context)))
+        receipt = next(l for l in ExecutableEntry0110Tests.confirm(self, marks, "--session", "s1").stdout
+                       .splitlines() if l.startswith("ENTRY_RECEIPT"))
+        self.assertEqual(receipt.count("проект:"), 1, receipt)
+        class Run:
+            def __init__(self, code, out, err=""):
+                self.returncode, self.stdout, self.stderr = code, out, err
+        for fake in (Run(1, "", "Traceback (most recent call last):\nAttributeError: x"),
+                     Run(0, "PROJECT_VERSION_OK\nPROJECT_RELEASE_ACTIONS: НЕ ПРОВЕРЕНЫ (AttributeError)")):
+            with patch.object(kb_start.subprocess, "run", lambda *a, **k: fake):
+                self.assertEqual(kb_start.project_update(str(self.root))["short"],
+                                 "уровень проекта не проверен")
+        for line, ok in (("+ kb_standard_version: 7.2.0", True), ("KB_STANDARD_VERSION: 7.2.0", True),
+                         ('"kb_standard_version": "7.2.0"', True), ("kb_standard_version: v7.2.0", True),
+                         ("| kb_standard_version: 7.2.0 |", False), ("text kb_standard_version: 7.2.0", False)):
+            self.assertEqual(bool(kb_start.KB_MARK.search(line)), ok, line)
+
+    def test_a_failed_update_is_not_retried_on_every_start(self):
+        import kb_start
+        calls = []
+
+        class Proc:
+            pid = 0
+            def communicate(self, timeout=None):
+                calls.append(1)
+                return "UPDATE_STATUS=UNKNOWN\n", ""
+        with patch.dict(os.environ, {"KB_ENTRY_UPDATE": "", "KB_ENTRY_STATE": str(self.base / "st")}), \
+                patch.object(kb_start.subprocess, "Popen", lambda *a, **k: Proc()):
+            self.assertEqual(kb_start.update_skill()["status"], "UNKNOWN")
+            self.assertEqual(kb_start.update_skill()["status"], "SKIPPED")
+        self.assertEqual(len(calls), 1)
+
+    def test_due_and_update_print_the_actions_instead_of_no_migration(self):
+        self.project()
+        roles = json.loads((self.root / "PROJECT_ROLES.json").read_text())
+        roles.pop("entry_role")
+        self.save("PROJECT_ROLES.json", roles)
+        due = self.run_tool("kb_due.py").stdout
+        self.assertIn("номер проекта менять не нужно", due)
+        self.assertIn("действие выпуска", due)
+        self.assertNotIn("выпуск не требует миграции", due)
+        import kb_update
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            kb_update.actions_of_project(str(HERE.parent), str(self.root), True)
+        self.assertIn("SESSION_ACTION=APPLY_RELEASE_ACTIONS", out.getvalue())
 
 
 if __name__ == "__main__":

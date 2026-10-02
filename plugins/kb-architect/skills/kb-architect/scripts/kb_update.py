@@ -344,8 +344,26 @@ def apply_project(skill, project, action_mode=False):
                   "runtime, push или иным отдельным owner gate.")
         else:
             print("SESSION_STATE=PROJECT_DELTA_OPEN")
+    if result.returncode == 0:
+        actions_of_project(skill, root, action_mode)
     debts_of_project(skill, root, action_mode)
     return result.returncode
+
+
+def actions_of_project(skill, root, action_mode):
+    """Действия выпуска без нового номера (7.4.1): kb_apply их напечатал;
+    команде «обновись» они — часть работы, а не справка."""
+    sys.path.insert(0, os.path.join(skill, "scripts"))
+    try:
+        import kb_start
+        actions = kb_start.project_actions(root)
+    except Exception:
+        return
+    if actions and action_mode:
+        print("SESSION_ACTION=APPLY_RELEASE_ACTIONS — номер проекта не меняется; сделай действия")
+        print("  выше в этом обновлении (owner gates и push — по правилам проекта).")
+    elif actions:
+        print("SESSION_STATE=RELEASE_ACTIONS_OPEN")
 
 
 def debts_of_project(skill, root, action_mode):
