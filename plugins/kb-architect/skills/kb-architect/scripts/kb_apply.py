@@ -580,15 +580,15 @@ def main():
                     print("  ERROR:", error)
                 return 1
             print(f"APPLICATION_RECEIPT_OK: {APPLICATION_RECEIPT} подтверждает версию проекта "
-                  f"{line_text(proj)}.")
+                  f"{proj}.")
         if project_line == target_line and ver_key(proj) != target_key:
-            print(f"PROJECT_VERSION_OK: проект принят на версии {line_text(proj)}; "
+            print(f"PROJECT_VERSION_OK: проект принят на версии {proj}; "
                   f"номер проекта для выпуска {target} менять не нужно.")
         elif target != inst:
             print(f"TARGET_APPLICATION_OK: версия проекта {line_text(proj)} уже покрывает "
                   f"цель {line_text(target)}.")
         else:
-            print(f"версия проекта {line_text(proj)}, установлен скилл {inst} — "
+            print(f"версия проекта {proj}, установлен скилл {inst} — "
                   "номер проекта менять не нужно")
         release_actions(root)
         return 0

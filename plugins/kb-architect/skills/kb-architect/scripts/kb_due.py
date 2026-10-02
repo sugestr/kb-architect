@@ -747,7 +747,16 @@ def main():
             due.append(f"версия проекта записана словами: «{proj_raw}» — сравнить не с чем. "
                        f"Поставь номер: «kb_standard_version: {skill_line_now or '<номер>'}», "
                        f"описание можно оставить рядом")
-        elif skill_line_now and contract_line(proj_v) != contract_line(skill_line_now):
+        elif skill_v and contract_line(proj_v) and contract_line(skill_v) \
+                and contract_line(proj_v) > contract_line(skill_v):
+            due.append(f"версия проекта {proj_v} новее установленного скилла {skill_v} — "
+                       "скилл на этой машине отстал: обнови его (kb_update.py --public "
+                       "--сделать), номер проекта не трогай")
+        elif skill_line_now and contract_line(proj_v) and contract_line(skill_line_now) \
+                and contract_line(proj_v) < contract_line(skill_line_now):
+            # Ниже минимального уровня — дельта. Выше минимального (владелец поднял номер,
+            # квитанция есть) — не дефект: kb_apply принимает «не ниже», и kb_due с ним
+            # согласен (tg-archive 02.10: номер 7.4.2 давал вечное ложное «ПОРА»).
             apply_command = shlex.join([
                 sys.executable,
                 os.path.join(os.path.dirname(os.path.realpath(__file__)), "kb_apply.py"),

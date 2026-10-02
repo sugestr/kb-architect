@@ -2742,5 +2742,258 @@ class FoxKb0210Tests(unittest.TestCase):
         self.assertEqual(out.returncode, 0)
 
 
+
+class VersionLine0210Tests(unittest.TestCase):
+    """tg-archive 02.10.2026: the owner raised the project number to 7.4.2; kb_apply accepted
+    it, kb_due demanded equality with the minimum line and printed a false «ПОРА» forever."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    save = RedesignTests.save
+
+    def test_a_number_above_the_minimum_is_not_a_due_item(self):
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.4.2\n")
+        self.save("NOW.md", "Обновлено: 2026-10-02\n")
+        out = self.run_tool("kb_due.py").stdout
+        self.assertNotIn("примени применимое и обнови строку", out)
+        self.assertIn("версия проекта: 7.4.2", out)
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.0.0\n")
+        self.assertIn("примени применимое и обнови", self.run_tool("kb_due.py").stdout)
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 9.1.0\n")
+        self.assertIn("новее установленного скилла", self.run_tool("kb_due.py").stdout)
+
+
+class TurnRegistry0210Tests(unittest.TestCase):
+    """02.10.2026 audit: agents record knowledge incompletely and in the cheapest place; the
+    self-check stayed green. 7.5 records every turn silently — what was done, whether it reached
+    the base — without command text (commands carry secrets), and keeps project facts out of the
+    agent's private memory."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+
+    def confirmed_project(self):
+        self.project(big_now=True)
+        self.save("addons/x.py", "x = 1\n")
+        self.commit_at("2026-10-02", ".")
+        import kb_start
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            state, _ = kb_start.start_entry(str(self.root), "s1", "claude", "startup")
+            state["confirmed"] = {"at": "now", "roles": ["dev"], "receipt": ""}
+            kb_start.save_state(state)
+
+    def turn(self, prompt, tools, writes):
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": prompt})
+        for name, tool_input in tools:
+            got = self.hook({"hook_event_name": "PreToolUse", "tool_name": name,
+                             "tool_input": tool_input})
+            self.assertIsNone(got, got)
+        for rel, text in writes:
+            self.save(rel, text)
+        self.assertIsNone(self.hook({"hook_event_name": "Stop"}), "record mode is silent")
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            lines = Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()
+        return json.loads(lines[-1])
+
+    def test_a_work_turn_without_knowledge_is_recorded_as_such(self):
+        self.confirmed_project()
+        token_value = "tok_SECRET_123456789"
+        row = self.turn("fix the bouquet", [
+            ("Edit", {"file_path": str(self.root / "addons/x.py")}),
+            ("Bash", {"command": f"curl -X POST https://api.example.com/v1 -H 'Authorization: {token_value}'"}),
+            ("Bash", {"command": "ssh prime 'systemctl restart odoo'"}),
+            ("mcp__odoo__update_record", {"id": 1}),
+            ("Bash", {"command": "python3 analyse.py"})],
+            [("addons/x.py", "x = 2\n")])
+        self.assertEqual(row["certain"], 4)
+        self.assertEqual(row["uncertain"], 1)
+        self.assertEqual(row["work_files"], 1)
+        self.assertEqual(row["knowledge_files"], 0)
+        stored = "".join(p.read_text() for p in (self.base / "state").rglob("*.json*"))
+        self.assertNotIn(token_value, stored, "no command text in state, snapshot or registry")
+        self.assertNotIn("api.example.com", stored)
+        self.assertNotIn("prime", stored)
+
+    def test_secrets_never_reach_the_state_while_a_turn_runs(self):
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "deploy"})
+        for cmd in ("curl -X POST https://ghp_SECRETTOKEN123@api.github.com/x",
+                    "rsync -e 'sshpass -p HUNTER2PASS ssh' a b:/c", "git -C . commit -qm x"):
+            self.hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                       "tool_input": {"command": cmd}})
+        stored = "".join(p.read_text() for p in (self.base / "state").rglob("*.json*"))
+        self.assertNotIn("SECRETTOKEN", stored)
+        self.assertNotIn("HUNTER2PASS", stored)
+        self.hook({"hook_event_name": "Stop"})
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            row = json.loads(Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()[-1])
+        self.assertEqual(row["kinds"].get("certain:git"), 1, "git -C commit is a certain git write")
+
+    def test_a_turn_that_writes_the_base_counts_and_reading_counts_nothing(self):
+        self.confirmed_project()
+        row = self.turn("правило: всегда так", [("Bash", {"command": "git status --short"})],
+                        [("NOW.md", "Обновлено: 2026-10-02\nрешено\n")])
+        self.assertEqual(row["certain"], 0)
+        self.assertEqual(row["knowledge_files"], 1)
+        self.assertTrue(row["decision"])
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            summary = kb_turns.summary(str(self.root))
+        self.assertEqual(summary["turns"], 1)
+        self.assertEqual(summary["decision_recorded"], 1)
+
+    def test_commits_inside_the_turn_are_seen(self):
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"})
+        self.save("addons/x.py", "x = 3\n")
+        self.save("kb/05_catalog.md", "# Catalog\nupdated\n")
+        self.commit_at("2026-10-02", "addons/x.py", "kb/05_catalog.md")
+        self.hook({"hook_event_name": "Stop"})
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            row = json.loads(Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()[-1])
+        self.assertEqual((row["work_files"], row["knowledge_files"]), (1, 1))
+
+    def test_a_project_in_a_subfolder_of_a_bigger_repo_counts_only_its_files(self):
+        outer = self.base / "outer"
+        outer.mkdir()
+        self.init_git(root=outer)
+        self.root = outer / "proj"
+        self.root.mkdir()
+        self.project(big_now=True)
+        self.save("src/app.py", "a = 1\n")
+        (outer / "other.py").write_text("b = 1\n")
+        self.git("add", ".", root=outer)
+        self.git("commit", "-qm", "base", root=outer)
+        self.save("src/app.py", "a = 2\n")             # dirty before the turn
+        import kb_start
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            state, _ = kb_start.start_entry(str(self.root), "s1", "claude", "startup")
+            state["confirmed"] = {"at": "now", "roles": ["dev"], "receipt": ""}
+            kb_start.save_state(state)
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"})
+        time.sleep(0.01)
+        self.save("src/app.py", "a = 33\n")
+        (outer / "other.py").write_text("b = 2\n")
+        self.save("kb/решения.md", "# Решения\n")
+        self.hook({"hook_event_name": "Stop"})
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            row = json.loads(Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()[-1])
+        self.assertEqual((row["work_files"], row["knowledge_files"]), (1, 1))
+
+    def test_pulled_commits_are_not_this_turns_work(self):
+        self.confirmed_project()
+        remote = self.base / "remote.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-q", "origin", "HEAD:main")
+        clone = self.base / "clone"
+        subprocess.run(["git", "clone", "-q", "-b", "main", str(remote), str(clone)], check=True)
+        self.git("config", "user.email", "x@example.invalid", root=clone)
+        self.git("config", "user.name", "X", root=clone)
+        (clone / "kb").mkdir(exist_ok=True)
+        (clone / "kb" / "b.md").write_text("# B\n")
+        (clone / "z.py").write_text("z = 1\n")
+        self.git("add", ".", root=clone)
+        self.git("commit", "-qm", "other agent", root=clone)
+        self.git("push", "-q", "origin", "HEAD:main", root=clone)
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "pull"})
+        self.git("pull", "-q", "origin", "main")
+        self.hook({"hook_event_name": "Stop"})
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            row = json.loads(Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()[-1])
+        self.assertEqual((row["work_files"], row["knowledge_files"]), (0, 0))
+
+    def test_a_failing_registry_write_stays_silent_and_keeps_the_lock(self):
+        self.project(big_now=True)
+        self.git("add", ".")
+        self.git("commit", "-qm", "x")
+        self.hook({"hook_event_name": "SessionStart", "source": "startup"})
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"})
+        turns = self.base / "state" / "turns"
+        turns.mkdir(parents=True, exist_ok=True)
+        turns.chmod(0o500)
+        try:
+            out = subprocess.run([sys.executable, str(HERE / "kb_start.py"), "hook", "--agent", "codex"],
+                                 input=json.dumps({"hook_event_name": "Stop", "session_id": "s1",
+                                                   "cwd": str(self.root)}),
+                                 capture_output=True, text=True, timeout=60, env=self.env())
+        finally:
+            turns.chmod(0o755)
+        self.assertEqual(out.stdout.strip(), "")
+        got = self.hook({"hook_event_name": "PreToolUse", "tool_name": "Edit", "tool_input": {}})
+        self.assertEqual(got["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_an_interrupted_turn_is_recorded_at_the_next_prompt(self):
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "first"})
+        self.save("addons/x.py", "x = 9\n")
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "second"})
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            row = json.loads(Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()[-1])
+        self.assertTrue(row["interrupted"])
+        self.assertEqual(row["work_files"], 1)
+
+    def test_project_facts_cannot_hide_in_agent_memory(self):
+        self.confirmed_project()
+        mem = self.base / "home" / ".claude" / "projects" / "-x-project" / "memory"
+        mem.mkdir(parents=True)
+
+        def write(text):
+            got = self.hook({"hook_event_name": "PreToolUse", "tool_name": "Write",
+                             "tool_input": {"file_path": str(mem / "fact.md"), "content": text}})
+            return (got or {}).get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+        fact = "---\nname: f\nmetadata:\n  type: project\n---\nThe POS uses series C.\n"
+        self.assertEqual(write(fact), "deny")
+        self.assertEqual(write(fact + "See kb/05_catalog.md.\n"), "allow")
+        self.assertEqual(write("---\nmetadata:\n  type: feedback\n---\nPrefer short answers.\n"), "allow")
+        self.assertEqual(write("---\nmetadata:\n  type: reference\n---\nhttps://grafana.example\n"),
+                         "allow")
+        self.assertEqual(write('---\nmetadata:\n  Type: "Project"\n---\nA fact.\n'), "deny")
+        self.assertEqual(write(fact + f"See {self.root}/NOW.md\n"), "allow", "absolute pointer")
+        self.save("kb/решения.md", "# Решения\n")
+        self.save(".claude/settings.json", "{}")
+        self.git("add", "kb/решения.md", ".claude/settings.json")
+        self.assertEqual(write(fact + "См. kb/решения.md\n"), "allow", "Cyrillic pointer")
+        self.assertEqual(write(fact + "See .claude/settings.json\n"), "allow", "dot-folder pointer")
+        (mem / "old.md").write_text(fact + "Second paragraph.\n")
+
+        def edit(tool, tool_input):
+            got = self.hook({"hook_event_name": "PreToolUse", "tool_name": tool,
+                             "tool_input": dict(tool_input, file_path=str(mem / "old.md"))})
+            return (got or {}).get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+        self.assertEqual(edit("Edit", {"old_string": "Second paragraph.\n", "new_string": ""}),
+                         "allow", "retiring an old fact")
+        self.assertEqual(edit("Edit", {"old_string": "Second", "new_string": "See NOW.md, second"}),
+                         "allow", "adding the address")
+        self.assertIn(edit("MultiEdit", {"edits": None}), ("allow", "deny"), "malformed input: no crash")
+        self.assertEqual(write("---\nmetadata:\n  type: feedback\n---\nShort answers.\n"), "allow")
+
+    def test_a_chronicle_now_is_a_release_action(self):
+        self.project()
+        self.save("NOW.md", "Обновлено: 2026-10-02\n" + "запись хроники\n" * 2000)
+        import kb_start
+        self.assertTrue(any("хроника" in a for a in kb_start.project_actions(str(self.root))))
+
+    def test_install_adds_the_stop_hook_for_both_agents(self):
+        home = self.base / "home2"
+        for agent, path in (("codex", ".codex/hooks.json"), ("claude", ".claude/settings.json")):
+            out = subprocess.run([sys.executable, str(HERE / "kb_start.py"), "install", "--agent", agent],
+                                 capture_output=True, text=True, timeout=30, env=self.env(HOME=str(home)))
+            self.assertIn("INSTALLED", out.stdout)
+            self.assertIn("Stop", json.loads((home / path).read_text())["hooks"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

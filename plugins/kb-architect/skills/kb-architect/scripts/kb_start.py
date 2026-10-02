@@ -58,6 +58,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kb_entry
 import kb_paths
+import kb_turns
 
 CONTEXT_LIMIT = 9000          # Claude Code: 10 000 символов на additionalContext
 # Codex: предел задаёт сам hook (`additionalContextLimit: 0` — без предела).
@@ -103,7 +104,14 @@ HOOK_EVENTS = (
     ("UserPromptSubmit", None, None, 20, None),
     ("PreToolUse", "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
      "Bash|apply_patch|Edit|Write|mcp__.*", 20, None),
+    ("Stop", None, None, 20, None),
 )
+# Реестр хода (7.5): «record» — только запись; «advise» и «block» — после недели замера.
+CAPTURE_MODES = ("record", "advise", "block")
+NOW_LIMIT = 20 * 1024        # больше — хроника: Codex читал такой NOW целиком в 8 % обращений
+MEMORY_FILE = re.compile(r"/\.claude/projects/[^/]+/memory/[^/]+\.md$")
+MEMORY_KIND = re.compile(r"^\s*type\s*:\s*[\"']?(project|reference)\b",
+                         re.MULTILINE | re.IGNORECASE)
 
 
 # ---------------------------------------------------------------- состояние
@@ -159,15 +167,16 @@ def iso_time(value):
 
 
 def prune_old(days=30):
-    folder = os.path.join(state_root(), "sessions")
     limit = time.time() - days * 86400
-    try:
-        for name in os.listdir(folder):
-            path = os.path.join(folder, name)
-            if os.path.getmtime(path) < limit:
-                os.remove(path)
-    except OSError:
-        pass
+    for folder in (os.path.join(state_root(), "sessions"),
+                   os.path.join(state_root(), "turns", "snap")):
+        try:
+            for name in os.listdir(folder):
+                path = os.path.join(folder, name)
+                if os.path.getmtime(path) < limit:
+                    os.remove(path)
+        except OSError:
+            pass
 
 
 def claim(sid, root, key):
@@ -922,12 +931,28 @@ def session_state(sid, root, agent):
     return None, False
 
 
+def begin_turn(state, root, prompt):
+    """Отпечаток рабочей копии в начале хода — для итога хода в реестре. Ход без конца
+    (прерван Esc или ошибкой) записывается здесь как прерванный, а не теряется."""
+    try:
+        if state.get("turn"):
+            finish_turn(state, interrupted=True)
+        kb_turns.save_snap(state["session"], root, kb_turns.snapshot(root))
+        state["turn"] = {"at": now_iso(), "decision": kb_turns.is_decision(prompt),
+                         "effects": []}
+        save_state(state)
+    except Exception:
+        pass
+
+
 def on_prompt(event, agent):
     sid = event.get("session_id")
     root = find_root(event.get("cwd"))
     if not root or not sid:
         return None
     state, fresh = session_state(sid, root, agent)
+    if state:
+        begin_turn(state, root, event.get("prompt") or "")
     if not state or state.get("confirmed") or state.get("error"):
         return None
     if fresh:
@@ -937,14 +962,137 @@ def on_prompt(event, agent):
     return context_payload("UserPromptSubmit", reminder(state))
 
 
+def memory_text_after(tool, ti, path):
+    """Текст файла памяти после правки: Write — новое содержимое, Edit — применённые замены."""
+    if tool == "Write":
+        return str(ti.get("content") or "")
+    text = kb_paths.read(path) if os.path.isfile(path) else ""
+    edits = ti.get("edits") if tool == "MultiEdit" else [ti]
+    for e in edits if isinstance(edits, list) else []:
+        if not isinstance(e, dict):
+            continue
+        old, new = str(e.get("old_string") or ""), str(e.get("new_string") or "")
+        if old:
+            text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+        else:
+            text += new
+    return text
+
+
+def memory_pointers(text, root):
+    """Пути к файлам проекта в тексте памяти: относительные, абсолютные, через «~»."""
+    out = set()
+    for token in re.findall(r"[^\s`'\"()<>\[\],;]{3,300}", text[:40000]):
+        token = token.rstrip(".:")
+        if "." not in os.path.basename(token):
+            continue
+        if token.startswith("~"):
+            token = os.path.expanduser(token)
+        if os.path.isabs(token):
+            real = os.path.realpath(token)
+            if not real.startswith(os.path.realpath(root) + os.sep):
+                continue
+            token = os.path.relpath(real, os.path.realpath(root))
+        out.add(token[2:] if token.startswith("./") else token)
+    return out
+
+
+def memory_guard(event):
+    """Факт проекта в личной памяти Claude без адреса в каноне — запрет с причиной.
+
+    Аудит 02.10.2026: около половины 75 записей памяти — факты и решения проектов,
+    которые не видит никто, кроме этого агента. Проходят: предпочтения работы
+    (feedback, user), ссылки на внешние ресурсы с URL, запись со ссылкой на файл проекта,
+    правка, которая только сокращает или убирает текст (уборка старой памяти)."""
+    try:
+        tool, ti = event.get("tool_name") or "", event.get("tool_input") or {}
+        if tool not in FILE_TOOLS or not isinstance(ti, dict):
+            return None
+        path = ti.get(FILE_TOOLS[tool])
+        if not isinstance(path, str) or not MEMORY_FILE.search(path) \
+                or os.path.basename(path) == "MEMORY.md":
+            return None
+        root = find_root(event.get("cwd"))
+        if not root:
+            return None
+        before = kb_paths.read(path) if os.path.isfile(path) else ""
+        text = memory_text_after(tool, ti, path)
+        if before and len(text) < len(before):
+            return None
+        kind = MEMORY_KIND.search(text)
+        if not kind or (kind.group(1).lower() == "reference" and re.search(r"https?://", text)):
+            return None
+        tracked = kb_turns.git(root, "ls-files", "-z")
+        tracked = set(tracked.decode("utf-8", "replace").split("\0")) if tracked else set()
+        if memory_pointers(text, root) & tracked:
+            return None
+        return deny(f"Память агента — не база проекта {os.path.basename(root)}: факт проекта "
+                    "сначала запиши в базу (глава, NOW или журнал проекта), а в памяти оставь "
+                    "ссылку на этот файл (путь в проекте). Предпочтения работы (type: feedback/"
+                    "user) и внешние ссылки с URL пишутся без ограничений.")
+    except Exception:
+        return None
+
+
+def record_effects(event, roots, sid, agent):
+    """Классы следствий разрешённого инструмента — в ход сессии каждого затронутого
+    проекта. Без текста команд, хостов и адресов; для правки файла — путь в проекте."""
+    tool, ti = event.get("tool_name") or "", event.get("tool_input") or {}
+    for root in roots:
+        try:
+            state = load_state(sid, root)
+            if not state or not state.get("turn"):
+                continue
+            effects = []
+            if tool in SHELL_TOOLS:
+                cmd = command_of(ti)
+                effects = [[c, k] for c, k in kb_turns.shell_effects(cmd, shell_segments(cmd),
+                                                                     shell_read_only)]
+            elif tool.startswith("mcp__"):
+                if not mcp_read_only(tool):
+                    effects = [["certain", "mcp"]]
+            else:
+                paths = []
+                if tool in FILE_TOOLS and isinstance(ti, dict) and \
+                        isinstance(ti.get(FILE_TOOLS[tool]), str):
+                    paths = [ti[FILE_TOOLS[tool]]]
+                elif tool == "apply_patch":
+                    raw = command_of(ti) or (ti.get("input", "") if isinstance(ti, dict) else "")
+                    paths = [p.strip() for _, p in PATCH_PATH.findall(str(raw))]
+                cwd = event.get("cwd") or root
+                for p in paths:
+                    full = os.path.realpath(p if os.path.isabs(p) else os.path.join(cwd, p))
+                    if full.startswith(os.path.realpath(root) + os.sep):
+                        effects.append(["certain", "file",
+                                        os.path.relpath(full, os.path.realpath(root))[:200]])
+            if effects:
+                state["turn"]["effects"] = (state["turn"].get("effects", []) + effects)[-80:]
+                save_state(state)
+        except Exception:
+            continue
+
+
 def on_tool(event, agent):
     tool = event.get("tool_name") or ""
     sid = event.get("session_id")
     if tool in READ_TOOLS or not sid:
         return None
+    guarded = memory_guard(event)
+    if guarded:
+        return guarded
+    roots = touched_roots(event)
+    decision = gate(event, agent, roots)
+    if decision is None:
+        record_effects(event, roots, sid, agent)
+    return decision
+
+
+def gate(event, agent, roots):
+    tool = event.get("tool_name") or ""
+    sid = event.get("session_id")
     tool_input = event.get("tool_input") or {}
     cmd = command_of(tool_input) if tool in SHELL_TOOLS else ""
-    for root in touched_roots(event):
+    for root in roots:
         state, _ = session_state(sid, root, agent)
         if not state or state.get("confirmed") or state.get("error"):
             continue
@@ -967,6 +1115,70 @@ def on_tool(event, agent):
     return None
 
 
+def capture_mode():
+    mode = os.environ.get("KB_CAPTURE_MODE", "").strip().lower()
+    if not mode:
+        try:
+            with open(os.path.join(state_root(), "capture-mode"), encoding="utf-8") as f:
+                mode = f.read().strip().lower()
+        except OSError:
+            mode = "record"
+    return mode if mode in CAPTURE_MODES else "record"
+
+
+def finish_turn(state, interrupted=False, stop_hook_active=False):
+    """Итог хода в реестр: классы следствий, изменённые файлы, дошло ли до базы."""
+    turn, root, sid = state.get("turn"), state.get("root"), state.get("session")
+    if not turn or not root or not os.path.isdir(root):
+        return
+    snap = kb_turns.load_snap(sid, root)
+    changed = kb_turns.changed_since(root, snap)
+    effects = turn.get("effects", [])
+    file_paths = {e[2] for e in effects if len(e) > 2}
+    know, _ = kb_turns.split_knowledge(root, changed | file_paths)
+    know = set(know)
+    work = {f for f in changed if f not in know}
+    certain = [e for e in effects if e[0] == "certain" and not (len(e) > 2 and e[2] in know)]
+    kinds = {}
+    for e in effects:
+        key = f"{e[0]}:{e[1]}"
+        kinds[key] = kinds.get(key, 0) + 1
+    row = {"ts": now_iso(), "ts_epoch": time.time(), "session": str(sid)[:12],
+           "agent": state.get("agent"), "project": os.path.basename(root), "mode": capture_mode(),
+           "certain": len(certain), "uncertain": sum(1 for e in effects if e[0] == "uncertain"),
+           "kinds": kinds, "work_files": len(work), "knowledge_files": len(know & changed),
+           "decision": bool(turn.get("decision")), "interrupted": interrupted,
+           "stop_hook_active": stop_hook_active}
+    kb_turns.record(root, row)
+    state["last_turn"] = {k: row[k] for k in ("ts", "certain", "uncertain", "work_files",
+                                              "knowledge_files", "decision", "interrupted")}
+    state["turn"] = None
+    save_state(state)
+
+
+def on_stop(event, agent):
+    """Конец хода. 7.5 — только запись, агенту ничего не говорится: неделя замера
+    точности классификации до подсказок и блокировок (решение 02.10.2026). Любая
+    собственная ошибка здесь молча пропускается: замок входа ею не открывается."""
+    sid = event.get("session_id")
+    if not sid:
+        return None
+    folder = os.path.join(state_root(), "sessions")
+    try:
+        names = [n for n in os.listdir(folder)
+                 if n.startswith(f"{safe_name(sid)}--") and n.endswith(".json")]
+    except OSError:
+        return None
+    for name in names:
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                state = json.load(f)
+            finish_turn(state, stop_hook_active=bool(event.get("stop_hook_active")))
+        except Exception:
+            continue
+    return None
+
+
 def run_hook(agent):
     if os.environ.get("KB_ENTRY_HOOK", "").strip().lower() in ("off", "0", "no", "false"):
         return 0
@@ -977,13 +1189,15 @@ def run_hook(agent):
         event = {}
     name = event.get("hook_event_name") or ""
     handlers = {"SessionStart": on_session_start, "UserPromptSubmit": on_prompt,
-                "PreToolUse": on_tool}
+                "PreToolUse": on_tool, "Stop": on_stop}
     handler = handlers.get(name)
     if not handler:
         return 0
     try:
         payload = handler(event, agent)
     except Exception as exc:  # собственная ошибка не блокирует машину — но видна
+        if name == "Stop":
+            return 0                                  # реестр хода — замер, не вход
         sid = event.get("session_id")
         root = find_root(event.get("cwd"))
         if sid and root:
@@ -1134,6 +1348,15 @@ def project_actions(root):
         actions.append(f"свой hook старта сессии в {path} ({command}): если он собирает вход, "
                        "сними его, когда общий kb_start установлен на машине, иначе вход двойной; "
                        "hook другого назначения оставь (migration.md, 7.4, п. 2)")
+    entry = kb_paths.locate(root, "entry")
+    if entry.path:
+        size = os.path.getsize(entry.path)
+        if size > NOW_LIMIT:
+            actions.append(f"{os.path.relpath(entry.path, root)} — {size // 1024} КБ: это уже "
+                           "хроника, а не текущее состояние; агенты по ней ищут, а не читают. "
+                           f"Перестрой в карточку ≤ {NOW_LIMIT // 1024} КБ (где мы, что открыто, "
+                           "решения, ждём), хронику дословно — в архивный файл со ссылкой "
+                           "(tg-archive 02.10: 138 → 11 КБ)")
     rules = "".join(kb_paths.read(p) for p in kb_paths.rules_files(root))
     if rules and "kb_start" not in rules:
         actions.append("правила проекта не называют исполняемый вход: шаг входа замени шаблонным "
