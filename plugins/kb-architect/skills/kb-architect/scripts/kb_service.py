@@ -154,14 +154,9 @@ def accumulated(root, today=None):
     else:
         commits = git(root, "rev-list", "--count", "--no-merges", "--since=30.days", "HEAD", "--", ".")
     commits = int(commits.strip() or 0)
-    turns = kb_turns.summary(root, days=max(1, days if days is not None else 30))
-    registry_days = 0
-    try:
-        with open(kb_turns.registry_path(root), encoding="utf-8") as f:
-            first = json.loads(f.readline() or "{}")
-        registry_days = (datetime.datetime.now().timestamp() - first.get("ts_epoch", 0)) / 86400
-    except (OSError, ValueError):
-        pass
+    turns = kb_turns.summary(root, days=max(1, days if days is not None else 30), whole_only=True)
+    registry_days = ((datetime.datetime.now().timestamp() - turns["first_ts"]) / 86400
+                     if turns.get("first_ts") else 0)
     unrecorded = turns["turns_with_work"] - turns["work_recorded"]
     questions = kb_paths.locate(root, "questions").path
     age = exam_age(root, questions, today)

@@ -192,8 +192,28 @@ def split_knowledge(root, files):
     return sorted(know), sorted(set(files) - set(know))
 
 
+# Реплики среды, а не владельца. Claude Code отдаёт hook'у UserPromptSubmit и уведомление о
+# фоновой задаче, и сообщение другой сессии: 02.10 в одной сессии 97 уведомлений резали ходы
+# на куски («прервано» — треть ходов) и по словам из отчётов агентов считались решениями.
+# Только с начала текста: владелец, цитирующий такую метку, остаётся владельцем (ревью 7.6.1).
+MACHINE_PROMPTS = (
+    ("notification", re.compile(r"\A\s*(?:\[SYSTEM NOTIFICATION[^\]\n]*\][^<]{0,400})?<task-notification>")),
+    ("peer", re.compile(r"\A\s*(?:Another Claude session sent a message:\s*<"
+                        r"|<cross-session-message\b|<agent-message\b)")))
+
+
+def prompt_kind(prompt):
+    """human | notification | peer — по началу текста реплики."""
+    text = str(prompt or "")
+    for kind, rx in MACHINE_PROMPTS:
+        if rx.match(text):
+            return kind
+    return "human"
+
+
 def is_decision(prompt):
-    return bool(prompt) and bool(DECISION.search(prompt))
+    return (bool(prompt) and prompt_kind(prompt) == "human"
+            and bool(DECISION.search(prompt)))
 
 
 def git_subcommand(args):
@@ -273,8 +293,10 @@ def record(root, row):
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def summary(root, days=7):
-    """Сводка реестра проекта за N дней: ходы со следствиями и с записью в базу."""
+def summary(root, days=7, whole_only=False):
+    """Сводка реестра проекта за N дней: ходы со следствиями и с записью в базу.
+    whole_only — только ходы, которые служебные реплики уже не режут (строки с `trigger`,
+    с 7.6.1): по ним считает сигнал обхода."""
     limit = time.time() - days * 86400
     rows = []
     for path in (registry_path(root) + ".1", registry_path(root)):
@@ -285,7 +307,7 @@ def summary(root, days=7):
                         row = json.loads(line)
                     except ValueError:
                         continue
-                    if row.get("ts_epoch", 0) >= limit:
+                    if row.get("ts_epoch", 0) >= limit and (not whole_only or "trigger" in row):
                         rows.append(row)
         except OSError:
             pass
@@ -302,6 +324,8 @@ def summary(root, days=7):
         "decision_prompts": sum(1 for r in rows if r.get("decision")),
         "decision_recorded": sum(1 for r in rows if r.get("decision") and r.get("knowledge_files")),
         "sessions": len({r.get("session") for r in rows}),
+        "by_environment": sum(1 for r in rows if r.get("trigger") in ("notification", "peer")),
+        "first_ts": min((r.get("ts_epoch", 0) for r in rows), default=None),
     }
 
 
@@ -318,7 +342,8 @@ def main():
         return 0
     pct = (lambda a, b: f"{round(100 * a / b)} %" if b else "—")
     print(f"Реестр ходов {os.path.basename(os.path.realpath(args.root))} за {args.days} дн.: "
-          f"ходов {s['turns']} (прервано {s['interrupted']}), сессий {s['sessions']}")
+          f"ходов {s['turns']} (прервано {s['interrupted']}; начаты уведомлением или другой "
+          f"сессией {s['by_environment']}), сессий {s['sessions']}")
     print(f"  ходы с работой: {s['turns_with_work']}, из них с записью в базу: "
           f"{s['work_recorded']} ({pct(s['work_recorded'], s['turns_with_work'])})")
     print(f"  ходы с точными следствиями: {s['turns_certain']}, записано: "

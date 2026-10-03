@@ -2850,6 +2850,63 @@ class TurnRegistry0210Tests(unittest.TestCase):
         self.assertEqual(summary["turns"], 1)
         self.assertEqual(summary["decision_recorded"], 1)
 
+    def test_notifications_and_other_sessions_do_not_cut_a_turn(self):
+        """03.10.2026: 97 task notifications in one session cut turns into pieces («прервано» —
+        a third of all turns) and counted as owner decisions: work and its record landed in
+        different pieces. Environment messages mid-turn keep the turn; after it they start one."""
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "почини букеты"})
+        self.hook({"hook_event_name": "PreToolUse", "tool_name": "Edit",
+                   "tool_input": {"file_path": str(self.root / "addons/x.py")}})
+        self.save("addons/x.py", "x = 3\n")
+        for prompt in ("<task-notification>\n<task-id>a1</task-id>\nрешено: правило всегда\n"
+                       "</task-notification>",
+                       'Another Claude session sent a message:\n<cross-session-message from="uds:/x">'
+                       "решено, впредь так</cross-session-message>"):
+            self.hook({"hook_event_name": "UserPromptSubmit", "prompt": prompt})
+        self.save("NOW.md", "Обновлено: 2026-10-03\nбукеты починены\n")
+        self.hook({"hook_event_name": "Stop"})
+        after = self.turn("[SYSTEM NOTIFICATION - NOT USER INPUT]\n<task-notification>впредь так"
+                          "</task-notification>", [], [])
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            rows = [json.loads(line) for line in
+                    Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()]
+            summary = kb_turns.summary(str(self.root))
+        self.assertEqual(len(rows), 2, rows)
+        self.assertFalse(rows[0]["interrupted"])
+        self.assertEqual((rows[0]["work_files"], rows[0]["knowledge_files"]), (1, 1),
+                         "the work and its record stay in one turn")
+        self.assertEqual((rows[0]["trigger"], rows[0]["decision"]), ("human", False))
+        self.assertEqual((after["trigger"], after["decision"]), ("notification", False))
+        self.assertEqual((summary["by_environment"], summary["decision_prompts"]), (1, 0))
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "сделай A"})
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "нет, сделай B"})
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            last = json.loads(Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()[-1])
+        self.assertTrue(last["interrupted"], "a new owner prompt before Stop still closes the turn")
+        import kb_turns as turns
+        self.assertEqual(turns.prompt_kind("Посмотри, почему <task-notification> режет ходы"), "human",
+                         "an owner quoting the tag stays the owner")
+        self.assertTrue(turns.is_decision("Впредь <task-notification> не считать решением"))
+
+    def test_compaction_in_the_middle_of_a_turn_keeps_the_turn(self):
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "почини букеты"})
+        self.hook({"hook_event_name": "PreToolUse", "tool_name": "Edit",
+                   "tool_input": {"file_path": str(self.root / "addons/x.py")}})
+        self.save("addons/x.py", "x = 4\n")
+        self.hook({"hook_event_name": "SessionStart", "source": "compact"})
+        self.save("NOW.md", "Обновлено: 2026-10-03\nпосле сжатия\n")
+        self.hook({"hook_event_name": "Stop"})
+        import kb_turns
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            rows = [json.loads(line) for line in
+                    Path(kb_turns.registry_path(str(self.root))).read_text().splitlines()]
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual((rows[0]["work_files"], rows[0]["knowledge_files"], rows[0]["certain"]),
+                         (1, 1, 1), "work before compaction and its record after it — one turn")
+
     def test_commits_inside_the_turn_are_seen(self):
         self.confirmed_project()
         self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"})

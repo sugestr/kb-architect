@@ -876,6 +876,8 @@ def on_session_start(event, agent):
     if previous and source in ("compact", "resume"):
         roles = (previous.get("confirmed") or {}).get("roles") or previous.get("roles") or None
     state, all_roles = start_entry(root, sid, agent, source, roles)
+    if source == "compact" and previous and previous.get("turn"):
+        state["turn"] = previous["turn"]      # сжатие посреди хода — тот же ход (ревью 7.6.1)
     label = {"compact": "контекст сжат — вход заново", "clear": "/clear — вход заново",
              "resume": "возобновление без подтверждённого входа"}.get(source, "новая сессия")
     due = None if source == "compact" else due_summary(root)
@@ -942,13 +944,20 @@ def session_state(sid, root, agent):
 
 def begin_turn(state, root, prompt):
     """Отпечаток рабочей копии в начале хода — для итога хода в реестре. Ход без конца
-    (прерван Esc или ошибкой) записывается здесь как прерванный, а не теряется."""
+    (прерван Esc или ошибкой) записывается здесь как прерванный, а не теряется.
+    Уведомление о фоновой задаче или сообщение другой сессии посреди хода — тот же ход
+    (7.6.1); после конца хода оно начинает новый, но решением владельца не считается.
+    Ход, брошенный Esc (Stop не пришёл), уведомление не закрывает: он закроется следующим
+    Stop или репликой владельца — прерванных так насчитается меньше, работа не теряется."""
     try:
+        kind = kb_turns.prompt_kind(prompt)
         if state.get("turn"):
+            if kind != "human":
+                return
             finish_turn(state, interrupted=True)
         kb_turns.save_snap(state["session"], root, kb_turns.snapshot(root))
         state["turn"] = {"at": now_iso(), "decision": kb_turns.is_decision(prompt),
-                         "effects": []}
+                         "effects": [], "trigger": kind}
         save_state(state)
     except Exception:
         pass
@@ -968,6 +977,8 @@ def on_prompt(event, agent):
         return context_payload("UserPromptSubmit",
                                entry_message(state, kb_entry.declared_roles(root)[0],
                                              "сессия старше hook'а", None, agent))
+    if kb_turns.prompt_kind(event.get("prompt")) != "human":
+        return None                           # замок остаётся; напоминание — на реплику владельца
     return context_payload("UserPromptSubmit", reminder(state))
 
 
@@ -1157,7 +1168,7 @@ def finish_turn(state, interrupted=False, stop_hook_active=False):
            "certain": len(certain), "uncertain": sum(1 for e in effects if e[0] == "uncertain"),
            "kinds": kinds, "work_files": len(work), "knowledge_files": len(know & changed),
            "decision": bool(turn.get("decision")), "interrupted": interrupted,
-           "stop_hook_active": stop_hook_active}
+           "stop_hook_active": stop_hook_active, "trigger": turn.get("trigger", "human")}
     kb_turns.record(root, row)
     state["last_turn"] = {k: row[k] for k in ("ts", "certain", "uncertain", "work_files",
                                               "knowledge_files", "decision", "interrupted")}
