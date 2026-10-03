@@ -142,7 +142,7 @@ def t_620_thin_router_points_to_versioned_contract():
     out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
     check("версионируемое ядро сохраняет обязательные правила и их маршруты",
           len(router.encode("utf-8")) <= 14_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B.
-          and 'version: "8.0.0"' in router
+          and 'version: "8.0.1"' in router
           and all(path in router for path in (
               "references/project-roles.md", "references/retrieval.md",
               "references/adopt-existing.md", "references/migration.md"))
@@ -193,7 +193,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 14_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == '8.0.0'
+          and data.get("baseline_version") == '8.0.1'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
@@ -3429,13 +3429,16 @@ def t_602_private_family_report_defaults_to_detailed_local_route():
     flat = " ".join(service.split())
     flat_tpl = " ".join(template.split())
     check("private family report is detailed by verified route, not agent guess",
-          'В разрешённой частной группе владельца подробный отчёт' in flat
-          and 'допустим по умолчанию, если репозитории приватны' in flat
-          and 'реквизиты и секреты — в отчёт о дефекте не попадают ни в каком режиме' in flat
-          and 'реквизиты и секреты — не попадают в отчёт ни в каком режиме' in flat_tpl
-          and 'по умолчанию не включай' not in flat_tpl
+          'подробный отчёт из проекта того же владельца допустим по умолчанию' in flat
+          # owner 04.10.2026: the private owner channel may carry third-party details;
+          # access values never; outside that boundary the report is anonymised.
+          and 'включая сведения о третьих лицах' in flat
+          and ('Значения доступов — пароли, токены, ключи, PIN, полные номера карт — '
+               'не попадают никогда') in flat
+          and 'Значения доступов не включаются никогда' in flat_tpl
           and 'Режим подробности:' in template
-          and 'Публичный отчёт содержит механизм и воспроизводитель без частных имён, идентификаторов и сумм' in flat
+          and 'из проекта другого владельца, публичным issue — обезличен' in flat
+          and 'механизм и воспроизводитель без частных имён, идентификаторов и сумм' in flat
           and "Обезличенный (по умолчанию)" not in template
           and 'Сначала подготовь полный отчёт и preview разрешённому получателю' in template,
           out, "trusted local delivery preserves diagnostics; public delivery is anonymised")
@@ -5380,7 +5383,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "8.0.0"
+          kb_paths.skill_version() == "8.0.1"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == "7.2.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

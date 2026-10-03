@@ -4338,6 +4338,34 @@ class Review0310Tests(unittest.TestCase):
         dates = sorted(d for d, _ in kb_service.open_corrections(str(self.root)))
         self.assertEqual(dates, ["2026-09-01", "2026-09-02", "2026-09-03"])
 
+    def test_bare_date_entries_after_a_blank_line_are_counted(self):
+        """tg-archive 03.10: 32 entries started with a bare date and were invisible."""
+        import kb_service
+        self.save("CORRECTIONS.md", "# Канал\n\n2026-09-05 — `a`: открыто\n\n"
+                                    "**2026-09-06** — `b`: ещё строка\n2026-09-07 в тексте, не запись\n\n"
+                                    "2026-09-08 — `c`: ✔ закрыто 2026-09-09, внесено в NOW.md\n"
+                                    "- 2026-09-10 · `d` — открыто\n")
+        self.save("CLAUDE.md", "# Rules\nканал правок: CORRECTIONS.md\n")
+        dates = sorted(d for d, _ in kb_service.open_corrections(str(self.root)))
+        self.assertEqual(dates, ["2026-09-05", "2026-09-06", "2026-09-10"])
+
+    def test_a_separate_closure_entry_closes_the_named_entries_above_only(self):
+        """A company project, 05.09: «закрытие двух записей `A` и `B` выше» stayed unlinked."""
+        import kb_service
+        self.save("CORRECTIONS.md", "# Канал\n"
+                                    "- 2026-09-05 · `система / приёмка` — отчёт расходится\n"
+                                    "- 2026-09-05 · `система / роли` — роли не наследуют\n"
+                                    "- 2026-09-05 · `знание / учёт` — открыто\n"
+                                    "- 2026-09-05 · закрытие двух записей `система / приёмка` и "
+                                    "`система / роли` выше: ✔ закрыто в `PROJECT_ROLES.json`\n"
+                                    "- 2026-09-06 · `система / роли` — новая запись после закрытия\n"
+                                    "- 2026-09-07 · см. `знание / учёт` ✔ закрыто 2026-09-07, внесено в a.md\n")
+        self.save("CLAUDE.md", "# Rules\nканал правок: CORRECTIONS.md\n")
+        got = sorted((d, b.split("`")[1]) for d, b in kb_service.open_corrections(str(self.root)))
+        # A mention without «закрытие записей» does not close another entry; a later entry
+        # with the same label is not closed by an earlier closure.
+        self.assertEqual(got, [("2026-09-05", "знание / учёт"), ("2026-09-06", "система / роли")])
+
     def test_git_failure_inside_a_repository_is_not_checked(self):
         import kb_debts
         self.init_git()

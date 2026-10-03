@@ -59,8 +59,15 @@ CLOSED_MARK = re.compile(r"(?:^|[·—|:]|\s[-–])[ \t*]*CLOSED\b", re.MULTILIN
 # Запись начинается датой: ISO или ДД.ММ.ГГГГ / ДД/ММ/ГГГГ, в том числе жирной (UAD «## 10.09.2026»,
 # другой проект «- **25/09/2026»): прежде такие записи склеивались с соседними или не считались.
 DATE = r"(?:\*\*)?(?:\d{4}-\d{2}-\d{2}|\d{2}[./]\d{2}[./]\d{4})"
-ENTRY = re.compile(r"\n(?=(?:- |\| |## )" + DATE + ")")
-ENTRY_DATE = re.compile(r"(?:- |\| |## )(?:\*\*)?(?:(\d{4})-(\d{2})-(\d{2})|(\d{2})[./](\d{2})[./](\d{4}))")
+# Запись может начинаться и голой датой после пустой строки («2026-10-03 — `id` …»):
+# в tg-archive 32 такие записи счётчик не видел (сервисный обход 03.10.2026).
+ENTRY = re.compile(r"\n(?=(?:- |\| |## )" + DATE + r")|(?<=\n\n)(?=" + DATE + r"(?!\d))")
+ENTRY_DATE = re.compile(r"(?:- |\| |## )?(?:\*\*)?(?:(\d{4})-(\d{2})-(\d{2})|(\d{2})[./](\d{2})[./](\d{4}))")
+# Отдельная запись «закрытие двух записей `A` и `B` выше» закрывает записи выше с этими
+# метками (проект компании, 05.09): метка записи — первый `…` её первой строки.
+LABEL = re.compile(r"`([^`\n]+)`")
+CLOSES_OTHERS = re.compile(r"(?:закрыти\w*|закрыва\w*)\s+(?:\S+\s+){0,2}запис|"
+                           r"closes?\s+(?:\S+\s+){0,2}entr", re.IGNORECASE)
 # Пример из шаблона канала правок — не запись.
 TEMPLATE_EXAMPLE = ("path/to/file.md", "утверждает X, на самом деле Y")
 NOW_LIMIT = 20 * 1024
@@ -139,24 +146,31 @@ def open_corrections(root):
     loc = kb_paths.locate(root, "corrections")
     if not loc.path:
         return []
-    out = []
     text = kb_paths.read(loc.path)
     # Дата внутри блока кода — пример, не запись: начала записей ищутся по видимому тексту.
-    starts = [0] + [m.end() for m in ENTRY.finditer(visible_corrections(text))] + [len(text)]
+    starts = sorted({0, len(text)} | {m.end() for m in ENTRY.finditer(visible_corrections(text))})
+    opened = []                       # [(метка, дата, текст)] в порядке файла
     for start, end in zip(starts, starts[1:]):
         block = text[start:end]
         b = block.strip()
         m = ENTRY_DATE.match(b)
+        if not m:
+            continue
+        first = b.splitlines()[0]
         # Цитаты и код скрываются внутри записи: незакрытый блок кода в одной записи
         # не прячет отметки всех следующих (tg-archive, 03.10.2026).
         status = visible_corrections(block)
-        if (not m or CLOSED.search(status) or CLOSED_UPPER.search(status)
+        if (CLOSED.search(status) or CLOSED_UPPER.search(status)
                 or CLOSED_MARK.search(status) or all(t in b for t in TEMPLATE_EXAMPLE)):
+            if CLOSES_OTHERS.search(first):
+                named = set(LABEL.findall(first))
+                opened = [o for o in opened if o[0] not in named]
             continue
+        label = LABEL.search(first)
         date = (f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m.group(1)
                 else f"{m.group(6)}-{m.group(5)}-{m.group(4)}")
-        out.append((date, b))
-    return sorted(out, key=lambda x: x[0], reverse=True)
+        opened.append((label.group(1) if label else None, date, b))
+    return sorted(((d, b) for _, d, b in opened), key=lambda x: x[0], reverse=True)
 
 
 def exam_report(root):
