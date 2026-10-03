@@ -98,13 +98,16 @@ MCP_WRITE = re.compile(r"create|update|delete|remove|set_|send|post|write|modify
 PATCH_PATH = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$", re.MULTILINE)
 # (событие, matcher Claude, matcher Codex, timeout, статус). Строка команды и
 # состав записи — ключ доверия Codex: их правка требует нового одобрения владельца.
+# Последнее поле — строка состояния. Codex показывает её и как имя hook'а в настройках
+# (поля «имя» у него нет): без неё владелец видел «Хук 1» трижды (03.10.2026). Claude Code
+# показывает её только как статус, поэтому частым событиям она там не ставится.
 HOOK_EVENTS = (
     ("SessionStart", "startup|resume|clear|compact", "startup|resume|clear|compact", 120,
-     "KB-вход: собираю файл входа"),
-    ("UserPromptSubmit", None, None, 20, None),
+     "База знаний: вход в проект"),
+    ("UserPromptSubmit", None, None, 20, "База знаний: начало шага"),
     ("PreToolUse", "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*",
-     "Bash|apply_patch|Edit|Write|mcp__.*", 20, None),
-    ("Stop", None, None, 20, None),
+     "Bash|apply_patch|Edit|Write|mcp__.*", 20, "База знаний: проверка перед действием"),
+    ("Stop", None, None, 20, "База знаний: итог шага"),
 )
 # Реестр хода (7.5): «record» — только запись; «advise» и «block» — после недели замера.
 CAPTURE_MODES = ("record", "advise", "block")
@@ -1412,7 +1415,7 @@ def wanted_groups(agent):
     for event, claude_matcher, codex_matcher, timeout, message in HOOK_EVENTS:
         matcher = codex_matcher if agent == "codex" else claude_matcher
         hook = {"type": "command", "command": hook_command(agent), "timeout": timeout}
-        if message:
+        if message and (agent == "codex" or event == "SessionStart"):
             hook["statusMessage"] = message
         if agent == "codex" and event in ("SessionStart", "UserPromptSubmit"):
             # Только события с контекстом для агента: на Stop Codex пишет «ignoring

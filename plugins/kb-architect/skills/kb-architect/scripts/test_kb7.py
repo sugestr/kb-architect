@@ -2301,6 +2301,18 @@ class ExecutableEntry0110Tests(unittest.TestCase):
         for event in ("Stop", "PreToolUse"):
             self.assertNotIn("additionalContextLimit", hooks[event][0]["hooks"][0],
                              "Codex warns: this event cannot emit additionalContext")
+        names = [hooks[e][0]["hooks"][0].get("statusMessage") for e in hooks]
+        self.assertTrue(all(n and n.startswith("База знаний: ") for n in names),
+                        f"Codex lists hooks by their status line, not «Хук 1»: {names}")
+        self.assertEqual(len(set(names)), 4)
+        run()
+        claude_hooks = json.loads(settings.read_text())["hooks"]
+        self.assertEqual(claude_hooks["SessionStart"][0]["hooks"][0]["statusMessage"],
+                         "База знаний: вход в проект")
+        for event in ("UserPromptSubmit", "PreToolUse", "Stop"):
+            ours = [g for g in claude_hooks[event] if "kb_start.py" in json.dumps(g)]
+            self.assertNotIn("statusMessage", ours[0]["hooks"][0],
+                             "no status flash in Claude Code on every prompt or tool call")
         self.assertIn("apply_patch", hooks["PreToolUse"][0]["matcher"])
         self.assertIn("--agent codex", hooks["SessionStart"][0]["hooks"][0]["command"])
 
