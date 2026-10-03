@@ -2297,6 +2297,10 @@ class ExecutableEntry0110Tests(unittest.TestCase):
         self.assertIn("Review hooks", codex.stdout)
         hooks = json.loads((home / ".codex" / "hooks.json").read_text())["hooks"]
         self.assertEqual(hooks["SessionStart"][0]["hooks"][0]["additionalContextLimit"], 0)
+        self.assertEqual(hooks["UserPromptSubmit"][0]["hooks"][0]["additionalContextLimit"], 0)
+        for event in ("Stop", "PreToolUse"):
+            self.assertNotIn("additionalContextLimit", hooks[event][0]["hooks"][0],
+                             "Codex warns: this event cannot emit additionalContext")
         self.assertIn("apply_patch", hooks["PreToolUse"][0]["matcher"])
         self.assertIn("--agent codex", hooks["SessionStart"][0]["hooks"][0]["command"])
 

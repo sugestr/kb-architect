@@ -1414,7 +1414,9 @@ def wanted_groups(agent):
         hook = {"type": "command", "command": hook_command(agent), "timeout": timeout}
         if message:
             hook["statusMessage"] = message
-        if agent == "codex" and event != "PreToolUse":
+        if agent == "codex" and event in ("SessionStart", "UserPromptSubmit"):
+            # Только события с контекстом для агента: на Stop Codex пишет «ignoring
+            # additionalContextLimit … cannot emit additionalContext» (владелец, 03.10.2026).
             hook["additionalContextLimit"] = 0
         group = {"hooks": [hook]}
         if matcher:
