@@ -113,7 +113,7 @@ HOOK_EVENTS = (
 )
 # Реестр хода (7.5): «record» — только запись; «advise» и «block» — после недели замера.
 CAPTURE_MODES = ("record", "advise", "block")
-NOW_LIMIT = 20 * 1024        # больше — хроника: Codex читал такой NOW целиком в 8 % обращений
+NOW_LIMIT = 20 * 1024        # сигнал проверить назначение NOW; размер сам по себе не ошибка
 MEMORY_FILE = re.compile(r"/\.claude/projects/[^/]+/memory/[^/]+\.md$")
 MEMORY_KIND = re.compile(r"^\s*type\s*:\s*[\"']?(project|reference)\b",
                          re.MULTILINE | re.IGNORECASE)
@@ -1505,26 +1505,26 @@ def project_actions(root):
     if len(roles) > 1 and not default:
         actions.append(f"ролей {len(roles)}, а `entry_role` в PROJECT_ROLES.json нет: объяви роль "
                        "большинства задач — иначе каждый новый чат сначала собирает вход роли, "
-                       "без неё замок входа не откроется (migration.md, 7.4, п. 1)")
+                       "без неё замок входа не откроется (references/migration.md → release_actions; references/service-layer.md → entry)")
     for path, event, digest in foreign_entry_hooks(root):
         actions.append(f"свой hook старта сессии в {path} ({event}, sha256:{digest}): "
                        "если он собирает вход, "
                        "сними его, когда общий kb_start установлен на машине, иначе вход двойной; "
-                       "hook другого назначения оставь (migration.md, 7.4, п. 2)")
+                       "hook другого назначения оставь (references/migration.md → release_actions)")
     entry = kb_paths.locate(root, "entry")
     if entry.path:
         size = os.path.getsize(entry.path)
         if size > NOW_LIMIT:
-            actions.append(f"{os.path.relpath(entry.path, root)} — {size // 1024} КБ: это уже "
-                           "хроника, а не текущее состояние; агенты по ней ищут, а не читают. "
-                           f"Перестрой в карточку ≤ {NOW_LIMIT // 1024} КБ (где мы, что открыто, "
-                           "решения, ждём), хронику дословно — в архивный файл со ссылкой "
-                           "(tg-archive 02.10: 138 → 11 КБ)")
+            actions.append(f"{os.path.relpath(entry.path, root)} — {size // 1024} КБ: "
+                           "проверь, не стал ли NOW хроникой; размер сам по себе не ошибка. "
+                           "Проверь содержание, назначение и потребителей; если это хроника — "
+                           "карточка (где мы, что открыто, решения, чего ждём), хронику дословно "
+                           "в архивный файл со ссылкой (references/service-layer.md → service_pass)")
     rules = "".join(kb_paths.read(p) for p in kb_paths.rules_files(root))
     if rules and "kb_start" not in rules:
         actions.append("правила проекта не называют исполняемый вход: шаг входа замени шаблонным "
                        "(hook kb_start; без hook — kb_entry.py --role) вместо порядка чтения прозой "
-                       "(migration.md, 7.4, п. 3; assets/templates/CLAUDE.md, шаг 1)")
+                       "(references/migration.md → release_actions; assets/templates/CLAUDE.md → Вход)")
     return actions
 
 

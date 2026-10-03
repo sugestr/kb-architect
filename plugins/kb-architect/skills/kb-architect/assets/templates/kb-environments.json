@@ -1,7 +1,12 @@
 {
   "schema": 1,
-  "cloud_policy": "allowed",
-  "supported_runtimes": ["codex-local", "claude-local", "codex-cloud", "claude-cloud"],
+  "cloud_policy": "pending",
+  "supported_runtimes": [
+    "codex-local",
+    "claude-local",
+    "codex-cloud",
+    "claude-cloud"
+  ],
   "capabilities": [
     {
       "id": "email.personal.read",
@@ -17,7 +22,7 @@
       ],
       "providers": {
         "codex-local": {
-          "status": "accepted",
+          "status": "pending",
           "kind": "local-mcp",
           "provider": "<exact server id from the canonical local MCP inventory>",
           "identity": "<account alias, never a credential>",
@@ -25,7 +30,7 @@
           "authority": "current-task owner request plus project stop-gates",
           "source": "<path or pointer to the canonical MCP inventory>",
           "validation": "<safe read-only capability probe>",
-          "accepted_at": "<date and evidence>"
+          "accepted_at": "<date and evidence; required once status is accepted>"
         },
         "claude-local": {
           "status": "pending",
@@ -44,8 +49,7 @@
           "identity": "<account alias>",
           "scope": "<scope accepted in this cloud environment>",
           "authority": "<authority>",
-          "validation": "<safe read-only probe in a fresh cloud task>",
-          "accepted_at": "<date and evidence after acceptance>"
+          "validation": "<safe read-only probe in a fresh cloud task>"
         },
         "claude-cloud": {
           "status": "pending",
@@ -54,8 +58,7 @@
           "identity": "<account alias>",
           "scope": "<scope accepted in this cloud environment>",
           "authority": "<authority>",
-          "validation": "<safe read-only probe in a fresh cloud task>",
-          "accepted_at": "<date and evidence after acceptance>"
+          "validation": "<safe read-only probe in a fresh cloud task>"
         }
       },
       "fallback": "Ask the owner for an export or run the task in an accepted runtime; do not claim the mailbox was checked"

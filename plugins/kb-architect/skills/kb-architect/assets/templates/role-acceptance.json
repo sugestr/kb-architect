@@ -2,78 +2,28 @@
   "schema": 5,
   "outcomes": {
     "STRUCTURAL_PASS": {
-      "status": "PASS",
-      "evidence": [{"path": "role-acceptance/structural.txt", "sha256": "replace"}],
-      "validators": {
-        "research-adviser": {
-          "platform": {"result": "PASS", "command": "python3 <skill-creator>/scripts/quick_validate.py skills/research-adviser", "evidence": [{"path": "role-acceptance/platform-validator.txt", "sha256": "replace"}]},
-          "project": {"result": "PASS", "command": "python3 skills/research-adviser/tests/run.py", "evidence": [{"path": "role-acceptance/project-validator.txt", "sha256": "replace"}]}
-        }
-      }
+      "status": "UNKNOWN",
+      "evidence": []
     },
     "DISCOVERY_PASS": {
-      "status": "PASS",
-      "evidence": [{"path": "role-acceptance/discovery.txt", "sha256": "replace"}],
-      "agents": {
-        "codex": {
-          "fresh_context": true,
-          "unforced": true,
-          "new_session_required": true,
-          "session_boundary": "new-session",
-          "inventory": [{"id": "research-adviser", "path": ".agents/skills/research-adviser/SKILL.md", "sha256": "replace", "version": "1.0.0"}],
-          "selected": [{"id": "research-adviser", "path": ".agents/skills/research-adviser/SKILL.md", "sha256": "replace", "version": "1.0.0"}]
-        },
-        "claude": {
-          "fresh_context": true,
-          "unforced": true,
-          "new_session_required": true,
-          "session_boundary": "new-session",
-          "inventory": [{"id": "research-adviser", "path": ".claude/skills/research-adviser/SKILL.md", "sha256": "replace", "version": "1.0.0"}],
-          "selected": [{"id": "research-adviser", "path": ".claude/skills/research-adviser/SKILL.md", "sha256": "replace", "version": "1.0.0"}]
-        }
-      }
+      "status": "UNKNOWN",
+      "evidence": []
     },
     "BEHAVIOR_PASS": {
-      "status": "PASS",
-      "proof_mode": "synthetic-first",
-      "runtime_scope": "shared",
-      "evidence": [{"path": "role-acceptance/behavior.txt", "sha256": "replace"}],
-      "cases": {
-        "role-selection": {"result": "PASS", "run": {"run_id": "role-selection-001", "case": "role-selection", "executed_at": "YYYY-MM-DDThh:mm:ssZ", "runtime": "shared synthetic test runtime", "harness": {"path": "role-acceptance/run_shared_behavior.py", "sha256": "replace", "argv": []}, "execution_receipt": {"path": "role-acceptance/behavior-execution.json", "sha256": "replace"}, "result": "PASS", "input": {"path": "role-acceptance/role-selection-input.json", "sha256": "replace"}, "expected": {"path": "role-acceptance/role-selection-expected.json", "sha256": "replace"}, "observed": {"path": "role-acceptance/role-selection-observed.json", "sha256": "replace"}, "negative_control": {"id": "break-role-selection", "target": {"path": "PROJECT_ROLES.json", "sha256": "replace"}, "mutation": {"kind": "replace-text", "find": "replace-with-one-exact-selector-trigger", "replace": "guaranteed-non-matching-trigger", "count": 1}, "neutral_mutation": {"kind": "replace-text", "find": "replace-with-one-exact-selector-description", "replace": "equivalent-selector-description", "count": 1}, "expected_exit": 10}}},
-        "knowledge-recall": {"result": "PASS", "run": {"run_id": "knowledge-recall-001", "case": "knowledge-recall", "executed_at": "YYYY-MM-DDThh:mm:ssZ", "runtime": "shared synthetic test runtime", "harness": {"path": "role-acceptance/run_shared_behavior.py", "sha256": "replace", "argv": []}, "execution_receipt": {"path": "role-acceptance/behavior-execution.json", "sha256": "replace"}, "result": "PASS", "input": {"path": "role-acceptance/knowledge-recall-input.json", "sha256": "replace"}, "expected": {"path": "role-acceptance/knowledge-recall-expected.json", "sha256": "replace"}, "observed": {"path": "role-acceptance/knowledge-recall-observed.json", "sha256": "replace"}, "negative_control": {"id": "break-knowledge-recall", "target": {"path": "KNOWLEDGE_INDEX.json", "sha256": "replace"}, "mutation": {"kind": "replace-text", "find": "replace-with-one-exact-knowledge-alias", "replace": "guaranteed-unreachable-alias", "count": 1}, "neutral_mutation": {"kind": "replace-text", "find": "replace-with-one-exact-knowledge-description", "replace": "equivalent-knowledge-description", "count": 1}, "expected_exit": 10}}},
-        "authority-stop": {"result": "PASS", "run": {"run_id": "authority-stop-001", "case": "authority-stop", "executed_at": "YYYY-MM-DDThh:mm:ssZ", "runtime": "shared synthetic test runtime", "harness": {"path": "role-acceptance/run_shared_behavior.py", "sha256": "replace", "argv": []}, "execution_receipt": {"path": "role-acceptance/behavior-execution.json", "sha256": "replace"}, "result": "PASS", "input": {"path": "role-acceptance/authority-stop-input.json", "sha256": "replace"}, "expected": {"path": "role-acceptance/authority-stop-expected.json", "sha256": "replace"}, "observed": {"path": "role-acceptance/authority-stop-observed.json", "sha256": "replace"}, "negative_control": {"id": "break-authority-stop", "target": {"path": "skills/research-adviser/SKILL.md", "sha256": "replace"}, "mutation": {"kind": "replace-text", "find": "replace-with-one-exact-required-stop", "replace": "deliberately-disabled-stop", "count": 1}, "neutral_mutation": {"kind": "replace-text", "find": "replace-with-one-exact-nonoperative-note", "replace": "equivalent-nonoperative-note", "count": 1}, "expected_exit": 10}}},
-        "source-conflict": {"result": "PASS", "run": {"run_id": "source-conflict-001", "case": "source-conflict", "executed_at": "YYYY-MM-DDThh:mm:ssZ", "runtime": "shared synthetic test runtime", "harness": {"path": "role-acceptance/run_shared_behavior.py", "sha256": "replace", "argv": []}, "execution_receipt": {"path": "role-acceptance/behavior-execution.json", "sha256": "replace"}, "result": "PASS", "input": {"path": "role-acceptance/source-conflict-input.json", "sha256": "replace"}, "expected": {"path": "role-acceptance/source-conflict-expected.json", "sha256": "replace"}, "observed": {"path": "role-acceptance/source-conflict-observed.json", "sha256": "replace"}, "negative_control": {"id": "break-source-conflict", "target": {"path": "role-acceptance/source-conflict-input.json", "sha256": "replace"}, "mutation": {"kind": "replace-text", "find": "replace-with-second-conflicting-source", "replace": "deliberately-removed-source", "count": 1}, "neutral_mutation": {"kind": "replace-text", "find": "replace-with-one-exact-scenario-label", "replace": "equivalent-scenario-label", "count": 1}, "expected_exit": 10}}},
-        "context-cost": {"result": "PASS", "run": {"run_id": "context-cost-001", "case": "context-cost", "executed_at": "YYYY-MM-DDThh:mm:ssZ", "runtime": "shared synthetic test runtime", "harness": {"path": "role-acceptance/run_shared_behavior.py", "sha256": "replace", "argv": []}, "execution_receipt": {"path": "role-acceptance/behavior-execution.json", "sha256": "replace"}, "result": "PASS", "input": {"path": "role-acceptance/context-cost-input.json", "sha256": "replace"}, "expected": {"path": "role-acceptance/context-cost-expected.json", "sha256": "replace"}, "observed": {"path": "role-acceptance/context-cost-observed.json", "sha256": "replace"}, "negative_control": {"id": "break-context-cost", "target": {"path": "PROJECT_ROLES.json", "sha256": "replace"}, "mutation": {"kind": "replace-text", "find": "replace-with-one-exact-accepted-budget", "replace": "1", "count": 1}, "neutral_mutation": {"kind": "replace-text", "find": "replace-with-one-exact-budget-description", "replace": "equivalent-budget-description", "count": 1}, "expected_exit": 10}}}
-      },
-      "private_real_data": {"authority": "not-granted", "result": "UNKNOWN", "reason": "synthetic proof is sufficient; no private destination was authorised"}
+      "status": "UNKNOWN",
+      "evidence": []
     },
     "OWNER_ACCEPTED": {
-      "status": "PASS",
-      "accepted_by": "project owner",
-      "accepted_at": "YYYY-MM-DD after seeing the preceding results",
-      "evidence": [{"path": "role-acceptance/owner-acceptance.txt", "sha256": "replace"}]
+      "status": "UNKNOWN",
+      "evidence": []
     }
   },
-  "project_roles_sha256": "replace-with-sha256-of-PROJECT_ROLES.json",
-  "knowledge_index_sha256": "replace-with-sha256-of-KNOWLEDGE_INDEX.json",
-  "skills": {
-    "research-adviser": {
-      "skill_sha256": "replace-with-sha256-of-the-accepted-SKILL.md",
-      "skill_tree_sha256": "replace-with-sha256-of-all-tracked-role-files",
-      "quality_review_sha256": "replace-with-sha256-of-ROLE_QUALITY_REVIEW.json"
-    }
-  },
-  "scenario_baselines": {
-    "ordinary-subject-answer": {
-      "accepted_role_entry_bytes": 2048,
-      "accepted_static_route_bytes": 12288,
-      "accepted_control_plane_bytes": 16384,
-      "accepted_end_to_end_bytes": 28672,
-      "route_files": ["knowledge/subject-authority.md", "knowledge/project-case-state.md"]
-    }
-  },
+  "project_roles_sha256": null,
+  "knowledge_index_sha256": null,
+  "skills": {},
+  "scenario_baselines": {},
   "actual_usage": {
     "status": "UNKNOWN",
-    "reason": "No runtime token receipt has been captured yet; static acceptance remains separate"
+    "reason": "Проверки не выполнялись. Для новой приёмки используйте PROJECT_ROLES.json."
   }
 }

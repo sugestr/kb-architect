@@ -31,7 +31,11 @@ def main() -> int:
     match = re.search(r'^  version: "([^"]+)"$', text, re.MULTILINE)
     if not match:
         raise SystemExit("metadata.version not found")
-    limit = int(os.environ.get("SKILL_LIMIT", "8192"))
+    # One ceiling for the entry: the route-cost checker owns it (8.0: growth guard,
+    # not a goal; owner 03.10.2026). SKILL_LIMIT overrides it for experiments only.
+    sys.path.insert(0, str(SKILL / "scripts"))
+    import kb_cost
+    limit = int(os.environ.get("SKILL_LIMIT", kb_cost.ENTRY_LIMIT))
     size = len(text.encode("utf-8"))
     if size > limit:
         raise SystemExit(f"ПОТОЛОК ПРЕВЫШЕН: SKILL.md {size} байт при пределе {limit}")

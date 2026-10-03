@@ -720,7 +720,7 @@ def main():
             base = int(m.group(2))
             if base and (total >= base * 2 or total - base >= 50):
                 due.append(f"база выросла: было {base} файлов на момент диагностики, стало {total} — "
-                           f"повтори диагностику (00-kak-chitat.md §0), могли появиться новые классы")
+                           f"повтори диагностику (references/adopt-existing.md → diagnosis), могли появиться новые классы")
             else:
                 ok.append(f"файлов: {total} (на момент диагностики {base})")
         else:

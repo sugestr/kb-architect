@@ -1,6 +1,9 @@
 {
   "schema": 1,
-  "supported_agents": ["codex", "claude"],
+  "supported_agents": [
+    "codex",
+    "claude"
+  ],
   "role_posture": {
     "status": "required",
     "rationale": "This project makes recurring material subject-matter judgements",
@@ -12,9 +15,14 @@
     {
       "id": "subject-research-adviser",
       "purpose": "Apply the project's professional research method",
-      "load_when": ["before a material subject-matter conclusion or recommendation"],
+      "load_when": [
+        "before a material subject-matter conclusion or recommendation"
+      ],
       "skill": "research-adviser",
-      "knowledge_routes": ["subject-authority", "project-case-state"]
+      "knowledge_routes": [
+        "subject-authority",
+        "project-case-state"
+      ]
     }
   ],
   "skills": [
@@ -24,12 +32,12 @@
       "owner": "this project",
       "quality_owner": "named domain-role maintainer",
       "quality": {
-        "status": "reviewed",
-        "professional_method": "What professional method and source ladder were reviewed",
-        "external_practice": "performed",
+        "status": "deferred",
+        "professional_method": "Describe the method to be reviewed",
+        "external_practice": "deferred",
         "knowledge_boundary": "method-only",
-        "reason": "The role contains method; project facts and tool recipes remain indexed knowledge",
-        "return_condition": null
+        "reason": "Candidate method has not received a professional review",
+        "return_condition": "A named quality owner reviews the method before subject-matter acceptance"
       },
       "version": "1.0.0",
       "validation": {
@@ -61,13 +69,15 @@
     "scenarios": [
       {
         "id": "ordinary-subject-answer",
-        "roles": ["subject-research-adviser"],
+        "roles": [
+          "subject-research-adviser"
+        ],
         "route_files": [
           "knowledge/subject-authority.md",
           "knowledge/project-case-state.md"
         ],
         "accepted_end_to_end_bytes": 28672,
-        "accepted_reason": "Budget with explicit headroom for normal routed-knowledge growth"
+        "accepted_reason": "Illustrative candidate budget; replace and accept scope, units, rationale and headroom for this project"
       }
     ]
   },
@@ -87,7 +97,11 @@
       "agent": null,
       "fresh_context": null,
       "unforced": null,
-      "covers": ["role-selection", "knowledge-recall", "authority-stop"],
+      "covers": [
+        "role-selection",
+        "knowledge-recall",
+        "authority-stop"
+      ],
       "summary": "Replace with one short observed result",
       "observation": {
         "observed_at": null,
@@ -95,8 +109,14 @@
       }
     },
     "agents": {
-      "codex": {"status": "UNKNOWN", "basis": "Not tested yet"},
-      "claude": {"status": "UNKNOWN", "basis": "Not tested yet"}
+      "codex": {
+        "status": "UNKNOWN",
+        "basis": "Not tested yet"
+      },
+      "claude": {
+        "status": "UNKNOWN",
+        "basis": "Not tested yet"
+      }
     },
     "owner": {
       "status": "PENDING",

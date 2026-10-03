@@ -221,7 +221,7 @@ def accumulated(root, today=None):
     if len(corrections) >= THRESHOLDS["open_corrections"]:
         primary.append(f"ждут разнесения записей канала правок: {len(corrections)}")
     if now_size > NOW_LIMIT:
-        primary.append(f"NOW {now_size // 1024} КБ — хроника вместо карточки")
+        primary.append(f"NOW {now_size // 1024} КБ: проверь, не стал ли NOW хроникой; размер сам по себе не ошибка")
     if unrecorded >= THRESHOLDS["unrecorded_turns"] and registry_days >= THRESHOLDS["registry_days"]:
         primary.append(f"ходов с работой без записи в базу: {unrecorded}")
     if commits >= THRESHOLDS["work_commits"] and (days is None or days >= THRESHOLDS["days_with_work"]):
@@ -361,7 +361,9 @@ def plan(root, show_all=False):
         print("- контрольных вопросов нет: предложи владельцу 3–5 вопросов, которые он реально задаёт")
     print("\n## 5. Реорганизация (только с согласия владельца)")
     if a["now_bytes"] > NOW_LIMIT:
-        print(f"- NOW {a['now_bytes'] // 1024} КБ: карточка ≤ 20 КБ, хронику дословно — в архив со ссылкой")
+        print(f"- NOW {a['now_bytes'] // 1024} КБ: проверь, не стал ли NOW хроникой; размер сам по себе не ошибка. "
+              "Если хроника — карточка (где мы, что открыто, решения, чего ждём), хронику дословно "
+              "в архивный файл со ссылкой (references/service-layer.md → service_pass)")
     print("- главы больше ~100 КБ — предложить деление по смыслу; места для повторяющихся видов "
           "знания, которых нет в карте, — предложить завести")
     print("\n## 6. Отметка")

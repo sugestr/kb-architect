@@ -49,10 +49,10 @@ def t_agent_message_transport_and_no_chatter():
               "required_roles:", "role_coverage:", "evidence_receipt:")
     check("сообщение агента одинаково для файла, канала и владельца",
           all(x in tpl for x in fields)
-          and "не зависит от транспорта" in ref
+          and 'Семантика одинакова для файла, нативного канала и передачи владельцем в чате.' in ref
           and "prepared" in ref and "delivered" in ref and "acknowledged" in ref
-          and "истории source-задачи" in ref
-          and "статусные сообщения" in ref.lower(), out,
+          and 'в своём inbox, затем в доступной истории исходной задачи' in ref
+          and 'чистый статус без дельты получателю' in ref.lower(), out,
           "envelope, delivery states, dedup-before-request and anti-chatter")
 
 
@@ -61,10 +61,18 @@ def t_report_only_envelope_cancels_old_write_authority():
     ref = skill_text("references/collaboration.md")
     router = skill_text("SKILL.md")
     out = Vyvod(ref + "\n" + router, 0)
+    flat = " ".join(router.split())
     check("текущий report-only envelope отменяет старую write-authority",
-          "отменяют старое разрешение на запись" in ref
-          and "точные разрешённые targets" in ref
-          and "Report/read-only сбрасывает старую write-authority" in router,
+          'отменяют прежнее разрешение на запись' in flat
+          and 'разрешения текущей задачи на точный путь' in ref
+          and ('read-only, «только чтение», «только отчёт», «оцени», «диагностируй», '
+               '«проверь», «аудит»') in flat
+          and 'До первой записи назови точные разрешённые цели записи' in flat
+          # K3 8.0: «already granted» covers only the exact same action and scope.
+          and ('Повторно не спрашивай только то, что уже разрешено точно: то же действие, '
+               'объект, объём, адресат и канал') in flat
+          and 'разрешение классом или общим поручением конкретный список или план не заменяет' in flat
+          and 'если назвать их нельзя, работай только чтением' in flat,
           out, "current task scope wins before first write")
 
 
@@ -105,43 +113,58 @@ def t_632_consumer_task_routes_skill_changes_to_report_only():
     unknown = gate.evaluate(owner, True, {}, parent / "sessions")
     router = skill_text("SKILL.md")
     template = skill_text("assets/templates/defect-report.md")
+    service = skill_text("references/service-layer.md")
     out = Vyvod(json.dumps({"blocked": blocked, "passed": passed,
                             "unknown": unknown}, ensure_ascii=False), 0)
     check("consumer task cannot become kb-architect maintainer by wording or cwd",
           blocked["state"] == "BLOCKED_WRONG_EXECUTOR" and blocked["code"] == 3
           and passed["state"] == "PASS" and passed["code"] == 0
           and unknown["state"] == "OWNER_CONTEXT_UNKNOWN" and unknown["code"] == 2
-          and "дефект общего скилла → только bug-report" in router
-          and "Maintenance требует" in router
-          and "без записи в owner" in router
-          and "consumer task соблюдает report-only stop" in template,
+          and 'Из проекта-потребителя дефект общего скилла передавай баг-репортом.' in router
+          and 'после `kb_owner_gate.py` с `PASS`' in router
+          and 'без записи у владельца' in router
+          and 'Из проекта-потребителя готовят отчёт; права менять общий скилл это не создаёт.' in service
+          and 'references/service-layer.md' in template,
           out, "runtime-bound consumer blocks before write; only owner task maintains")
     shutil.rmtree(parent, ignore_errors=True)
 
 
 def t_620_thin_router_points_to_versioned_contract():
-    """The core stays versioned without putting its full text into every turn."""
+    """8.0 embeds the core; its routed obligations keep their owners (A002–A008,
+    A092–A104, A157, A170, E148, X002). No obligation disappeared with contract.md."""
     router = skill_text("SKILL.md")
-    contract = skill_text("references/contract.md")
-    out = Vyvod(router + "\n" + contract, 0)
-    check("тонкий entry маршрутизирует к версионируемому обязательному контракту",
-          len(router.encode("utf-8")) <= 8_192
-          and "references/contract.md" in router
-          and "Изменение ядра требует release delta" in contract
-          and "role posture" in contract
-          and "пустой lexical/search result не доказывает отсутствие" in contract
-          and "Cost baseline — **потолок/бюджет**" in contract
-          and "Универсального лимита project-файла нет" in contract
-          and "project_boot_budget_bytes" in contract
-          and "карта каждого блока" in contract
-          and "Форма проекта не выводится из размера" in contract
-          and all(kind in contract for kind in ("`focused`", "`portfolio`", "`hybrid`"))
-          and "Readiness имеет один канонический executable command" in contract
-          and "CORRECTIONS.md" in contract
-          and "обычный fresh-context вопрос" in contract
-          and "найти существующее" in contract
-          and "реальный stop/conflict" in contract,
-          out, "router <=8KiB; versioned core keeps truth, roles, cost and semantic acceptance")
+    roles = skill_text("references/project-roles.md")
+    adopt = skill_text("references/adopt-existing.md")
+    service = skill_text("references/service-layer.md")
+    cost = skill_text("references/measurement.md")
+    capture = skill_text("references/capture.md")
+    migration = skill_text("references/migration.md")
+    out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
+    check("версионируемое ядро сохраняет обязательные правила и их маршруты",
+          len(router.encode("utf-8")) <= 14_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B.
+          and 'version: "8.0.0"' in router
+          and all(path in router for path in (
+              "references/project-roles.md", "references/retrieval.md",
+              "references/adopt-existing.md", "references/migration.md"))
+          and "Применяется только ещё не принятая дельта" in migration
+          and "До первой записи сохрани точный pre-change commit" in migration
+          and "После принятия показанного результата запиши квитанцию" in migration
+          and "Разработка" in service
+          and "и выпуск следуют правилам репозитория-владельца" in service
+          and "role posture" in roles
+          and "Пустой поиск не доказывает отсутствие" in router
+          and "это потолок, не требование" in cost
+          and "Размер проектного файла не ограничен универсальным числом" in cost
+          and "project_boot_budget_bytes" in cost
+          and "Составь карту каждого блока" in adopt
+          and "Количество файлов, байт или ролей не предписывает разделение" in adopt
+          and all(kind in adopt for kind in ("`focused`", "`portfolio`", "`hybrid`"))
+          and "Readiness имеет один канонический executable command или manifest" in service
+          and "CORRECTIONS.md" in capture
+          and "Свежая сессия без подсказки имени роли" in adopt
+          and "найти существующее" in adopt
+          and "сохранить реальное ограничение или конфликт" in adopt,
+          out, "versioned core preserves truth, roles, budgets, readiness and semantic acceptance")
 
 
 def t_layer_cost_is_measured_from_the_single_router():
@@ -168,52 +191,59 @@ def t_layer_cost_is_measured_from_the_single_router():
         (x for x in routes if "стоимость слоёв" in x.get("task", "")), {})
     check("стоимость entry и routed-слоёв воспроизводима без второго route registry",
           p.returncode == 0
-          and data.get("entry_bytes", 99_999) <= 8_192
+          and data.get("entry_bytes", 99_999) <= 14_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == "7.7.0"
+          and data.get("baseline_version") == '8.0.0'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
-          and 0 < evidence.get("extra_bytes", 0) <= 6_144
+          and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
           and evidence.get("resources") == ["references/retrieval.md"]
           and "current + matching role" in router
-          and "неизменное прочитанное переиспользуется" in router
+          and 'Неизменные уже прочитанные материалы в той же задаче повторно не загружай.' in router
           and help_run.returncode == 0
           and len(evidence_help.encode("utf-8")) <= 3_500
           and all(x in evidence_help for x in
                   ("--support", "--challenge", "--page", "--review", "--finalize"))
           and "references/measurement.md" in measured.get("resources", []),
-          out, "entry <=8KiB; section/help costs and accepted release baseline are measured")
+          out, "entry <=14.5KB; section/help costs and accepted release baseline are measured")
 
 
 def t_analytical_delta_keeps_canon_and_primary_scope_visible():
-    """20.08: old policy looked new and an incomplete SUM replaced a MiFID total."""
-    ref = skill_text("references/operations.md")
-    out = Vyvod(ref, 0)
+    """20.08: repeated policy looked new; an incomplete SUM replaced a primary total.
+    A031/A033/E009: capture, intake and handover now own these distinctions."""
+    ref = skill_text("references/retrieval.md")
+    incoming = skill_text("references/incoming.md")
+    capture = skill_text("references/capture.md")
+    handover = skill_text("assets/templates/handover.md")
+    out = Vyvod(ref + incoming + capture + handover, 0)
     check("аналитика различает канон, новую дельту и охват производного агрегата",
-          "уже в каноне" in ref
-          and "новая дельта" in ref
-          and "Повторно изложенный" in ref
-          and "неполным агрегатом" in ref
-          and "первичный документ" in ref,
+          "адресом: внесено, уже есть без" in capture
+          and "Каждый содержательный элемент получает исход: принят, уже известен" in incoming
+          and "по точным целевым адресам, без пересказа уже внесённого" in " ".join(handover.split())
+          and "Неполный агрегат не опровергает полный первичный документ" in ref,
           out, "canon path vs new delta; derived scope cannot overrule fuller primary evidence")
 
 
 def t_640_project_entry_allows_one_physical_owner_and_keeps_stop_gates():
     """Boot optimization cannot cost current, authority or stop conditions."""
     tpl = skill_text("assets/templates/CLAUDE.md")
-    out = Vyvod(tpl, 0)
+    service = skill_text("references/service-layer.md")
+    out = Vyvod(tpl + service, 0)
     check("project boot/current entry is single-owner, routed and fail-closed",
           "один физический канон правил" in tpl
           and "вход: NOW.md" in tpl
           and "## Сейчас" not in tpl
           and "подробные правила" in tpl
-          and "Authority и stop-gates" in tpl
-          and "Required role" in tpl
-          and "один\n   объявленный readiness command/manifest" in tpl
-          and "role readiness: `PROJECT_ROLES.json`" in tpl
+          and '## Полномочия и условия остановки' in tpl
+          and 'предметные обязательные роли' in " ".join(tpl.split())
+          and '- Запрещено: <' in tpl
+          and '- Источник полномочий по предметным выводам: <' in tpl
+          and 'даже простой вопрос может привести к опасному действию' in " ".join(tpl.split())
+          and 'readiness: <единственная команда или manifest' in tpl
+          and 'roles: PROJECT_ROLES.json' in tpl
           and "measure-route-costs.py" not in tpl
-          and "`UNKNOWN`, не PASS" in tpl
-          and "без него размер измеряется информационно" in tpl,
+          and '`NOT_CHECKED` и диагностический exit 0 не становятся `PASS`' in service
+          and 'Бюджет входа: <если явно принят, scope и project_boot_budget_bytes; иначе не задавать>' in tpl,
           out, "one rules owner routes to NOW; routing cannot lose safety semantics")
 
 
@@ -221,20 +251,23 @@ def t_interactive_result_precedes_durable_tail():
     """13.08: copyable draft waited 19 minutes behind intake/check/commit/push."""
     ref = skill_text("references/incoming.md")
     router = skill_text("SKILL.md")
-    draft = "Дай ранний `SOURCE`-результат"
-    durable = "После результата: долговременный хвост"
-    out = Vyvod(ref + "\n" + router, 0)
+    draft = 'Сначала сообщи, что файл прямо говорит'
+    durable = 'затем сохраняй результат по `capture.md`'
+    capture = skill_text("references/capture.md")
+    out = Vyvod(ref + "\n" + router + capture, 0)
     check("interactive draft is not blocked by the durable tail",
           draft in ref
           and durable in ref
           and ref.index(draft) < ref.index(durable)
-          and "первого полезного результата" in ref
-          and "один exact-path commit/push" in ref
+          and 'не задерживают первый безопасный результат' in ref
+          and 'точечный commit при' in router
+          and 'один относящийся пакет проверок' in capture
+          and 'Commit и push выполняются только' in capture
           and "60 секунд" in ref
-          and "три последовательных tool round-trip" in ref
-          and "порог коммуникации" in ref
-          and "MCP-инвентарь" in ref
-          and "полезный проверенный результат → долговременная дельта" in router,
+          and 'три последовательных обращения к инструментам' in ref
+          and 'Этот порог требует сообщения о ходе работы' in ref
+          and 'несвязанная диагностика MCP' in ref
+          and 'сохраняй\nв том же рабочем шаге по карте проекта' in router,
           out, "show a checked draft first; save one coherent block afterwards")
 
 
@@ -243,8 +276,9 @@ def t_631_local_source_uses_bounded_cold_path():
     import json
     router = skill_text("SKILL.md")
     ref = skill_text("references/incoming.md")
-    operations = skill_text("references/operations.md")
     template = skill_text("assets/templates/CLAUDE.md")
+    service = skill_text("references/service-layer.md")
+    capture = skill_text("references/capture.md")
     p = subprocess.run(
         [sys.executable, os.path.join(HERE, "kb_cost.py"), "--json", "--check"],
         capture_output=True, text=True, timeout=120)
@@ -259,36 +293,39 @@ def t_631_local_source_uses_bounded_cold_path():
     check("local source reaches a visible fact before service and durable work",
           p.returncode == 0
           and local.get("resources") == ["references/incoming.md"]
-          and local.get("total_bytes", 99_999) <= 14_000
-          and reconcile.get("total_bytes", 99_999) <= 24_576
+          and local.get("total_bytes", 99_999) <= 22_000  # growth guard (owner 03.10); 8.0.0 local route = 20,507 B.
+          and reconcile.get("total_bytes", 99_999) <= 25_000  # 8.0.0 reconcile route = 22,366 B.
           and "Разобрать входящее, сверить реальность, найти факт" not in router
           and "что файл прямо говорит" in ref
-          and "source-derived, не project-derived" in ref
-          and "Для него не нужен\n`kb_lookup.py --claim`" in ref
-          and "MCP-инвентарь/диагностика connector" in ref
-          and "один относящийся к ним пакет проверок" in ref
-          and "Project authority, required role и stop-gates" in ref
-          and "после первого безопасного результата" in template
-          and "`incoming.md`" in operations,
-          out, "local file route is <=14KB; service work is deferred; safety remains")
+          and 'Напечатанный срок можно передать как\nтекст; его расчёт или профессиональный совет требует соответствующей роли' in ref
+          and 'Прямые поля не требуют `kb_lookup.py --claim`.' in ref
+          and 'несвязанная диагностика MCP' in ref
+          and 'После связного блока выполни один относящийся пакет проверок' in capture
+          and 'Если проект требует роль до интерпретации' in ref
+          and 'после полезного результата и до сохранения дельты или внешнего' in service
+          and 'references/service-layer.md' in template
+          and '`retrieval.md`' in ref,
+          out, "local file route is <=22KB; service work is deferred; safety remains")
 
 
 def t_material_delta_cannot_disappear_after_answer():
-    """02.09 Grisha: material analysis was sent while accepted canon stayed stale."""
+    """02.09: accepted canon stayed stale after material analysis (A010/11/33, E028)."""
     router = skill_text("SKILL.md")
-    ref = skill_text("references/operations.md")
-    roles = ("SOURCE", "FACT", "INTERPRETATION", "DECISION", "OPEN")
-    out = Vyvod(router + "\n" + ref, 0)
+    ref = skill_text("references/capture.md")
+    out = Vyvod(router + ref, 0)
     check("material result ends in a durable outcome or an explicit pending handoff",
-          "Для ответа без новой" in router
-          and all(role in router for role in roles)
+          "Без новой" in router and "содержательной дельты служебная запись не нужна" in router
+          and ("Для ответа без нового источника, факта, интерпретации, решения или открытого "
+               "вопроса долговременный хвост не нужен") in " ".join(ref.split())
+          and "Новое знание, решение владельца, исправление и результат внешнего действия сохраняй" in router
           and "DURABLE_TAIL=PENDING" in router
-          and "адресом продолжения" in router
-          and "Report-only не создаёт" in ref
-          and "точный незавершённый хвост" in ref
-          and "exact-path" in ref
-          and "навигации, цитаты или brainstorm" in ref
-          and all(role in ref for role in roles),
+          and "точный адрес продолжения" in router
+          and "точечный commit при" in router
+          and "Режим отчёта не даёт права скрыто записать результат" in ref
+          and "назови точный незавершённый хвост и разрешённого исполнителя" in ref
+          and "При запрете commit укажи адрес незакоммиченного результата" in ref
+          and "навигация, цитата и обсуждение вариантов" in ref
+          and "вопроса долговременный хвост не нужен" in ref,
           out, "material delta cannot be hidden by answer-only; no-write remains explicit")
 
 
@@ -299,14 +336,14 @@ def t_warm_turn_does_not_restart_project_boot():
     template = skill_text("assets/templates/CLAUDE.md")
     out = Vyvod(router + "\n" + service + "\n" + template, 0)
     check("warm turn reuses boot receipt and keeps service work off answer path",
-          "Новый turn — не новый вход" in router
-          and "Для ответа без новой" in router
-          and "не при каждом сообщении" in service
-          and "не запускай этот цикл снова" in service
-          and "Updater не блокирует первый\nбезопасный результат" in service
-          and "после результата и до durable/external шага" in service
-          and "на первой безопасной границе" in service
-          and "один раз на новую task/session" in template,
+          'Новый ход беседы сам по себе не запускает вход заново.' in router
+          and 'Без новой' in router
+          and 'В одной живой задаче при неизменных root и квитанции цикл не повторяется' in service
+          and 'Если hook уже выполнил обновление, используй его квитанцию' in service
+          and 'Обновление не задерживает первый\nбезопасный результат' in service
+          and 'после полезного результата и до сохранения дельты или внешнего' in service
+          and 'на первой\nбезопасной границе' in service
+          and 'Один раз на новую задачу' in template,
           out, "cold task defers service work to a safe boundary; warm turns reuse receipt")
 
 
@@ -315,17 +352,17 @@ def t_moved_project_retires_stale_runtime_bindings():
     ref = skill_text("references/move-project.md")
     out = Vyvod(ref, 0)
     check("old runtime binding is stale for writes after a project move",
-          "fresh target-bound session" in ref
+          'свежую сессию, связанную с target' in ref
           and "stale for writes" in ref
-          and "frozen `cwd`" in ref
-          and "пробный безопасный" in ref
-          and "не означает сохранение рабочего runtime" in ref,
+          and 'frozen cwd' in ref
+          and 'безопасная пробная запись' in ref
+          and 'Видимость папки и прежний project ID не доказывают право runtime на запись' in ref,
           out, "preserve history but move writes to a proven target-bound session")
 
 
 def t_entry_ack_can_close_without_closing_subject():
     """12.08: open subject was mistaken for an entry update still waiting."""
-    ref = skill_text("references/operations.md")
+    ref = skill_text('references/capture.md')
     out = Vyvod(ref, 0)
     check("entry acknowledgement does not close the subject correction",
           "два независимых состояния" in ref
@@ -337,11 +374,12 @@ def t_entry_ack_can_close_without_closing_subject():
 def t_parallel_writers_need_worktrees():
     """Отчёт 10.08: ветка не изолирует двух писателей в одном рабочем дереве."""
     ref = skill_text("references/collaboration.md")
-    out = Vyvod(ref, 0)
+    router = skill_text("SKILL.md")
+    out = Vyvod(ref + router, 0)
     check("последовательно один checkout, параллельно отдельные worktree",
           "один канонический checkout" in ref
-          and "отдельный worktree" in ref
-          and "Ветка без отдельного worktree не изолирует" in ref, out,
+          and 'отдельные worktree' in router
+          and 'ветка без своего\nworktree не изолирует индекс и рабочие файлы' in ref, out,
           "явно разделены последовательная и параллельная запись")
 
 
@@ -353,10 +391,10 @@ def t_shared_project_move_is_a_two_system_gate():
     check("перенос в общее поле требует один канон и две приёмки",
           "references/move-project.md" in skill
           and "~/Documents/Projects" in ref
-          and "один канонический checkout" in ref
-          and "Две независимые приёмки" in ref
-          and "Само нахождение каталога" in ref
-          and "временный симлинк" in ref,
+          and 'target является единственным каноном' in ref
+          and 'две независимые приёмки' in ref
+          and 'не только новая папка' in ref
+          and 'временный\nсимлинк' in ref,
           out, "не простой mv: backup, один checkout, Claude + Codex acceptance")
 
 
@@ -365,17 +403,17 @@ def t_move_preserves_app_identity_and_chat_history():
     ref = skill_text("references/move-project.md")
     out = Vyvod(ref, 0)
     check("перенос различает checkout, app-projects и историю чатов",
-          "Доступ чата к папке не делает его участником project" in ref
-          and "сохранять существующий id" in ref
-          and "chat membership" in ref
+          'Доступ чата к папке не доказывает его принадлежности project' in ref
+          and 'сохраняй id и membership' in ref
+          and 'прежний чат или задача должен остаться доступным' in ref
           and "codex app <canonical-path>" in ref
-          and "ChatGPT project ради чистоты" in ref
-          and "Один самостоятельный репозиторий" in ref
-          and "Вспомогательный root" in ref
-          and "Backup автоматически не удалять" in ref
-          and "сначала разрешает только read-only" in ref
-          and "по одному проекту" in ref
-          and "Владелец выбирает точные строки" in ref,
+          and 'историей не удаляют ради порядка локальных ярлыков' in ref
+          and 'Один самостоятельный репозиторий' in ref
+          and 'Дополнительный root другого репозитория допустим' in ref
+          and 'Резервные копии имеют отдельные срок хранения и разрешение удаления' in ref
+          and 'сначала разрешает чтение и список кандидатов' in ref
+          and 'по одному репозиторию' in ref
+          and 'Владелец выбирает строки и порядок' in ref,
           out, "project identity сохраняется; UI cleanup не уничтожает историю")
 
 
@@ -386,23 +424,23 @@ def t_shared_move_names_ai_projects_not_the_folder():
     out = Vyvod(ref + "\n" + skill, 0)
     check("перенос различает UI-имя, каталог и repo slug",
           "`* <каноническое имя проекта>`" in ref
-          and "метка в интерфейсе искусственного интеллекта" in ref
-          and "не часть имени папки" in ref
+          and 'Звёздочка является меткой интерфейса' in ref
+          and 'не частью физического пути' in ref
           and "slug основного Git-репозитория" in ref
-          and "переименовать отображаемый Claude project" in ref
-          and "переименовать отображаемый Codex local project в `* <каноническое имя проекта>`" in ref
-          and "Миграцию может вести Codex" in ref
-          and "все чаты прежнего Claude project" in ref
-          and "все задачи/чаты прежнего local project" in ref
-          and "каждый чат/задача" in ref
-          and "перепривязать его, не создавая новый" in ref
-          and "добавить target" in ref
-          and "сделать target основной" in ref
-          and "удалить source из списка" in ref
-          and "прежний project ID" in ref
+          and 'после собственной приёмки Claude ставит' in ref
+          and 'После свежей приёмки поставь имя' in ref
+          and 'Вести перенос может любая из систем' in ref
+          and 'весь прежний состав чатов' in ref
+          and 'сверь прежние задачи и чаты' in ref
+          and 'Каждый прежний чат или задача должен остаться доступным' in ref
+          and 'перепривязывают, не создавая дубля' in ref
+          and 'добавь target' in ref
+          and 'сделай его основным' in ref
+          and 'убери source из списка' in ref
+          and 'прежний project ID' in ref
           and "list_projects" in ref
           and "list_threads" in ref
-          and "root существующего Codex project неизменяем" in ref
+          and 'Не утверждай, что root\nсуществующего проекта неизменяем' in ref
           and "references/move-project.md" in skill,
           out, "оба AI получают * name; folder и repo остаются без звёздочки")
 
@@ -411,12 +449,16 @@ def t_reorganization_starts_from_purpose_and_separates_path_consumers():
     """Отчёт 10.08: старая карта не задаёт будущую ось, output не равен live path."""
     ref = skill_text("references/adopt-existing.md")
     out = Vyvod(ref, 0)
+    flat = " ".join(ref.split())
     check("перестройка начинает с назначения и различает живой путь и снимок",
-          "устойчивый объект и назначение проекта" in ref
-          and "не готовая папочная схема" in ref
+          'только по явному поручению и при наблюдаемых поломках' in flat
+          and 'явное «да» владельца на этот показанный план' in flat
+          and 'общее поручение «перестрой» его не заменяет' in flat and
+          'Установи устойчивый объект работы' in ref
+          and 'Количество файлов, байт или ролей не предписывает разделение' in ref
           and "активные потребители" in ref
-          and "исторических снимках" in ref
-          and "не считают автоматическим запретом" in ref,
+          and 'Исторические снимки' in ref
+          and 'не считают\nавтоматическим запретом' in ref,
           out, "purpose gate до описи; active dependency != immutable output")
 
 
@@ -425,26 +467,28 @@ def t_move_backup_is_not_a_second_canon():
     ref = skill_text("references/move-project.md")
     out = Vyvod(ref, 0)
     check("backup переноса различает checkout, remote, bundle и данные вне Git",
-          "канонический checkout" in ref
-          and "remote-recovery" in ref
-          and "замороженный файл всех refs" in ref
-          and "snapshot данных вне Git" in ref
-          and "второй remote" in ref,
+          'target является единственным каноном' in ref
+          and 'Bundle и снимок' in ref
+          and 'HEAD/remotes' in ref
+          and 'сохранённые HEAD, ветку, upstream и remotes' in ref
+          and 'bundle всех refs' in ref
+          and 'снимок\nданных вне Git с манифестом и хешами' in ref
+          and 'не являются вторым checkout или remote' in ref,
           out, "recovery layers названы и не становятся рабочими копиями")
 
 
 def t_domain_skill_location_follows_scope_not_agent():
     """Отчёт 10.08: один project-local навык или одна cross-project доставка."""
-    ref = skill_text("references/collaboration.md")
+    ref = skill_text('references/project-roles.md')
     out = Vyvod(ref, 0)
     check("место доменного скилла определяется областью, не агентом",
           "областью действия, а не именем агента" in ref
-          and "repo-local" in ref
-          and "pinned cross-repo dependency" in ref
+          and 'отслеживаемый Git метод внутри проекта' in ref
+          and 'точная закреплённая ревизия (pin) и рецепт восстановления' in ref
           and ".agents/skills/" in ref
           and ".claude/skills/" in ref
-          and "fail-closed" in ref
-          and "не копируют отдельно под Claude и Codex" in ref,
+          and 'Обязательный недоступный метод блокирует только зависящую предметную работу' in ref
+          and 'Отдельные копии для Claude и Codex' in ref,
           out, "один канон навыка для проекта или нескольких проектов")
 
 
@@ -1774,25 +1818,25 @@ def t_runtime_capability_template_separates_identity_scope_and_authority():
                   ("status", "kind", "provider", "identity", "scope",
                    "authority", "validation"))
           and "Одинаковое имя сервера не доказывает" in module
-          and "не на каждый обычный вопрос" in module,
+          and 'Не повторяй настройку на каждый обычный вопрос' in module,
           out, "logical email capability; per-runtime identity/scope/authority and routed audit")
 
 
 def t_keychain_is_storage_canon_not_blanket_non_disclosure():
     """14.08: owner permits task-scoped reveal; Git still stores only the locator."""
     module = skill_text("references/modules.md")
-    patterns = skill_text("references/patterns.md")
+    patterns = skill_text('references/authority.md')
     out = Vyvod(module + "\n" + patterns, 0)
     check("Keychain rule separates storage, task use and disclosure traces",
-          "Это правило хранения, а не запрет агенту" in module
-          and "tool output, shell history или чат" in module
-          and "Always Allow" in module
-          and "Cloud runtime локальный\nKeychain по-прежнему не наследует" in module
-          and "агент может получить значение" in patterns
+          'Это правило хранения, а не запрет агенту использовать значение' in patterns
+          and 'попало в вывод инструмента, историю shell или чат' in patterns
+          and "Always Allow" in patterns
+          and 'не возникают в облаке из Git' in module
+          and 'Прямая задача\nи принятый provider могут разрешать получение нужного доступа' in patterns
           and "ключ или пароль расшифровки" in patterns.lower()
-          and "канон остаётся в Keychain/secret store" in patterns
-          and "Разовый перенос существующего plaintext" in patterns
-          and "ставится на ротацию/отзыв" in patterns,
+          and 'точный адрес записи в принятом Keychain или другом хранилище' in patterns
+          and 'При порученной очистке plaintext не печатай значения' in patterns
+          and 'требует ротации или отзыва' in patterns,
           out, "Git keeps a locator; authorized local use is allowed and auditable")
 
 
@@ -1817,13 +1861,13 @@ def t_55_agent_vault_keeps_read_simple_and_actions_gated():
     recipe = module[start:]
     out = Vyvod(recipe + "\n" + skill, 0)
     check("agent vault grants broad local read without broad purchase authority",
-          "одна общая системная граница, не разрешения по\n   проектам" in recipe
-          and "не добавляет обязательного\nproject registry" in recipe
-          and "чтение из принятого сейфа не требует отдельного вопроса" in recipe
-          and "merchant/допустимый класс и максимальную общую сумму" in recipe
-          and "повторный вопрос перед оплатой не нужен" in recipe
-          and "3-D Secure" in recipe and "owner handoff" in recipe
-          and "локальный Keychain не существует в контейнере" in recipe
+          'общий набор доступов без отдельных прав по проектам' in recipe
+          and 'не создают\nобязательный список инструментов для каждого проекта' in module
+          and 'отдельный вопрос о каждом секрете не нужен' in recipe
+          and 'merchant либо допустимый класс, максимальная общая сумма и валюта' in recipe
+          and 'повторное согласие перед оплатой не требуется' in recipe
+          and "3-D Secure" in recipe and 'Передача владельцу в точке действия' in recipe
+          and 'локальный сейф туда\nавтоматически не копируется' in recipe
           and "`agent_vault_and_external_actions`" in skill,
           out, "one accepted local vault; current task gates use; irreversible challenge hands off")
 
@@ -1835,51 +1879,53 @@ def t_55_agent_vault_does_not_make_generic_shell_a_secret_broker():
     recipe = module[start:]
     out = Vyvod(recipe, 0)
     check("agent vault is mediated by an accepted helper",
-          "Не выдавать то же\n   право универсальному shell, Terminal или произвольному процессу" in recipe
-          and "Субагенты обращаются через тот же\n   принятый helper" in recipe
-          and "не вывести список или значения всего сейфа" in recipe,
+          'Постоянное чтение дают этому helper, никогда универсальному shell, Terminal\nили произвольному процессу' in recipe
+          and 'Субагенты используют тот же helper' in recipe
+          and 'а не списка\nили значений всего сейфа' in recipe,
           out, "system-wide for Codex tasks does not mean system-wide for arbitrary code")
 
 
 def t_55_one_time_keychain_enrollment_builds_a_derived_vault():
     """Keychain stays canonical; owner does not retype existing values."""
     module = skill_text("references/modules.md")
-    start = module.index("### Разовое первичное наполнение")
-    recipe = module[start:module.index("По прямой задаче владельца", start)]
+    start = module.index('### Разовое наполнение')
+    recipe = module[start:module.index('### Полномочия на действие', start)]
     compact = " ".join(recipe.split())
+    vault = " ".join(module.split())
     out = Vyvod(recipe, 0)
     check("one-time Keychain enrollment builds a replaceable derived vault",
-          "один раз проверить" in compact
-          and "повторно не вводит" in compact
-          and "все логины и пароли к медицинским системам" in compact
-          and "оканчивающаяся на 7011" in compact
-          and "не выводя значения" in compact
-          and "не менять и не удалять исходную запись" in compact
-          and "никогда не становится каноном" in compact
-          and "Карты не импортировать массово" in compact
+          'один проход по существующему хранилищу' in compact
+          and 'без повторного ввода владельцем' in compact
+          and 'в точном или смысловом объёме' in compact
+          and 'на конкретный last4 или payment alias' in compact
+          and 'без значений' in compact
+          and 'не меняя и не удаляя исходную' in compact
+          and 'удаляемую производную копию только разрешённых credentials' in vault
+          and 'Keychain или Apple Passwords остаётся каноном' in vault
+          and 'Карты не импортируют массово' in compact
           and "без секретов" in compact
-          and "расходуется после одного enrollment-pass" in compact
-          and "повторный просмотр личного Keychain требует новой" in compact,
+          and 'право первого прохода не бессрочно' in compact
+          and 'Повторный просмотр личного хранилища требует новой прямой команды' in compact,
           out, "Keychain is source; owner-scoped enrollment creates an erasable cache")
 
 
 def t_56_modern_passwords_enrollment_is_owner_mediated_and_trace_free():
     """A working AutoFill credential can be unreachable to exact Keychain lookup."""
     module = skill_text("references/modules.md")
-    start = module.index("Современная запись Apple Passwords")
-    recipe = module[start:module.index("Такое разрешение можно дать", start)]
+    start = module.index('Запись Apple Passwords')
+    recipe = module[start:module.index('### Полномочия на действие', start)]
     compact = " ".join(recipe.split())
     out = Vyvod(recipe, 0)
     check("modern Passwords uses one owner-mediated derived-vault handoff",
-          "source недоступен этому provider" in compact
-          and "не отсутствие credential" in compact
-          and "Не создавать ради обхода второй generic-password source" in compact
+          'недоступность этому provider, а не отсутствие пароля' in compact
+          and 'а не отсутствие пароля' in compact
+          and 'Не создавай второй generic-password источник ради обхода ограничения' in compact
           and "alias, ожидаемые domain/account и `cloud_policy`" in compact
-          and "stdout, clipboard, argv/env, файл или лог" in compact
-          and "Cancel, пустой выбор, mismatch или отказ не создают запись" in compact
-          and "системным Passwords AutoFill" in compact
-          and "ручная передача через чат не становится fallback" in compact
-          and "Refresh такой записи снова требует owner-mediated UI" in compact,
+          and 'stdout, clipboard, аргументы, переменные среды, файл или лог' in compact
+          and 'Отмена, пустой выбор, несовпадение или отказ не создают запись' in compact
+          and 'системного Passwords AutoFill' in compact
+          and 'чат не является запасным каналом' in compact
+          and 'Обновление такой записи снова требует участия владельца' in compact,
           out, "one selected modern credential reaches the vault without a secret trace")
 
 
@@ -1930,9 +1976,11 @@ def t_shared_boot_rejects_absolute_local_root_consistently():
     check("shared boot canon uses a repo-relative root consistently",
           out.code == 1
           and "shared boot canon must use a repo-relative root" in out
-          and "переносимый repo-relative root" in service
-          and "project root: ." in service
-          and "project root: ." in template,
+          and "один физический канон правил" in template
+          and "Один раз на новую задачу" in template
+          and "project root: ." in template
+          and "references/service-layer.md" in template
+          and "Общие обязанности чтения определены в ядре" in service,
           out, "absolute local path is acceptance evidence, not a cloud-shared instruction")
     shutil.rmtree(d, ignore_errors=True)
 
@@ -1975,26 +2023,35 @@ def t_knowledge_roles_are_domain_neutral_and_auditable():
     roles = ("источник", "наблюдение", "утверждение", "интерпретация",
              "решение", "вопрос", "производное представление")
     check("роли знания — стартовая модель и legacy-чек-лист, не онтология",
-          all(role in ref for role in roles)
+          all(role in ref.lower() for role in roles)
           and "«Человек сказал X» и «X истинно»" in ref
           and "не семь папок" in ref
-          and "Аудит исторического проекта" in ref
+          and 'Историческую базу сначала проверяй чтением' in ref
           and "knowledge-roles.md" in adopt,
           out, "происхождение + факт/интерпретация + адаптация без схемы папок")
 
 
 def t_garbage_collection_is_evidence_safe_and_recoverable():
     """Владелец: дубли и квитанции не должны бесконечно раздувать поле."""
-    ref = skill_text("references/garbage-collection.md")
+    ref = skill_text('references/patterns.md')
     deleted = skill_text("assets/templates/DELETED.md")
     out = Vyvod(ref + "\n" + deleted, 0)
+    flat = " ".join(ref.split())
+    router = " ".join(skill_text("SKILL.md").split())
     check("сборка мусора проверяет доказательства, ссылки и восстановление",
           "retention authority" in ref
-          and "единственным доказательством" in ref
-          and "обратный поиск ссылок" in ref
-          and "Recoverable quarantine" in ref
-          and "восстановить один выборочный" in ref
-          and "Факт" in deleted,
+          # 8.0 live test: «удали старые аудиты» was taken as an exact list.
+          and "после показа владельцу точного списка и его согласия на этот список" in flat
+          and "поручение, названное классом («удали старые аудиты»)" in flat
+          and "сначала покажи список и остановись" in flat
+          and "после того, как владелец увидел точный список и согласился" in router
+          and 'не теряется единственное\nдоказательство' in ref
+          and 'обратные ссылки из Markdown, кода, индексов, manifest, verify' in ref
+          and 'Для внешних и неотслеживаемых данных сначала создай и проверь backup' in ref
+          and 'Восстанови выборочный файл во временный каталог и сравни хеш' in ref
+          and 'Содержимое удалённых данных сюда не копируется' in deleted
+          and 'Канон или восстановление' in deleted
+          and 'Правило повторного приёма' in deleted,
           out, "не удалять квитанцию только потому, что её редко открывают")
 
 
@@ -2008,14 +2065,14 @@ def t_service_distribution_is_public_not_development_symlink():
     check("сервисный контур использует public и исключает lab-symlink",
           "--public --fast --сделать" in ref
           and "GitHub public https://github.com/sugestr/kb-architect" in tpl
-          and "не каналом установки" in ref
-          and "git ls-remote" in ref
-          and "установленного локального `SKILL.md`" in ref
-          and "не открывает public README/SKILL вручную" in ref
-          and "после результата и до durable/external шага" in ref
+          and 'разработке и выпуску, но не установке' in ref
+          and 'Проверка обновления использует public HEAD, квитанцию и fingerprint' in ref
+          and '`CURRENT` не отменяет\nпервое чтение установленного entry' in ref
+          and 'не требуется вручную открывать public README или SKILL' in ref
+          and 'после полезного результата и до сохранения дельты или внешнего' in ref
           and "references/service-layer.md" in entry
-          and "«Обнови скилл базы знаний»" in tpl
-          and "action-first" in ref
+          and 'обновление скилла:' in tpl
+          and 'Продолжай\nобратимую подготовку и проверки до действительного недостающего решения' in ref
           and "UPDATE_STATUS=INSTALLED" in updater
           and "REREAD_INSTALLED_ENTRY" in updater
           and "PUBLIC_REPOSITORY" in updater,
@@ -2262,12 +2319,12 @@ def t_templates_do_not_silently_add_obligations():
     defect = skill_text("assets/templates/defect-report.md")
     out = Vyvod(rules + handover + note + defect, 0)
     check("шаблоны выровнены с условными обязательствами контракта",
-          "явно принята диагностика" in rules
-          and "достаточного `verify`" in rules
+          '«не принято», если диагностика не принята' in rules
+          and 'достаточное доказательство совершённого действия, если оно утверждается' in note
           and "## STATUS" not in handover
           and "NEXT 3" not in handover
           and "# verify:" in note
-          and "разрешённого проектом" in defect, out,
+          and 'Основание доставки и допустимого контекста' in defect, out,
           "нет скрытой обязательной диагностики и устаревших имён разделов")
 
 
@@ -3172,15 +3229,14 @@ def t_633_published_install_does_not_repeat_tests_or_touch_runtime():
     finally:
         module.subprocess.run = original_run
     service = skill_text("references/service-layer.md")
-    maintainer = skill_text("references/maintainer.md")
-    out = Vyvod(stream.getvalue() + "\n" + service + "\n" + maintainer, code)
+    out = Vyvod(stream.getvalue() + "\n" + service, code)
     check("published install copies one exact tree without tests or runtime restart",
           code == 0
           and "приёмочные тесты уже пройдены при публикации" in stream.getvalue()
           and observed_tag == tagged_commit and tag_error is None
-          and "не запускает и не перезапускает model/agent process" in service
-          and "не запускает и не перезапускает модель, Мегамозг или клиент" in maintainer
-          and "одну управляемую копию" in maintainer,
+          and 'Установщик не запускает и не перезапускает модель, клиента или агента' in service
+          and 'Приёмку выпуска на каждой машине заново не выполняют' in service
+          and 'одну управляемую физическую копию' in service,
           out, "release validates behavior once; install proves bytes only")
     shutil.rmtree(root, ignore_errors=True)
 
@@ -3198,9 +3254,10 @@ def t_512_update_cycle_cannot_hide_unapplied_project_delta():
     check("доставленная, но неприменённая редакция остаётся машинно видимой",
           out.code == 1
           and "NEEDS_APPLICATION" in out
-          and "--project <корень-проекта>" in service
-          and "--project <корень-проекта>" in template
-          and "код 0 означает" in service,
+          and '--project <root>' in service
+          and 'references/service-layer.md' in template
+          and 'release application: KB_RELEASE_APPLICATION.json' in template
+          and 'Код 0 означает' in service,
           combined, "one entry command runs update + apply; stale project exits 1")
     shutil.rmtree(project, ignore_errors=True)
 
@@ -3267,10 +3324,10 @@ def t_516_hot_context_has_evidence_driven_lifecycle():
     flat = " ".join(ref.split())
     out = Vyvod(ref, 0)
     check("рабочий кэш не создаёт второй канон и deep scan остаётся явным",
-          "Promotion/demotion меняют доставку, не source owner" in flat
-          and "warm/deep слои остаются обнаружимыми" in flat
+          'Перенос между часто и редко загружаемыми слоями меняет доставку, не владельца источника' in flat
+          and 'остальное оставляй обнаружимым по адресам, разделам и запросам' in flat
           and "расширь поиск и исправь маршрут" in flat
-          and "не прогоняется при каждом рабочем ответе" in flat,
+          and 'весь набор не запускают при каждом рабочем ответе' in flat,
           out, "promote/demote by evidence; retain one owner and explicit deep scan")
 
 
@@ -3292,9 +3349,9 @@ def t_600_role_and_runtime_routes_pay_only_for_their_own_reference():
     check("role and runtime routes pay only for their routed reference",
           p.returncode == 0
           and role.get("resources") == ["references/project-roles.md"]
-          and role.get("extra_bytes", 99_999) < 10_000
+          and role.get("extra_bytes", 99_999) < 13_600  # growth guard (owner 03.10); 8.0.0 role method = 11,762 B.
           and runtime.get("sections", {}).get("references/modules.md") == "runtime_capabilities"
-          and runtime.get("extra_bytes", 99_999) < 10_000,
+          and runtime.get("extra_bytes", 99_999) < 5_500,  # 8.0.0 runtime_capabilities section = 4,904 B.
           out, "role lifecycle does not re-read unrelated KB guidance")
 
 
@@ -3347,15 +3404,40 @@ def t_516_report_router_separates_local_and_remote_delivery():
     shutil.rmtree(remote, ignore_errors=True)
 
 
+def t_800_corrections_template_closure_is_recognised_by_the_checker():
+    """8.0 review: the draft template wrote «✔ <date>; …», which kb_due never closes."""
+    import kb_due
+    template = skill_text("assets/templates/CORRECTIONS.md")
+    line = next(l for l in template.splitlines() if "✔" in l and "<дата находки>" in l)
+    filled = (line.replace("<дата находки>", "2026-10-01").replace("<проблема>", "сумма в NOW")
+              .replace("<дата закрытия>", "2026-10-04").replace("<адрес исправленного канона>", "NOW.md"))
+    old_form = "- 2026-10-01 · сумма в NOW — ✔ 2026-10-04; исправлено в NOW.md."
+    labels = all(label in template for label in ("`знание`", "`система`", "`предложение`"))
+    out = Vyvod(filled + "\n" + old_form, 0)
+    check("шаблон канала правок закрывает запись в формате, который видит проверка",
+          kb_due.correction_status(filled) == "closed"
+          and kb_due.correction_status(old_form) == "unknown"
+          and labels and "Отметка без адреса закрытием не считается" in template,
+          out, "template closure mark equals the machine mark; one door with three labels")
+
+
 def t_602_private_family_report_defaults_to_detailed_local_route():
     """28.08: an agent anonymised a same-owner local report despite project policy."""
     template = skill_text("assets/templates/defect-report.md")
-    out = Vyvod(template, 0)
+    service = skill_text("references/service-layer.md")
+    out = Vyvod(template + service, 0)
+    flat = " ".join(service.split())
+    flat_tpl = " ".join(template.split())
     check("private family report is detailed by verified route, not agent guess",
-          "Private local owner/family group — детальный по умолчанию" in template
-          and "External/public — только обезличенный" in template
+          'В разрешённой частной группе владельца подробный отчёт' in flat
+          and 'допустим по умолчанию, если репозитории приватны' in flat
+          and 'реквизиты и секреты — в отчёт о дефекте не попадают ни в каком режиме' in flat
+          and 'реквизиты и секреты — не попадают в отчёт ни в каком режиме' in flat_tpl
+          and 'по умолчанию не включай' not in flat_tpl
+          and 'Режим подробности:' in template
+          and 'Публичный отчёт содержит механизм и воспроизводитель без частных имён, идентификаторов и сумм' in flat
           and "Обезличенный (по умолчанию)" not in template
-          and "сначала preview" in template,
+          and 'Сначала подготовь полный отчёт и preview разрешённому получателю' in template,
           out, "trusted local delivery preserves diagnostics; public delivery is anonymised")
 
 
@@ -3454,14 +3536,14 @@ def t_611_git_only_candidate_uses_commit_without_second_shadow():
     text = migration + "\n" + service + "\n" + roles + "\n" + p.stdout
     out = Vyvod(text + p.stderr, p.returncode)
     check("Git-only migration uses one candidate and the existing commit rollback",
-          "exact pre-change Git commit" in migration
-          and "commit уже является rollback" in migration
+          'сохрани точный pre-change commit' in migration
+          and 'commit уже даёт откат' in migration
           and "второй checkout не нужен" in migration
-          and "внешнее состояние проходит staged cutover" in service
-          and "source commit даёт rollback" in roles
-          and "без второй копии" in service
-          and "post-results acceptance" in migration
-          and "marker минимального уровня" in migration,
+          and 'Внешнее состояние проходит собственное поэтапное' in migration
+          and 'остальные байты и откат сохраняет Git' in roles
+          and 'второй checkout не нужен' in migration
+          and 'После принятия показанного результата' in migration
+          and 'поставь marker\n   минимального уровня' in migration,
           out, "remove duplicate shadow mechanics without weakening marker-last acceptance")
     shutil.rmtree(project, ignore_errors=True)
 
@@ -5298,7 +5380,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "7.7.0"
+          kb_paths.skill_version() == "8.0.0"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == "7.2.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

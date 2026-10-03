@@ -2082,6 +2082,10 @@ class ExecutableEntry0110Tests(unittest.TestCase):
         env = {k: v for k, v in os.environ.items()
                if k not in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")}
         env["KB_ENTRY_STATE"] = str(self.base / "state")
+        # The caller may disable its own hook. This fixture tests an enabled
+        # hook; explicit per-test overrides still win below.
+        env["KB_ENTRY_HOOK"] = ""
+        env["KB_ENTRY_RERUN"] = ""
         env["KB_ENTRY_UPDATE"] = "off"     # тест не ставит скилл в настоящий HOME
         env.update(extra)
         return env
@@ -2615,6 +2619,8 @@ class ReleaseActions0210Tests(unittest.TestCase):
             calls_args.append(cmd)
             return Proc()
         with patch.object(kb_start.subprocess, "Popen", popen), \
+                patch.object(kb_start, "scripts_dir", return_value=str(
+                    Path.home() / ".codex/skills/kb-architect/scripts")), \
                 patch.dict(os.environ, {"KB_ENTRY_UPDATE": "", "KB_ENTRY_STATE": str(self.base / "st")}):
             got = kb_start.update_skill()
         self.assertEqual(got["status"], "INSTALLED")
@@ -2655,10 +2661,21 @@ class ReleaseActions0210Tests(unittest.TestCase):
                 calls.append(1)
                 return "UPDATE_STATUS=UNKNOWN\n", ""
         with patch.dict(os.environ, {"KB_ENTRY_UPDATE": "", "KB_ENTRY_STATE": str(self.base / "st")}), \
+                patch.object(kb_start, "scripts_dir", return_value=str(
+                    Path.home() / ".codex/skills/kb-architect/scripts")), \
                 patch.object(kb_start.subprocess, "Popen", lambda *a, **k: Proc()):
             self.assertEqual(kb_start.update_skill()["status"], "UNKNOWN")
             self.assertEqual(kb_start.update_skill()["status"], "SKIPPED")
         self.assertEqual(len(calls), 1)
+
+    def test_external_install_does_not_run_the_local_updater(self):
+        """The installed-path fixtures above must not weaken the external installer gate."""
+        import kb_start
+        with patch.dict(os.environ, {"KB_ENTRY_UPDATE": ""}), \
+                patch.object(kb_start, "scripts_dir", return_value=str(self.base / "scripts")), \
+                patch.object(kb_start.subprocess, "Popen") as updater:
+            self.assertEqual(kb_start.update_skill()["status"], "EXTERNAL")
+        updater.assert_not_called()
 
     def test_due_and_update_print_the_actions_instead_of_no_migration(self):
         self.project()
@@ -3058,7 +3075,10 @@ class TurnRegistry0210Tests(unittest.TestCase):
         self.project()
         self.save("NOW.md", "Обновлено: 2026-10-02\n" + "запись хроники\n" * 2000)
         import kb_start
-        self.assertTrue(any("хроника" in a for a in kb_start.project_actions(str(self.root))))
+        actions = " | ".join(kb_start.project_actions(str(self.root)))
+        self.assertIn("проверь, не стал ли NOW хроникой", actions)
+        self.assertIn("размер сам по себе не ошибка", actions)
+        self.assertNotIn("это уже хроника", actions)
 
     def test_install_adds_the_stop_hook_for_both_agents(self):
         home = self.base / "home2"
@@ -3895,7 +3915,8 @@ class InstallService0310Tests(unittest.TestCase):
     def test_failed_due_has_hourly_retry_and_no_daily_success_flag(self):
         import datetime
         import kb_service
-        now = time.time()
+        # The +2h retry must remain on the same date even near midnight.
+        now = datetime.datetime.combine(datetime.date.today(), datetime.time(12)).timestamp()
         with patch.dict(os.environ, self.env()), \
                 patch.object(time, "time", return_value=now), \
                 patch.object(kb_service, "accumulated", side_effect=RuntimeError("расчёт упал")) as calc:
@@ -4324,6 +4345,48 @@ class Review0310Tests(unittest.TestCase):
                 patch.object(kb_debts.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 10)):
             d = kb_debts.debts(str(self.root))
         self.assertEqual(d["code"]["status"], "NOT_CHECKED")
+
+class RouteCostV8Tests(unittest.TestCase):
+    """J3: the 8.0 router moved resources and selectors; cost must follow each address."""
+
+    setUp = RedesignTests.setUp
+    save = RedesignTests.save
+
+    def test_each_selector_belongs_to_its_preceding_resource(self):
+        import kb_cost
+        text = ("Intro before the table.\n| Задача | Что прочитать или запустить |\n|---|---|\n"
+                "| Task | `scripts/kb_entry.py --role` + `references/one.md` → `first`; "
+                "`assets/templates/two.md` → `second` + `scripts/kb_report.py --help` |\n"
+                "\n| Ignore | `references/after.md` |\n")
+        routes = kb_cost.routes(text)
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(routes[0]["resources"], ["references/one.md", "assets/templates/two.md"])
+        self.assertEqual(routes[0]["sections"], {
+            "references/one.md": "first", "assets/templates/two.md": "second"})
+        self.assertEqual(routes[0]["help_commands"], ["scripts/kb_report.py"])
+        self.assertEqual(routes[0]["_duplicate_resources"], [])
+
+    def test_section_includes_children_and_excludes_next_section(self):
+        import kb_cost
+        selected = "## `first` — scope\nFact.\n### Child\nEvidence.\n\n"
+        path = self.save("references/one.md", "# Title\n\n" + selected + "## `second`\nOther.\n")
+        self.assertEqual(kb_cost.section_bytes(path, "first"), len(selected.encode("utf-8")))
+        self.assertIsNone(kb_cost.section_bytes(path, "missing"))
+
+    def test_missing_resource_section_and_duplicate_remain_errors(self):
+        import kb_cost
+        entry = self.save("SKILL.md", (
+            "| Задача | Что прочитать или запустить |\n|---|---|\n"
+            "| Missing file | `references/missing.md` |\n"
+            "| Missing section | `references/modules.md` → `missing` |\n"
+            "| Duplicate | `references/modules.md` + `references/modules.md` |\n"))
+        self.save("references/modules.md", "## `runtime_capabilities`\nSafe probe.\n")
+        with patch.object(kb_cost, "ROOT", self.root), patch.object(kb_cost, "SKILL", entry):
+            result = kb_cost.measure(check_baseline=False)
+        self.assertIn("route resource missing: references/missing.md", result["errors"])
+        self.assertIn("route section missing: references/modules.md -> missing", result["errors"])
+        self.assertIn("route repeats resource (Duplicate): references/modules.md", result["errors"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

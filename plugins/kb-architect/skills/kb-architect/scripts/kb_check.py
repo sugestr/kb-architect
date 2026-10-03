@@ -107,7 +107,7 @@ LOOKALIKE = re.compile(
     r"^\s*(verified|verify_at|подтверждено|proof)\s*:",
     re.MULTILINE | re.IGNORECASE)
 # `verified_at` из списка изъят: справочник сам предписывает это поле
-# паттерну зеркал (`authority.md` §7, «состояние сверено с внешней системой
+# паттерну зеркал (`retrieval.md` → `external_check`, «состояние сверено с внешней системой
 # в момент X»). Проверка наказывала за выполнение собственной рекомендации —
 # нашёл внешний критик, не эксплуатация.
 STATUS = re.compile(r"^\s*status\s*:\s*([^\s#]+)", re.MULTILINE | re.IGNORECASE)

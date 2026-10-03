@@ -14,10 +14,12 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "SKILL.md"
 BASELINE = ROOT / "assets" / "route-cost-baseline.json"
-ENTRY_LIMIT = 8192
+# 8.0: owner retired byte minimization as a goal on 03.10.2026.
+# Keep a growth guard at the accepted entry size plus about 15% headroom.
+ENTRY_LIMIT = 14500
 ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$")
 MARKDOWN_PATH = re.compile(r"`((?:references|assets)/[^`]+\.md)`")
-SECTION_HINT = re.compile(r"→\s*`([^`]+)`")
+SECTION_HINT = re.compile(r"\s*→\s*`([^`]+)`")
 HELP_COMMAND = re.compile(r"`(scripts/[^`\s]+\.py) --help`")
 MODULE_HEADING = re.compile(r"^## `([^`]+)`.*$", re.MULTILINE)
 
@@ -40,9 +42,15 @@ def routes(text: str) -> list[dict]:
         listed = MARKDOWN_PATH.findall(instruction)
         resources = list(dict.fromkeys(listed))
         duplicates = sorted({item for item in listed if listed.count(item) > 1})
-        section = SECTION_HINT.search(instruction)
-        sections = ({resources[0]: section.group(1)}
-                    if section and len(resources) == 1 else {})
+        # A selector belongs to the immediately preceding Markdown resource,
+        # including routes with scripts or several resources in the same cell.
+        sections = {}
+        matches = list(MARKDOWN_PATH.finditer(instruction))
+        for index, resource in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(instruction)
+            section = SECTION_HINT.match(instruction, resource.end())
+            if section and section.end() <= end:
+                sections[resource.group(1)] = section.group(1)
         result.append({
             "task": task.strip(),
             "resources": resources,
