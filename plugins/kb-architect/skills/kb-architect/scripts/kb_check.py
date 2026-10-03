@@ -81,7 +81,8 @@ INLINE = re.compile(r"`[^`]*`")
 LINK = re.compile(r"\[[^\]]*\]\(((?:[^()]|\([^()]*\))+)\)")
 LINE_LOCATOR = re.compile(r"([^:]+):0*[1-9][0-9]*\Z")
 VALID_UNTIL = re.compile(r"^\s*valid_until\s*:\s*(\S+)", re.MULTILINE)
-VERIFY = re.compile(r"^\s*verify\s*:\s*(.*)$", re.MULTILINE)
+# Внешний аудит 03.10.2026: пустое поле не заимствует следующую строку.
+VERIFY = re.compile(r"^[ \t]*verify[ \t]*:[ \t]*(.*)$", re.MULTILINE)
 DATE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 
 EMPTY_VERIFY = {"", "-", "—", "tbd", "TBD", "?", "null", "none", "нет"}
@@ -129,7 +130,7 @@ ACTION_STATUS = {
 }
 
 
-GENERATED_FROM = re.compile(r"^\s*generated_from\s*:\s*(.+)$", re.MULTILINE)
+GENERATED_FROM = re.compile(r"^[ \t]*generated_from[ \t]*:[ \t]*(.+)$", re.MULTILINE)
 # Эфемерные адреса: живут ровно столько, сколько сессия или перезагрузка.
 EPHEMERAL = re.compile(
     r"scratchpad|/tmp/|/private/tmp|/var/folders/|tool-results|\$TMPDIR|%TEMP%|"
@@ -138,21 +139,30 @@ PATH_TOKEN = re.compile(r"(?<![\w/])((?:[\w.-]+/)+[\w.-]+\.[A-Za-z0-9]{1,5})")
 
 
 def generated_from_findings(root, rel, raw):
-    """Values of generated_from that no future session can open.
+    """Источники generated_from, которые будущая сессия не сможет открыть.
 
-    Free text («живая база; повторяется скриптом §7», Google Sheet, чужой git)
+    Свободный текст («живая база; повторяется скриптом §7», Google Sheet, чужой git)
     остаётся законным именованным каноном и находкой не является. Находка —
-    эфемерный адрес либо путь внутри проекта, которого нет в Git."""
+    эфемерный адрес либо локальный путь, отсутствующий на диске или в Git."""
     out = []
     for value in GENERATED_FROM.findall(raw[:4000]):
         value = value.strip()
         if EPHEMERAL.search(value):
             out.append((rel, value, "эфемерный адрес"))
             continue
-        for token in PATH_TOKEN.findall(value):
+        # Внешний аудит 03.10.2026: URL — внешний источник, пропавший
+        # локальный файл — находка независимо от наличия его в Git.
+        local = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s]+", "", value)
+        tokens = PATH_TOKEN.findall(local)
+        if re.fullmatch(r"[\w.-]+\.[A-Za-z0-9]{1,5}", local.strip("`\"' ")):
+            tokens.append(local.strip("`\"' "))
+        for token in tokens:
             candidate = os.path.normpath(os.path.join(root, token))
-            if not candidate.startswith(root + os.sep) or not os.path.exists(candidate):
+            if not candidate.startswith(root + os.sep):
                 continue
+            if not os.path.exists(candidate):
+                out.append((rel, value, f"«{token}» отсутствует на диске"))
+                break
             tracked = subprocess.run(
                 ["git", "-C", root, "ls-files", "--error-unmatch", "--", token],
                 capture_output=True)
@@ -761,8 +771,14 @@ def main():
     # при 22 из 30 модулях кода без описания.
     try:
         import kb_debts
-        debt_lines, _ = kb_debts.summary_lines(kb_debts.debts(root))
-        debt_scope = f"долги знания — {len(debt_lines)}" if debt_lines else "долги знания — нет"
+        # Внешний аудит 03.10.2026: границы проверки сохраняются в итоге.
+        debt_lines, debt_checks = kb_debts.summary_lines(kb_debts.debts(root))
+        unchecked = [line for line in debt_checks if "НЕ ПРОВЕРЕН" in line]
+        debt_scope = (f"долги знания — {len(debt_lines)}" if debt_lines
+                      else "долги знания — НЕ ПРОВЕРЕНЫ полностью" if unchecked
+                      else "долги знания — нет")
+        if unchecked:
+            debt_scope += "; " + "; ".join(unchecked)
     except Exception as exc:
         debt_lines, debt_scope = [], f"долги знания — НЕ ПРОВЕРЕНЫ ({exc})"
     if debt_lines:
@@ -819,7 +835,7 @@ def main():
     else:
         scope.append(f"достижимость знания — {cover['status']} "
                      f"({cover['reachable']}/{cover['files']} в {', '.join(cover['roots'])})")
-    scope.append("generated_from (эфемерный · вне Git)")
+    scope.append("generated_from (эфемерный · отсутствующий · вне Git)")
     scope.append(debt_scope)
 
     if not found:

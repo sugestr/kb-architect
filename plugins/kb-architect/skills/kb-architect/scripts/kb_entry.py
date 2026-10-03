@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kb_index
 import kb_paths
+import kb_skills
 
 MANDATORY_KEYS = ("обязательно при входе", "entry reads", "mandatory entry")
 FILE_CAP = 400_000     # больше — адрес, не чтение на входе
@@ -88,25 +89,36 @@ def part_hash(fragment):
     return hashlib.sha256(f"kb-entry-part:{fragment}".encode()).hexdigest()
 
 
-def role_files(root, registry, index, wanted, chosen_routes, found=None):
+def role_files(root, registry, index, wanted, chosen_routes, methods=None):
     """[(rel, why)] для выбранных ролей, их прочие маршруты и ненайденное."""
     out, missing, optional = [], [], []
     roles = registry.get("roles", []) if isinstance(registry, dict) else []
     skills = {s.get("name"): s for s in registry.get("skills", [])
               if isinstance(s, dict)} if isinstance(registry, dict) else {}
     routes = {r.get("id"): r for r in (index or {}).get("routes", []) if isinstance(r, dict)}
+    selected = []
     for want in wanted:
-        role = next((r for r in roles if isinstance(r, dict)
-                     and want in (r.get("id"), r.get("skill"))), None)
+        # Сначала точное имя роли, потом имя навыка: в Adas startup роль adas-venture-steward
+        # совпадала с навыком другой роли, и вход собирался не для той (03.10.2026).
+        role = next((r for r in roles if isinstance(r, dict) and r.get("id") == want), None) or \
+            next((r for r in roles if isinstance(r, dict) and r.get("skill") == want), None)
         if not role:
             missing.append(f"роль «{want}» не найдена в PROJECT_ROLES.json")
             continue
-        if found is not None:
-            found.append(role["id"])
+        selected.append(role["id"])
+    # Внешний аудит 03.10.2026: ограничения предков тоже обязательны на входе.
+    by_id = {r["id"]: r for r in roles if isinstance(r, dict) and r.get("id")}
+    ordered, errors = kb_skills.role_closure(by_id, selected)
+    missing.extend(f"наследование роли: {error}" for error in errors)
+    for role_id in ordered:
+        role = by_id[role_id]
         skill = skills.get(role.get("skill"))
         canonical = skill.get("canonical") if skill else None
-        if canonical and os.path.isfile(os.path.join(root, canonical, "SKILL.md")):
-            out.append((f"{canonical.strip('/')}/SKILL.md", f"роль {role['id']}: метод", None))
+        if canonical:
+            rel = os.path.join(canonical, "SKILL.md")
+            out.append((rel, f"роль {role['id']}: метод", None))
+            if methods is not None:
+                methods[role_id] = os.path.realpath(os.path.join(root, rel))
         else:
             missing.append(f"роль {role['id']}: SKILL.md навыка «{role.get('skill')}» не найден")
         for route_id in role.get("knowledge_routes", []) or []:
@@ -174,16 +186,16 @@ def build(root, roles_wanted=(), routes_wanted=(), skip=()):
             for rel, section in route_units(route):
                 plan.append((rel, f"маршрут {route['id']}"
                                   + ("" if route.get("id") in routes_wanted else " (всегда)"), section))
-    optional, found_roles = [], []
+    optional, methods = [], {}
     if roles_wanted:
         extra, lost, optional = role_files(root, registry or {}, index, list(roles_wanted),
-                                           set(routes_wanted), found_roles)
+                                           set(routes_wanted), methods)
         plan.extend(extra)
         missing.extend(lost)
     known_routes = {r.get("id") for r in (index or {}).get("routes", []) if isinstance(r, dict)}
     missing.extend(f"маршрута «{r}» нет в индексе" for r in routes_wanted if r not in known_routes)
 
-    seen, files, total = set(), [], 0
+    seen, included, files, total = set(), set(), [], 0
     for rel, why, section in plan:
         real = os.path.realpath(os.path.join(root, rel))
         if (real, section) in seen:
@@ -213,7 +225,17 @@ def build(root, roles_wanted=(), routes_wanted=(), skip=()):
             missing.append(f"{rel} ({why}) — двоичный файл, не текст входа")
             continue
         files.append((rel, why, data))
+        included.add((real, section))
         total += len(data)
+
+    # Внешний аудит 03.10.2026: имя роли подтверждает только прочитанный метод.
+    found_roles = [role_id for role_id, real in methods.items() if (real, None) in included]
+    for role_id, real in methods.items():
+        if (real, None) not in included:
+            rel = os.path.relpath(real, root)
+            reasons = [m for m in missing if m.startswith(rel)]
+            missing.append(f"роль {role_id}: метод {rel} не включён во вход"
+                           + (f" ({'; '.join(reasons)})" if reasons else ""))
 
     roles_text = ["Роли проекта (id: поводы). Роль выбирается по задаче владельца; другая —",
                   "`kb_entry.py <корень> --role <id>` и подтверждение метками её файла.", ""]
@@ -235,8 +257,12 @@ def build(root, roles_wanted=(), routes_wanted=(), skip=()):
         import kb_due
         stamp = kb_due.freshness_of(entry.text())
         now_stamp = re.split(r"[.;]| -->", stamp)[0].strip()[:32] if stamp else None
-    return {"files": files, "missing": missing, "optional": optional, "roles": roles,
-            "found_roles": found_roles, "total": total, "now_stamp": now_stamp}
+    # Замок держат только пробелы ролей (метода нет, не прочитан, предок сломан): их можно
+    # обойти другой ролью или «без роли». Пропавший прочий файл — предупреждение, иначе тупик:
+    # починить проект нельзя, пока замок закрыт.
+    blocking = [m for m in missing if m.startswith(("роль ", "наследование роли"))]
+    return {"files": files, "missing": missing, "blocking": blocking, "optional": optional,
+            "roles": roles, "found_roles": found_roles, "total": total, "now_stamp": now_stamp}
 
 
 def default_out(root):
@@ -307,6 +333,8 @@ def write(root, result, out, header_note=""):
     sidecar = {"schema": 1, "root": os.path.realpath(root), "bundle": os.path.realpath(out),
                "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                "roles": result["found_roles"], "parts": len(files),
+               # Внешний аудит 03.10.2026: метки неполного входа не снимают замок.
+               "missing": result["missing"], "blocking": result["blocking"],
                "part_sha256": [part_hash(x) for x in fragments],
                "receipt": receipt_line(result, digest)}
     try:

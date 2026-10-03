@@ -33,10 +33,15 @@ CLAUDE_ROOT_KEYS = ("CLAUDE_PROJECT_DIR", "CLAUDE_WORKING_DIRECTORY")
 
 
 def git(root: Path, *args: str) -> str | None:
+    # Внешний аудит 03.10.2026: чужое Git-окружение не должно подменять root.
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_PREFIX",
+                        "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY")}
+    env.update(GIT_OPTIONAL_LOCKS="0", LC_ALL="C")
     try:
         result = subprocess.run(
             ["git", "-C", str(root), *args], capture_output=True, text=True,
-            timeout=20)
+            timeout=20, env=env)
     except Exception:
         return None
     return result.stdout.rstrip("\r\n") if result.returncode == 0 else None

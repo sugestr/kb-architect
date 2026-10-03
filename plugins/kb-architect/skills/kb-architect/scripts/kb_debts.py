@@ -566,7 +566,13 @@ def described_at(root, unit, anchors):
         args = ["log", "-1", "--no-merges", "--format=%H %ct %cs"]
         if how == "section":
             args += ["-G", re.escape(name)]
-        raw = (git(root, *args, "--", rel) or "").split()
+        # Внешний аудит 03.10.2026: неизвестная дата не равна нулевому отставанию.
+        result = git(root, *args, "--", rel)
+        if result is None:          # сбой git; пустой ответ — коммита с описанием просто нет
+            raise RuntimeError(f"дата описания «{rel}» не определена: git не ответил")
+        raw = result.split()
+        if raw and (len(raw) != 3 or not raw[1].isdigit()):
+            raise RuntimeError(f"дата описания «{rel}» не определена: неожиданный ответ git")
         if len(raw) == 3 and (best is None or int(raw[1]) > int(best[1])):
             best = raw
     return (best[0], best[2]) if best else (None, None)
@@ -610,7 +616,7 @@ def code(root, files, today, lag_limit):
         return {"status": "NOT_CHECKED", "reason": "git log не ответил — отставание описаний не посчитано"}
     head_time = log[0][1] if log else 0
     positions = {commit: i for i, (commit, _, _) in enumerate(log)}
-    missing, lagging, described, excused = [], [], [], []
+    missing, lagging, described, excused, unchecked = [], [], [], [], []
     for unit, owned in units.items():
         if any(fnmatch.fnmatch(unit, g.rstrip("/")) or fnmatch.fnmatch(unit + "/", g)
                for g in allowed):
@@ -621,7 +627,11 @@ def code(root, files, today, lag_limit):
         if not anchors:
             missing.append({"unit": unit, "files": len(owned), "commits_90d": recent})
             continue
-        sha, when = described_at(root, unit, anchors)
+        try:
+            sha, when = described_at(root, unit, anchors)
+        except RuntimeError as exc:
+            unchecked.append({"unit": unit, "reason": str(exc)})
+            continue
         inside = {a for a, _ in anchors if a.startswith(unit + "/")}
         lag = 0
         if sha and sha in positions:
@@ -630,13 +640,18 @@ def code(root, files, today, lag_limit):
         elif sha:
             raw = git(root, "rev-list", "--count", "--no-merges", f"{sha}..HEAD", "--", unit,
                       *[f":(exclude){a}" for a in inside])
-            lag = int(raw) if raw and raw.strip().isdigit() else 0
+            if raw is None or not raw.strip().isdigit():
+                unchecked.append({"unit": unit, "reason": "git rev-list не ответил"})
+                continue
+            lag = int(raw)
         entry = {"unit": unit, "files": len(owned), "commits_90d": recent,
                  "anchors": [a for a, _ in anchors[:3]], "described_at": when, "lag_commits": lag}
         (lagging if lag >= lag_limit else described).append(entry)
     missing.sort(key=lambda u: (-u["commits_90d"], -u["files"]))
     lagging.sort(key=lambda u: -u["lag_commits"])
-    return {"status": "DEBT" if missing or lagging else "PASS", "units": len(units),
+    return {"status": "DEBT" if missing or lagging else "NOT_CHECKED" if unchecked else "PASS",
+            "unchecked": unchecked, "reason": "; ".join(f"{u['unit']}: {u['reason']}" for u in unchecked),
+            "units": len(units),
             "described": len(described), "missing": missing, "lagging": lagging,
             "excused": excused, "routes_with_code": len(routes)}
 
@@ -942,7 +957,16 @@ def debts(root, today=None, area=None):
     t = thresholds(root)
     files = tracked(root)
     if files is None:
-        base = {"status": "NOT_CHECKED", "reason": "не Git-репозиторий или git не ответил"}
+        # Ревью 7.7.0: проект вне Git — проверки по истории неприменимы; «не проверено» — только
+        # когда репозиторий есть, а git не ответил (иначе каждый проект без Git получал тревогу).
+        try:
+            probe = subprocess.run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                                   capture_output=True, text=True, timeout=10, env=GIT_ENV)
+            not_repo = probe.returncode != 0 and "not a git repository" in probe.stderr.lower()
+        except Exception:
+            not_repo = False                  # таймаут или сбой — неизвестно, а не «не репозиторий»
+        base = ({"status": "NOT_APPLICABLE", "reason": "не Git-репозиторий"} if not_repo else
+                {"status": "NOT_CHECKED", "reason": "git не ответил"})
         return {"root": root, "today": today.isoformat(), "thresholds": t,
                 "inbound": inbound(root, None, today, t["inbound_grace_days"]),
                 "work": base, "code": base, "flow": base, "freshness": base,
@@ -970,7 +994,10 @@ def debts(root, today=None, area=None):
         if c.get("missing") is not None:
             for key in ("missing", "lagging"):
                 c[key] = [u for u in c[key] if inside(u["unit"])]
-            c["status"] = "DEBT" if c["missing"] or c["lagging"] else "PASS"
+            c["unchecked"] = [u for u in c.get("unchecked", []) if inside(u["unit"])]
+            c["reason"] = "; ".join(f"{u['unit']}: {u['reason']}" for u in c["unchecked"])
+            c["status"] = ("DEBT" if c["missing"] or c["lagging"] else
+                           "NOT_CHECKED" if c["unchecked"] else "PASS")
         f = result["freshness"]
         if f.get("stale") is not None:
             f["stale"] = [x for x in f["stale"] if inside(x["path"])]
@@ -1080,8 +1107,11 @@ def summary_lines(d):
                    f"{mem['facts']} ({names}" + (" …" if len(mem["loose"]) > 3 else "") + "). "
                    f"Другим сессиям и ролям они не видны: перенеси факт в канон, в памяти оставь адрес")
     for key, label in (("inbound", "входящие"), ("work", "невлитая работа"), ("code", "код"),
-                       ("freshness", "свежесть"), ("current", "вход")):
-        if d[key]["status"] in ("NOT_CHECKED",):
+                       ("freshness", "свежесть"), ("current", "вход"),
+                       ("flow", "поток кода"), ("roles", "роли"),
+                       ("plans", "планы"), ("memory", "память")):
+        # Внешний аудит 03.10.2026: частичный DEBT тоже сохраняет UNKNOWN.
+        if d[key]["status"] == "NOT_CHECKED" or (key == "code" and d[key].get("unchecked")):
             clean.append(f"{label} — НЕ ПРОВЕРЕНО: {d[key].get('reason')}")
     return out, clean
 

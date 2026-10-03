@@ -410,9 +410,65 @@ def debts_of_project(skill, root, action_mode):
         print("SESSION_STATE=KNOWLEDGE_DEBTS_OPEN")
 
 
+def install_journal(destination):
+    """Внешний аудит 03.10.2026: квитанция rename переживает SIGKILL установщика."""
+    return os.path.join(os.path.dirname(destination),
+                        "." + os.path.basename(destination) + "-install.json")
+
+
+def recover_replace(destination, do_update):
+    """Внешний аудит 03.10.2026: восстановить незавершённую замену до сети и parity."""
+    journal = install_journal(destination)
+    if not os.path.exists(journal):
+        return None
+    if not do_update:
+        return "незавершённая установка; восстановление требует --сделать"
+    try:
+        with open(journal, encoding="utf-8") as stream:
+            state = json.load(stream)
+        parent = os.path.dirname(os.path.abspath(destination))
+        backup = state["backup"]
+        stage_root = state["stage_root"]
+        # Квитанция разрешает только соседний backup и наш временный каталог.
+        if (state["destination"] != os.path.abspath(destination)
+                or os.path.dirname(backup) != os.path.join(parent, ".backups")
+                or not os.path.basename(backup).startswith("kb-architect-")
+                or os.path.dirname(stage_root) != parent
+                or not os.path.basename(stage_root).startswith(".kb-architect-stage-")):
+            return "небезопасные пути в квитанции установки"
+        if not os.path.lexists(destination):
+            if not os.path.lexists(backup):
+                return "нет ни установленной копии, ни backup из квитанции"
+            os.rename(backup, destination)
+        elif os.path.lexists(backup) and fingerprint(destination) != state["fingerprint"]:
+            failed = backup + ".failed-new"
+            if os.path.lexists(failed):
+                return "каталог не совпадает с выпуском; место для failed-new занято"
+            os.rename(destination, failed)
+            os.rename(backup, destination)
+        shutil.rmtree(stage_root, ignore_errors=True)
+        os.unlink(journal)
+        return None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return "восстановление установки не завершено: " + str(exc)
+
+
+def recover_installs(do_update):
+    """Внешний аудит 03.10.2026: отсутствие каталога не означает отсутствие установки."""
+    for name, raw_path in MESTA:
+        error = recover_replace(os.path.expanduser(raw_path), do_update)
+        if error:
+            print(f"{name:12} ВОССТАНОВЛЕНИЕ ЗАБЛОКИРОВАНО: {error}")
+            return False
+    return True
+
+
 def safe_replace(source, destination, old_version):
     """Install one byte-identical release with parity and recoverable rename."""
     parent = os.path.dirname(destination)
+    recovery_error = recover_replace(destination, True)
+    if recovery_error:
+        return None, None, recovery_error
     os.makedirs(parent, exist_ok=True)
     stage_root = tempfile.mkdtemp(prefix=".kb-architect-stage-", dir=parent)
     staged = os.path.join(stage_root, "kb-architect")
@@ -434,11 +490,22 @@ def safe_replace(source, destination, old_version):
         while os.path.lexists(backup):
             backup = f"{base_backup}-{suffix}"
             suffix += 1
+        # Внешний аудит 03.10.2026: сначала атомарная квитанция, затем оба rename.
+        journal = install_journal(destination)
+        state = {"destination": os.path.abspath(destination), "backup": os.path.abspath(backup),
+                 "stage_root": os.path.abspath(stage_root), "fingerprint": expected_fingerprint}
+        staged_journal = os.path.join(stage_root, "install.json")
+        with open(staged_journal, "w", encoding="utf-8") as stream:
+            json.dump(state, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(staged_journal, journal)
         os.rename(destination, backup)
         try:
             os.rename(staged, destination)
         except Exception:
             os.rename(backup, destination)
+            os.unlink(journal)
             raise
 
         try:
@@ -449,8 +516,10 @@ def safe_replace(source, destination, old_version):
             failed = backup + ".failed-new"
             os.rename(destination, failed)
             os.rename(backup, destination)
+            os.unlink(journal)
             return None, failed, ("installed copy differs from the release bytes; "
                                   "backup restored")
+        os.unlink(journal)
         return versiya(destination), backup, ""
     finally:
         shutil.rmtree(stage_root, ignore_errors=True)
@@ -487,8 +556,15 @@ def prepare_source(src, do_update):
 
 
 def update_from_source(src, args, source_label, record_receipt=False):
+    if not recover_installs(args.do_update):
+        return 2
     before = versiya(src)
-    prepared, source_state, _top = prepare_source(src, args.do_update)
+    # Внешний аудит 03.10.2026: public_source уже проверил SHA и тег; повторный
+    # fetch/pull мог установить другой HEAD. Подтягивается только maintainer source.
+    if record_receipt:
+        prepared, source_state = True, "проверенный public snapshot; повторного fetch/pull нет"
+    else:
+        prepared, source_state, _top = prepare_source(src, args.do_update)
     print(f"Источник: {source_label}")
     print(f"  checkout: {src}")
     print("  " + source_state)
@@ -632,6 +708,9 @@ def main():
     if args.ttl_hours < 0:
         parser.error("--ttl-hours не может быть отрицательным")
 
+    if not recover_installs(args.do_update):
+        return 2
+
     if args.public and args.fast:
         fast_result = fast_public_check(args.ttl_hours)
         if fast_result is not None:
@@ -660,7 +739,7 @@ def main():
         if not src:
             print("Источник не получен: " + str(err))
             return 2
-        result = update_from_source(src, args, label, record_receipt=args.public)
+        result = update_from_source(src, args, label, record_receipt=bool(temp_root))
         if result == 0 and args.project:
             result = apply_project(src, args.project, action_mode=args.do_update)
         return result

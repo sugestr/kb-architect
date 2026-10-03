@@ -82,11 +82,13 @@ PLAIN_READ = {"cat", "head", "tail", "less", "more", "wc", "ls", "pwd", "grep", 
               "diff", "cmp", "cut", "tr", "nl", "basename", "dirname", "realpath", "readlink",
               "test", "[", "true", "shasum", "sha256sum", "md5", "column", "od", "strings", "ps",
               "pdfinfo", "jq", "cd", "rg", "find", "tree", "sort", "uniq", "sed", "pdftotext", "env",
-              "git"}
+              "git", "journalctl", "sleep"}
 GIT_READ = {"status", "log", "show", "diff", "rev-parse", "ls-files", "blame", "describe", "grep",
             "cat-file", "shortlog", "rev-list", "for-each-ref", "ls-remote", "show-ref",
             "merge-base", "name-rev", "count-objects"}
-SED_PRINT = re.compile(r"^(?:\d+|\$)(?:,(?:\d+|\$))?p$")
+# Внешний аудит 03.10.2026: единственная операция p, включая адрес /регулярка/.
+SED_ADDRESS = r"(?:\d+|\$|/(?:\\.|[^/\\\n])*/[IM]?)"
+SED_PRINT = re.compile(rf"^(?:{SED_ADDRESS}(?:,{SED_ADDRESS})?)?p$")
 KB_READ_SCRIPTS = {"kb_due.py", "kb_check.py", "kb_debts.py"}
 MCP_READ = re.compile(r"^(?:get|list|search|read|find|query|describe|fetch|whoami|identity|"
                       r"server_info|server_status|vault_status|chat_info|chat_rights|"
@@ -95,7 +97,7 @@ MCP_READ = re.compile(r"^(?:get|list|search|read|find|query|describe|fetch|whoam
 MCP_WRITE = re.compile(r"create|update|delete|remove|set_|send|post|write|modify|archive|move|"
                        r"trash|complete|enroll|register|publish|revoke|pin|edit|forward|copy|"
                        r"import|execute|upload|apply|install|merge|push|approve", re.IGNORECASE)
-PATCH_PATH = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$", re.MULTILINE)
+PATCH_PATH = re.compile(r"^\*\*\* (?:(Add|Update|Delete) File|Move to): (.+)$", re.MULTILINE)
 # (событие, matcher Claude, matcher Codex, timeout, статус). Строка команды и
 # состав записи — ключ доверия Codex: их правка требует нового одобрения владельца.
 # Последнее поле — строка состояния. Codex показывает её и как имя hook'а в настройках
@@ -246,21 +248,28 @@ def session_from_env():
 
 
 def due_summary(root, limit=1800):
-    """Блок ПОРА из kb_due — раз в день на проект, включая неудачу: медленный
-    проект не платит таймаут на каждом старте."""
-    cache = os.path.join(state_root(), "due",
-                         f"{root_key(root)}-{datetime.date.today().isoformat()}.txt")
-    try:
-        with open(cache, encoding="utf-8") as f:
-            return f.read()
-    except OSError:
-        pass
+    """Блок ПОРА из kb_due — раз в день на проект: медленный проект не платит таймаут на
+    каждом старте. Внешний аудит 03.10.2026: ненулевой выход больше не читается как «ПОРА
+    пусто», а неудача запоминается только на час (повтор без суточной слепоты); «не
+    проверено» из отчёта переносится в блок и кэшируется вместе с ним — это честный итог."""
+    day = datetime.date.today().isoformat()
+    cache = os.path.join(state_root(), "due", f"{root_key(root)}-{day}.txt")
+    failed = os.path.join(state_root(), "due",
+                          f"{root_key(root)}-{day}-{datetime.datetime.now().hour:02d}.fail")
+    for path in (cache, failed):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            pass
     try:
         out = subprocess.run([sys.executable, os.path.join(scripts_dir(), "kb_due.py"), root],
                              capture_output=True, text=True, timeout=20,
-                             env=dict(os.environ, GIT_OPTIONAL_LOCKS="0")).stdout
+                             env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"))
+        if out.returncode != 0:
+            raise RuntimeError(f"exit {out.returncode}")
         lines, inside = [], False
-        for line in out.splitlines():
+        for line in out.stdout.splitlines():
             if line.startswith("ПОРА"):
                 inside = True
                 continue
@@ -268,14 +277,19 @@ def due_summary(root, limit=1800):
                 if not line.strip():
                     break
                 lines.append(line[:300])
-        text = "\n".join(lines) if lines else "ПОРА пусто."
+        unknown = [line[:300] for line in out.stdout.splitlines()
+                   if "НЕ ПРОВЕРЕН" in line or "NOT_CHECKED" in line]
+        lines.extend(line for line in unknown if line not in lines)
+        text, path = ("\n".join(lines) if lines else "ПОРА пусто."), cache
     except Exception as exc:  # диагностика не должна ломать вход
-        text = f"kb_due не выполнен ({type(exc).__name__}); запусти kb_due.py вручную"
+        text = f"kb_due не выполнен ({exc if isinstance(exc, RuntimeError) else type(exc).__name__}); " \
+               "запусти kb_due.py вручную"
+        path = failed
     if len(text) > limit:
         text = text[:limit].rsplit("\n", 1)[0] + "\n  … (полностью: kb_due.py)"
     try:
-        os.makedirs(os.path.dirname(cache), exist_ok=True)
-        with open(cache, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             f.write(text)
     except OSError:
         pass
@@ -417,6 +431,7 @@ def start_entry(root, sid, agent, source, roles=None):
              "source": source, "armed_at": armed_at, "bundle": out, "parts": len(fragments),
              "part_sha256": [kb_entry.part_hash(x) for x in fragments],
              "roles": result["found_roles"], "missing": result["missing"],
+             "blocking": result["blocking"],
              "receipt": kb_entry.receipt_line(result, digest), "bytes": result["total"],
              "confirmed": None}
     if sid:
@@ -526,6 +541,7 @@ def candidates(root, state=None, bundle=None, since=0.0):
     if state and state.get("bundle"):
         add({"bundle": state["bundle"], "root": state["root"], "created": state.get("armed_at"),
              "part_sha256": state["part_sha256"], "roles": state.get("roles", []),
+             "missing": state.get("missing"), "blocking": state.get("blocking"),
              "receipt": state.get("receipt", "")})
     if bundle:
         side = sidecar(bundle)
@@ -572,6 +588,15 @@ def verify(root, state, token, bundle=None, no_role=None):
     found, why = check_marks(candidates(root, state, bundle, since), fragments_of(token))
     if not found:
         return None, why
+    # Внешний аудит 03.10.2026: чтение оставшихся частей не доказывает вход роли. Держит замок
+    # только пробел роли (метод не найден или не прочитан, сломан предок); выход — другая роль
+    # или «без роли». Файл входа до 7.7 (без поля) принимается как прежде.
+    if found.get("blocking"):
+        return None, ("вход роли неполон: " + "; ".join(found["blocking"])
+                      + ". Выход: собери вход с другой ролью ("
+                      + entry_command(root, (state or {}).get("agent"))
+                      + ") либо без роли (та же команда без --role) и подтверди его метками; "
+                        "без роли — с --no-role \"<почему задача вне ролей>\".")
     if needs_role(root, found.get("roles")) and not (no_role or "").strip():
         return None, ("у проекта есть роли, а в этом файле входа — ни одной. Собери вход роли по "
                       f"задаче ({entry_command(root, (state or {}).get('agent'))}) и подтверди "
@@ -610,7 +635,7 @@ def parse_confirm(cmd):
 # ---------------------------------------------------------------- замок
 
 def command_of(tool_input):
-    cmd = tool_input.get("command") if isinstance(tool_input, dict) else None
+    cmd = (tool_input.get("command") or tool_input.get("cmd")) if isinstance(tool_input, dict) else None
     if isinstance(cmd, list):
         if len(cmd) >= 3 and os.path.basename(str(cmd[0])) in ("bash", "sh", "zsh") \
                 and cmd[1] in ("-c", "-lc"):
@@ -720,10 +745,16 @@ def command_read_only(words):
         return False
     if name == "git":
         return git_read_only(args)
+    if name == "sleep":
+        return len(args) == 1 and bool(re.fullmatch(r"\d+(?:\.\d+)?", args[0]))
+    if name == "journalctl":
+        return not any(a.startswith(("--vacuum", "--rotate", "--flush", "--sync", "--relinquish", "--setup-keys", "--update-catalog")) for a in args)
     if name == "sed":
         if any(a == "-i" or a.startswith("-i") or a.startswith("--in-place") for a in args):
             return False
         if not any(a in ("-n", "--quiet", "--silent") for a in args):
+            return False
+        if any(a in ("-e", "-f") or a.startswith(("--expression", "--file")) for a in args):
             return False
         scripts = positional(args)[:1]
         return bool(scripts) and all(SED_PRINT.match(s) for s in scripts)
@@ -783,6 +814,13 @@ def inbox_delivery(tool, path, root):
     return bool(inbox) and real.startswith(inbox + os.sep)
 
 
+def patch_paths(tool_input):
+    """Внешний аудит 03.10.2026: общий разбор путей для замка и реестра, включая перенос."""
+    raw = command_of(tool_input) or (tool_input.get("input", "")
+                                     if isinstance(tool_input, dict) else "")
+    return [(op or "Move", rel.strip()) for op, rel in PATCH_PATH.findall(str(raw))]
+
+
 def touched_roots(event):
     """KB-проекты, которых касается инструмент: путь правимого файла, иначе cwd."""
     tool, tool_input = event.get("tool_name") or "", event.get("tool_input") or {}
@@ -793,10 +831,7 @@ def touched_roots(event):
         if isinstance(value, str) and value:
             paths.append((value if os.path.isabs(value) else os.path.join(cwd, value), tool))
     if tool == "apply_patch":
-        raw = command_of(tool_input) or (tool_input.get("input", "")
-                                         if isinstance(tool_input, dict) else "")
-        for op, rel in PATCH_PATH.findall(str(raw)):
-            rel = rel.strip()
+        for op, rel in patch_paths(tool_input):
             paths.append((rel if os.path.isabs(rel) else os.path.join(cwd, rel), f"apply_patch:{op}"))
     roots = []
     own = find_root(cwd)
@@ -953,15 +988,32 @@ def begin_turn(state, root, prompt):
     Ход, брошенный Esc (Stop не пришёл), уведомление не закрывает: он закроется следующим
     Stop или репликой владельца — прерванных так насчитается меньше, работа не теряется."""
     try:
-        kind = kb_turns.prompt_kind(prompt)
-        if state.get("turn"):
-            if kind != "human":
+        # Внешний аудит 03.10.2026: read–modify–save и дедупликация под одним замком.
+        with kb_turns.git_budget(), kb_turns.file_lock(state_path(state["session"], root)):
+            current = load_state(state["session"], root)
+            if not current:
                 return
-            finish_turn(state, interrupted=True)
-        kb_turns.save_snap(state["session"], root, kb_turns.snapshot(root))
-        state["turn"] = {"at": now_iso(), "decision": kb_turns.is_decision(prompt),
-                         "effects": [], "trigger": kind}
-        save_state(state)
+            state.clear()
+            state.update(current)
+            stamp = time.time()
+            identity = hashlib.sha256((str(state["session"]) + "\0" + str(prompt)).encode()).hexdigest()
+            previous = state.get("prompt_event") or {}
+            if previous.get("identity") == identity and 0 <= stamp - previous.get("at", 0) <= DEDUP_SECONDS:
+                return
+            kind = kb_turns.prompt_kind(prompt)
+            state["prompt_event"] = {"identity": identity, "at": stamp}
+            if state.get("turn"):
+                if kind != "human":
+                    save_state(state)
+                    return
+                _finish_turn(state, interrupted=True)
+            canonical, worktree = kb_turns.project_identity(root)
+            kb_turns.save_snap(state["session"], root, kb_turns.snapshot(root))
+            state["turn"] = {"at": now_iso(), "decision": kb_turns.is_decision(prompt),
+                             "effects": [], "calls": [], "trigger": kind,
+                             "project": os.path.basename(canonical), "worktree": worktree,
+                             "project_key": hashlib.sha256(canonical.encode()).hexdigest()[:12]}
+            save_state(state)
     except Exception:
         pass
 
@@ -1063,9 +1115,6 @@ def record_effects(event, roots, sid, agent):
     tool, ti = event.get("tool_name") or "", event.get("tool_input") or {}
     for root in roots:
         try:
-            state = load_state(sid, root)
-            if not state or not state.get("turn"):
-                continue
             effects = []
             if tool in SHELL_TOOLS:
                 cmd = command_of(ti)
@@ -1080,8 +1129,7 @@ def record_effects(event, roots, sid, agent):
                         isinstance(ti.get(FILE_TOOLS[tool]), str):
                     paths = [ti[FILE_TOOLS[tool]]]
                 elif tool == "apply_patch":
-                    raw = command_of(ti) or (ti.get("input", "") if isinstance(ti, dict) else "")
-                    paths = [p.strip() for _, p in PATCH_PATH.findall(str(raw))]
+                    paths = [p for _, p in patch_paths(ti)]
                 cwd = event.get("cwd") or root
                 for p in paths:
                     full = os.path.realpath(p if os.path.isabs(p) else os.path.join(cwd, p))
@@ -1089,10 +1137,64 @@ def record_effects(event, roots, sid, agent):
                         effects.append(["certain", "file",
                                         os.path.relpath(full, os.path.realpath(root))[:200]])
             if effects:
-                state["turn"]["effects"] = (state["turn"].get("effects", []) + effects)[-80:]
-                save_state(state)
+                # Внешний аудит 03.10.2026: попытка не доказывает выполнение инструмента.
+                with kb_turns.file_lock(state_path(sid, root)):
+                    state = load_state(sid, root)
+                    if not state or not state.get("turn"):
+                        continue
+                    calls = state["turn"].get("calls")
+                    if calls is None:
+                        # Ход начат до 7.7: прежние следствия — попытки с неизвестным исходом,
+                        # иначе пересборка effects из calls стирала их (ревью 7.7.0).
+                        old = state["turn"].get("effects", [])
+                        calls = [{"id": "legacy", "effects": old, "outcome": "attempt"}] if old else []
+                    ident = tool_event_key(event)
+                    if event.get("tool_use_id") and any(c["id"] == ident for c in calls):
+                        continue
+                    calls = (calls + [{"id": ident, "effects": effects, "outcome": "attempt"}])[-80:]
+                    state["turn"]["calls"] = calls
+                    state["turn"]["effects"] = [e for c in calls for e in c["effects"]][-80:]
+                    save_state(state)
         except Exception:
             continue
+
+
+def tool_event_key(event):
+    """Внешний аудит 03.10.2026: связать события без сохранения аргументов/секретов."""
+    value = event.get("tool_use_id") or json.dumps(
+        [event.get("tool_name"), event.get("tool_input")], sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(str(value).encode()).hexdigest()
+
+
+def on_tool_result(event, agent):
+    """Внешний аудит 03.10.2026: необязательные PostToolUse/Failure; HOOK_EVENTS прежние.
+    Только событие результата меняет attempt; отсутствие события не означает успех."""
+    sid = event.get("session_id")
+    if not sid:
+        return None
+    response = event.get("tool_response")
+    failed = event.get("hook_event_name") == "PostToolUseFailure"
+    if isinstance(response, dict):
+        failed |= bool(response.get("isError") or response.get("is_error") or response.get("interrupted"))
+        failed |= bool(response.get("error"))
+        failed |= response.get("success") is False
+        failed |= any(response.get(k) not in (None, 0) for k in ("exit_code", "exitCode", "returncode"))
+    ident = tool_event_key(event)
+    for root in touched_roots(event):
+        try:
+            with kb_turns.file_lock(state_path(sid, root)):
+                state = load_state(sid, root)
+                if not state or not state.get("turn"):
+                    continue
+                calls = state["turn"].get("calls", [])
+                for call in reversed(calls):
+                    if call["id"] == ident and call["outcome"] == "attempt":
+                        call["outcome"] = "failed" if failed else "succeeded"
+                        save_state(state)
+                        break
+        except Exception:
+            continue
+    return None
 
 
 def on_tool(event, agent):
@@ -1151,6 +1253,18 @@ def capture_mode():
 
 def finish_turn(state, interrupted=False, stop_hook_active=False):
     """Итог хода в реестр: классы следствий, изменённые файлы, дошло ли до базы."""
+    # Внешний аудит 03.10.2026: второй Stop читает уже закрытый ход, а не старую копию.
+    with kb_turns.git_budget(), kb_turns.file_lock(state_path(state["session"], state["root"])):
+        current = load_state(state["session"], state["root"])
+        if not current:
+            return
+        state.clear()
+        state.update(current)
+        _finish_turn(state, interrupted, stop_hook_active)
+
+
+def _finish_turn(state, interrupted=False, stop_hook_active=False):
+    """Итог при уже удерживаемой блокировке пары сессия–проект."""
     turn, root, sid = state.get("turn"), state.get("root"), state.get("session")
     if not turn or not root or not os.path.isdir(root):
         return
@@ -1166,8 +1280,22 @@ def finish_turn(state, interrupted=False, stop_hook_active=False):
     for e in effects:
         key = f"{e[0]}:{e[1]}"
         kinds[key] = kinds.get(key, 0) + 1
+    outcomes = {"attempt": 0, "succeeded": 0, "failed": 0}
+    succeeded = 0
+    for call in turn.get("calls", []):
+        outcome = call["outcome"]
+        outcomes[outcome] += 1
+        if outcome == "succeeded":
+            succeeded += sum(1 for e in call["effects"] if e[0] == "certain"
+                             and not (len(e) > 2 and e[2] in know))
+    if "calls" not in turn:
+        outcomes["attempt"] = len(effects)  # старый ход после обновления — исход неизвестен
     row = {"ts": now_iso(), "ts_epoch": time.time(), "session": str(sid)[:12],
-           "agent": state.get("agent"), "project": os.path.basename(root), "mode": capture_mode(),
+           "agent": state.get("agent"), "project": turn.get("project", os.path.basename(root)), "mode": capture_mode(),
+           "project_key": turn.get("project_key") or kb_turns.root_key(root),
+           "worktree": bool(turn.get("worktree")), "outcomes": outcomes,
+           "certain_succeeded": succeeded,
+           "observation_incomplete": not snap or bool(snap.get("incomplete") or snap.get("end_incomplete")),
            "certain": len(certain), "uncertain": sum(1 for e in effects if e[0] == "uncertain"),
            "kinds": kinds, "work_files": len(work), "knowledge_files": len(know & changed),
            "decision": bool(turn.get("decision")), "interrupted": interrupted,
@@ -1212,12 +1340,17 @@ def run_hook(agent):
         event = {}
     name = event.get("hook_event_name") or ""
     handlers = {"SessionStart": on_session_start, "UserPromptSubmit": on_prompt,
-                "PreToolUse": on_tool, "Stop": on_stop}
+                "PreToolUse": on_tool, "Stop": on_stop,
+                "PostToolUse": on_tool_result, "PostToolUseFailure": on_tool_result}
     handler = handlers.get(name)
     if not handler:
         return 0
     try:
-        payload = handler(event, agent)
+        if name == "SessionStart":
+            payload = handler(event, agent)  # его отдельный бюджет включает обновление и вход
+        else:
+            with kb_turns.git_budget():
+                payload = handler(event, agent)
     except Exception as exc:  # собственная ошибка не блокирует машину — но видна
         if name == "Stop":
             return 0                                  # реестр хода — замер, не вход
@@ -1279,7 +1412,11 @@ def confirm(root, token, sid, bundle=None, no_role=None):
     except Exception:
         state, others = None, []
     done = (state or {}).get("confirmed")
-    if done and check_marks(candidates(root, None, done.get("bundle")), fragments_of(token))[0]:
+    checked = None
+    if done:
+        checked, _ = check_marks(candidates(root, None, done.get("bundle")), fragments_of(token))
+    # Внешний аудит 03.10.2026: старая квитанция тоже требует полного входа роли.
+    if done and checked and not checked.get("blocking"):
         confirmed = done                      # hook уже проверил и записал эту команду
     else:
         confirmed, why = verify(root, state, token, bundle, no_role)
@@ -1346,7 +1483,9 @@ def foreign_entry_hooks(root):
             if isinstance(group, dict) and not ours(group):
                 for hook in group.get("hooks", []) or []:
                     if isinstance(hook, dict) and hook.get("command"):
-                        found.append((os.path.relpath(path, root), str(hook["command"])[:120]))
+                        # Внешний аудит 03.10.2026: команда может содержать значение доступа.
+                        digest = hashlib.sha256(str(hook["command"]).encode("utf-8")).hexdigest()[:12]
+                        found.append((os.path.relpath(path, root), "SessionStart", digest))
     return found
 
 
@@ -1367,8 +1506,9 @@ def project_actions(root):
         actions.append(f"ролей {len(roles)}, а `entry_role` в PROJECT_ROLES.json нет: объяви роль "
                        "большинства задач — иначе каждый новый чат сначала собирает вход роли, "
                        "без неё замок входа не откроется (migration.md, 7.4, п. 1)")
-    for path, command in foreign_entry_hooks(root):
-        actions.append(f"свой hook старта сессии в {path} ({command}): если он собирает вход, "
+    for path, event, digest in foreign_entry_hooks(root):
+        actions.append(f"свой hook старта сессии в {path} ({event}, sha256:{digest}): "
+                       "если он собирает вход, "
                        "сними его, когда общий kb_start установлен на машине, иначе вход двойной; "
                        "hook другого назначения оставь (migration.md, 7.4, п. 2)")
     entry = kb_paths.locate(root, "entry")

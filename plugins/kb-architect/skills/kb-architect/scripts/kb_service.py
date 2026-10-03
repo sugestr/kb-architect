@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kb_paths  # noqa: E402
@@ -47,9 +48,21 @@ ISOLATE = ["--disable", "apps", "--disable", "plugins", "--disable", "remote_plu
 MARKS = ("Сервисный обход базы", "сервисный обход базы", "СЕРВИСНЫЙ ОБХОД БАЗЫ")
 # Любая явная отметка разбора: ✔/✅, [x], CLOSED, «статус: закрыт…» (проекты пишут по-разному:
 # «статус CLOSED», «✔ код исправлен», «[x]»).
-CLOSED = re.compile(r"(?:✔|✅|\[x\]|\bCLOSED\b|(?:статус|status)\W{0,3}(?:закрыт|closed|resolved|"
+CLOSED = re.compile(r"(?:✔|✅|\[x\]|(?:статус|status)\W{0,3}(?:закрыт|closed|resolved|"
                     r"учтен|учтён|применен|применён|решен|решён))", re.IGNORECASE)
-ENTRY = re.compile(r"\n(?=- \d{4}-\d{2}-\d{2}|\| \d{4}-\d{2}-\d{2}|## \d{4}-\d{2}-\d{2})")
+# Статус заглавными — «**ЗАКРЫТО.**» (tg-archive: 37 записей). Строчное «закрыт» — обычное слово
+# текста («порт закрыт»), поэтому только заглавные и без «НЕ» (внешний аудит, 03.10.2026).
+CLOSED_UPPER = re.compile(r"(?<!НЕ )(?<!не )\bЗАКРЫТО\b")
+# «CLOSED» — пометка, только если стоит как статус: в начале строки или после «·», «—», «|», «:»
+# («· CLOSED 2026-09-18:», «— **CLOSED**»); «система показывает CLOSED» — текст, не закрытие.
+CLOSED_MARK = re.compile(r"(?:^|[·—|:]|\s[-–])[ \t*]*CLOSED\b", re.MULTILINE)
+# Запись начинается датой: ISO или ДД.ММ.ГГГГ / ДД/ММ/ГГГГ, в том числе жирной (UAD «## 10.09.2026»,
+# другой проект «- **25/09/2026»): прежде такие записи склеивались с соседними или не считались.
+DATE = r"(?:\*\*)?(?:\d{4}-\d{2}-\d{2}|\d{2}[./]\d{2}[./]\d{4})"
+ENTRY = re.compile(r"\n(?=(?:- |\| |## )" + DATE + ")")
+ENTRY_DATE = re.compile(r"(?:- |\| |## )(?:\*\*)?(?:(\d{4})-(\d{2})-(\d{2})|(\d{2})[./](\d{2})[./](\d{4}))")
+# Пример из шаблона канала правок — не запись.
+TEMPLATE_EXAMPLE = ("path/to/file.md", "утверждает X, на самом деле Y")
 NOW_LIMIT = 20 * 1024
 THRESHOLDS = {"open_corrections": 15, "unrecorded_turns": 10, "work_commits": 60,
               "days_with_work": 14, "exam_days": 30, "registry_days": 7}
@@ -91,17 +104,58 @@ def is_git(root):
     return bool(git(root, "rev-parse", "--git-dir").strip())
 
 
+def visible_corrections(text):
+    """Внешний аудит 03.10.2026: скрыть цитаты и код, сохранив позиции записей. Блок без
+    закрывающей метки блоком не считается: иначе он прятал бы все следующие записи (ревью 7.7.0)."""
+    out, fence = [], None
+    lines = text.splitlines(keepends=True)
+    marks = [re.match(r"(`{3,}|~{3,})", re.sub(r"^\s*[-*]\s+", "", l).lstrip()) for l in lines]
+    for i, line in enumerate(lines):
+        m = marks[i]
+        if fence is None and m and not any(
+                n and n.group(1)[0] == m.group(1)[0] and len(n.group(1)) >= len(m.group(1))
+                for n in marks[i + 1:]):
+            out.append(line)                  # незакрытый «блок» — обычный текст
+            continue
+        value = re.sub(r"^\s*[-*]\s+", "", line).lstrip()
+        mark = re.match(r"(`{3,}|~{3,})", value)
+        hidden = fence is not None or value.startswith(">") or mark is not None
+        if mark and not value.startswith(">"):
+            if fence is None:
+                fence = mark.group(1)
+            elif (mark.group(1)[0] == fence[0] and len(mark.group(1)) >= len(fence)
+                  and not value[mark.end():].strip()):
+                fence = None
+        if hidden:
+            out.append(re.sub(r"[^\r\n]", " ", line))
+        else:
+            out.append(re.sub(r"(`+)(?!`).*?(?<!`)\1(?!`)",
+                              lambda m: " " * len(m.group(0)), line))
+    return "".join(out)
+
+
 def open_corrections(root):
     """[(дата, текст)] записей канала правок без отметки разбора, новые первыми."""
     loc = kb_paths.locate(root, "corrections")
     if not loc.path:
         return []
     out = []
-    for block in ENTRY.split(kb_paths.read(loc.path)):
+    text = kb_paths.read(loc.path)
+    # Дата внутри блока кода — пример, не запись: начала записей ищутся по видимому тексту.
+    starts = [0] + [m.end() for m in ENTRY.finditer(visible_corrections(text))] + [len(text)]
+    for start, end in zip(starts, starts[1:]):
+        block = text[start:end]
         b = block.strip()
-        m = re.match(r"(?:- |\| |## )(\d{4}-\d{2}-\d{2})", b)
-        if m and not CLOSED.search(b):
-            out.append((m.group(1), b))
+        m = ENTRY_DATE.match(b)
+        # Цитаты и код скрываются внутри записи: незакрытый блок кода в одной записи
+        # не прячет отметки всех следующих (tg-archive, 03.10.2026).
+        status = visible_corrections(block)
+        if (not m or CLOSED.search(status) or CLOSED_UPPER.search(status)
+                or CLOSED_MARK.search(status) or all(t in b for t in TEMPLATE_EXAMPLE)):
+            continue
+        date = (f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m.group(1)
+                else f"{m.group(6)}-{m.group(5)}-{m.group(4)}")
+        out.append((date, b))
     return sorted(out, key=lambda x: x[0], reverse=True)
 
 
@@ -154,9 +208,12 @@ def accumulated(root, today=None):
     else:
         commits = git(root, "rev-list", "--count", "--no-merges", "--since=30.days", "HEAD", "--", ".")
     commits = int(commits.strip() or 0)
-    turns = kb_turns.summary(root, days=max(1, days if days is not None else 30), whole_only=True)
-    registry_days = ((datetime.datetime.now().timestamp() - turns["first_ts"]) / 86400
-                     if turns.get("first_ts") else 0)
+    # Внешний аудит 03.10.2026: календарный день повторно включал работу до обхода.
+    service_ts = git(root, "show", "-s", "--format=%ct", since_sha).strip() if since_sha else ""
+    turns = kb_turns.summary(root, days=30, whole_only=True,
+                             since_epoch=int(service_ts) if service_ts else None)
+    registry_days = ((time.time() - turns["first_trigger_ts"]) / 86400
+                     if turns.get("first_trigger_ts") is not None else 0)
     unrecorded = turns["turns_with_work"] - turns["work_recorded"]
     questions = kb_paths.locate(root, "questions").path
     age = exam_age(root, questions, today)
@@ -191,9 +248,30 @@ def due_text(root, once_a_day=False):
     flag = os.path.join(state_dir("said"), f"{key(root)}-{today.isoformat()}")
     if once_a_day and os.path.exists(flag):
         return ""
+    # Внешний аудит 03.10.2026: дневной успех только после расчёта; ошибка
+    # разрешает повтор через час, чтобы hook не платил дорогой расчёт на каждом старте.
+    retry = os.path.join(state_dir("retry"), key(root))
     if once_a_day:
-        open(flag, "w").close()
-    a = accumulated(root, today)
+        try:
+            if time.time() - os.path.getmtime(retry) < 3600:
+                return ""
+        except OSError:
+            pass
+    try:
+        a = accumulated(root, today)
+    except Exception:
+        if once_a_day:
+            with open(retry, "w"):
+                pass
+            os.utime(retry, (time.time(), time.time()))
+        raise
+    if once_a_day:
+        with open(flag, "w"):
+            pass
+        try:
+            os.remove(retry)
+        except FileNotFoundError:
+            pass
     if not a["due"]:
         return ""
     when = f"с прошлого обхода ({a['since']})" if a["since"] else "обхода ещё не было"
@@ -206,7 +284,19 @@ def due_text(root, once_a_day=False):
 
 # ---------------------------------------------------------------- план обхода
 
-def plan(root):
+# Не «работа без описания»: только тесты, картинки и документы-вложения (внешний аудит 03.10: в
+# списке были коммиты одних тестов и PNG).
+NOT_WORK = re.compile(r"(?:^|/)(?:tests?|__tests__)/|(?:^|/)test_[^/]+$|_test\.\w+$|"
+                      r"\.(?:png|jpe?g|gif|svg|webp|ico|pdf)$", re.IGNORECASE)
+
+
+def entry_line(text, block):
+    """Номер строки начала записи в файле канала — адрес для обхода."""
+    pos = text.find(block.splitlines()[0]) if block else -1
+    return text.count("\n", 0, pos) + 1 if pos >= 0 else None
+
+
+def plan(root, show_all=False):
     a = accumulated(root)
     corrections = open_corrections(root)
     _, since_sha = last_service(root)
@@ -229,7 +319,8 @@ def plan(root):
     know = set(kb_turns.split_knowledge(root, {p for _, ps in commits for p in ps})[0])
     undocumented = [s_ for s_, ps in commits
                     if ps and not (set(ps) & know)
-                    and not all(inbox_rel and p.startswith(inbox_rel) for p in ps)]
+                    and not all((inbox_rel and p.startswith(inbox_rel)) or NOT_WORK.search(p)
+                                for p in ps)]
     scripts = os.path.dirname(os.path.abspath(__file__))
     q = shlex.quote
     print(f"# Сервисный обход базы — {os.path.basename(root)}")
@@ -243,10 +334,16 @@ def plan(root):
           "устойчивого); в записи — отметка разбора проекта («✔ учтено → <файл § раздел>»). "
           "Устаревшее — отметить учтённым со ссылкой. Спорное и требующее решения — не угадывать, "
           "собрать списком для владельца.")
-    for _, text in corrections[:12]:
-        print("- " + re.sub(r"\s+", " ", text)[:220])
-    if len(corrections) > 12:
-        print(f"- … ещё {len(corrections) - 12}; за один обход — столько, сколько успеешь без спешки")
+    loc = kb_paths.locate(root, "corrections")
+    channel = kb_paths.read(loc.path) if loc.path else ""
+    name = os.path.relpath(loc.path, root) if loc.path else "канал правок"
+    shown = corrections if show_all else corrections[:12]
+    for _, text in shown:
+        line = entry_line(channel, text)
+        print(f"- {name}:{line} " + re.sub(r"\s+", " ", text)[:220 if not show_all else 160])
+    if len(corrections) > len(shown):
+        print(f"- … ещё {len(corrections) - len(shown)}; полный список с адресами — "
+              f"`kb_service.py plan {q(root)} --all`; за один обход — столько, сколько успеешь без спешки")
     print(f"\n## 2. Работа без описания ({len(undocumented)} коммитов с прошлого обхода, "
           "показаны первые 15)")
     for s in undocumented[:15]:
@@ -373,50 +470,92 @@ def leaked(source, qname, copy):
     return qname in s.lower() or bool(re.search(r"(?:^|[\s(«\"'`])~?/[\w.-]", s))
 
 
+def inside(path, root):
+    """Внешний аудит 03.10.2026: путь с .. или symlink не должен выйти из копии."""
+    return os.path.commonpath([os.path.realpath(path), os.path.realpath(root)]) == os.path.realpath(root)
+
+
 def exam(root):
     root = os.path.realpath(root)
     report = {"project": os.path.basename(root), "date": datetime.date.today().isoformat(),
               "status": "OK", "questions": 0, "pass": 0, "partial": 0, "fail": 0,
-              "ungraded": 0, "items": []}
+              "ungraded": 0, "items": [], "snapshot": None, "questions_dirty": False}
     loc = kb_paths.locate(root, "questions")
-    if not loc.path:
-        report["status"] = "NO_QUESTIONS"
+    declared_path = loc.path or (os.path.join(root, loc.broken) if loc.broken else None)
+    if declared_path and not inside(declared_path, root):
+        report.update(status="UNSAFE_QUESTIONS", reason="файл вопросов вне проекта; экзамен запрещён")
         return report
-    rel = os.path.relpath(loc.path, root)
     if not is_git(root):
         report["status"] = "NOT_GIT"
         return report
-    questions = [q for q in json_list(run_agent(EXTRACT.format(rel=rel), root))
-                 if isinstance(q, dict) and q.get("question")][:20]
-    for n, q in enumerate(questions, 1):
-        q["id"] = str(n)                      # номера модели повторяются по разделам
-    if not questions:
-        report["status"] = "EXTRACT_FAILED"
+    # Внешний аудит 03.10.2026: вопросы, база и проверка из одного HEAD;
+    # archive SHA:prefix даёт корень вложенного проекта, без соседних проектов.
+    head = git(root, "rev-parse", "HEAD").strip()
+    top = git(root, "rev-parse", "--show-toplevel").strip()
+    if not head or not top or not inside(root, top):
+        report["status"] = "COPY_FAILED"
         return report
-    copy = tempfile.mkdtemp(prefix="kb-exam-")
+    report["snapshot"] = head
+    if loc.path:
+        report["questions_dirty"] = bool(git(root, "status", "--porcelain", "--",
+                                              os.path.relpath(loc.path, root)).strip())
+    prefix = os.path.relpath(root, os.path.realpath(top))
+    tree = head if prefix == "." else head + ":" + prefix.replace(os.sep, "/")
+    copy = os.path.realpath(tempfile.mkdtemp(prefix="kb-exam-"))
     try:
-        archive = subprocess.Popen(["git", "-C", root, "archive", "--format=tar", "HEAD"],
+        archive = subprocess.Popen(["git", "-C", top, "archive", "--format=tar", tree],
                                    stdout=subprocess.PIPE)
         untar = subprocess.run(["tar", "-x", "-C", copy], stdin=archive.stdout, timeout=1800)
         archive.stdout.close()
         if archive.wait(timeout=60) or untar.returncode:
             report["status"] = "COPY_FAILED"
             return report
-        hidden = os.path.join(copy, rel)
-        if os.path.exists(hidden):
-            os.remove(hidden)
+        snapshot_loc = kb_paths.locate(copy, "questions")
+        hidden = snapshot_loc.path
+        # Внешний аудит 03.10.2026: абсолютный адрес внутри исходного проекта
+        # переводится в адрес HEAD-копии; исходный файл не читаем и не удаляем.
+        declared = (snapshot_loc.declared or "").split()
+        declared = declared[0].strip("«»\"'`,;") if declared else ""
+        if declared and os.path.isabs(declared) and inside(declared, root):
+            hidden = os.path.join(copy, os.path.relpath(declared, root))
+        if not hidden:
+            report["status"] = "NO_QUESTIONS_IN_HEAD" if loc.path else "NO_QUESTIONS"
+            return report
+        if not inside(hidden, copy):
+            report.update(status="UNSAFE_QUESTIONS", reason="файл вопросов вне временной копии; экзамен запрещён")
+            return report
+        if not os.path.isfile(hidden):
+            report["status"] = "NO_QUESTIONS_IN_HEAD"
+            return report
+        # Относительный alias не должен оставить ответы в его физическом файле.
+        hidden = os.path.realpath(hidden)
+        rel = os.path.relpath(hidden, copy)
+        report["questions_dirty"] = report["questions_dirty"] or bool(
+            git(root, "status", "--porcelain", "--", rel).strip())
+        questions = [q for q in json_list(run_agent(EXTRACT.format(rel=rel), copy))
+                     if isinstance(q, dict) and q.get("question")][:20]
+        for n, q in enumerate(questions, 1):
+            q["id"] = str(n)                  # номера модели повторяются по разделам
+        if not questions:
+            report["status"] = "EXTRACT_FAILED"
+            return report
+        # Повторная проверка непосредственно перед удалением защищает и от symlink.
+        if not inside(hidden, copy):
+            report.update(status="UNSAFE_QUESTIONS", reason="файл вопросов вне временной копии; удаление запрещено")
+            return report
+        os.remove(hidden)
         asked = [{"id": str(q.get("id")), "question": q["question"]} for q in questions]
         answers = json_list(run_agent(EXAMINE.format(
             questions=json.dumps(asked, ensure_ascii=False, indent=1)), copy))
+        by_id = {str(a.get("id")): a for a in answers if isinstance(a, dict)}
+        data = [{"id": str(q.get("id")), "question": q["question"], "expected": q.get("expected", ""),
+                 "answer": by_id.get(str(q.get("id")), {}).get("answer", "(нет ответа)"),
+                 "source": by_id.get(str(q.get("id")), {}).get("source", "")} for q in questions]
+        verdicts = {str(v.get("id")): v for v in json_list(run_agent(
+            GRADE.format(data=json.dumps(data, ensure_ascii=False, indent=1)), copy))
+            if isinstance(v, dict)}
     finally:
         shutil.rmtree(copy, ignore_errors=True)
-    by_id = {str(a.get("id")): a for a in answers if isinstance(a, dict)}
-    data = [{"id": str(q.get("id")), "question": q["question"], "expected": q.get("expected", ""),
-             "answer": by_id.get(str(q.get("id")), {}).get("answer", "(нет ответа)"),
-             "source": by_id.get(str(q.get("id")), {}).get("source", "")} for q in questions]
-    verdicts = {str(v.get("id")): v for v in json_list(run_agent(
-        GRADE.format(data=json.dumps(data, ensure_ascii=False, indent=1)), root))
-        if isinstance(v, dict)}
     qname = os.path.basename(rel).lower()
     for d in data:
         v = verdicts.get(d["id"], {})
@@ -441,6 +580,12 @@ def print_exam(report):
     print(f"ЭКЗАМЕН {report['project']} {report['date']}: {report['status']}; вопросов "
           f"{report['questions']}: верно {report['pass']}, частично {report['partial']}, "
           f"неверно {report['fail']}" + (f", без оценки {report['ungraded']}" if report['ungraded'] else ""))
+    if report.get("snapshot"):
+        print("Снимок экзамена: HEAD " + report["snapshot"])
+    if report.get("questions_dirty"):
+        print("Вопросы имеют незакоммиченные изменения; экзамен использует только HEAD.")
+    if report.get("reason"):
+        print(report["reason"])
     for item in report.get("items", []):
         if item["verdict"] != "PASS":
             print(f"- {item['id']} {item['verdict']}: {item['question'][:120]} — {item['reason']}")
@@ -456,6 +601,7 @@ def main():
     parser.add_argument("root")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--days", type=int, default=7)
+    parser.add_argument("--all", action="store_true", help="plan: все записи канала правок с адресами")
     args = parser.parse_args()
     root = os.path.realpath(args.root)
     if args.cmd == "later":
@@ -475,7 +621,7 @@ def main():
                   "SERVICE_OK: " + ("; ".join(a["reasons"]) or "накопленного немного"))
         return 0
     if args.cmd == "plan":
-        return plan(root)
+        return plan(root, show_all=args.all)
     report = exam(root)
     if args.json:
         print(json.dumps(report, ensure_ascii=False))

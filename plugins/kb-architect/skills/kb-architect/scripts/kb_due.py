@@ -44,7 +44,7 @@ import kb_paths
 STALE_ENTRY_DAYS = 7        # вход старше — снимок протух
 REVIEW_DAYS = 30            # журнал и вопросы: давно не разбирали
 STALE_LOCK_MINUTES = 10     # lock в .git старше — брошен, а не держится командой
-DATE_RE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
+# Внешний аудит 03.10.2026: неиспользуемая DATE_RE удалена.
 
 
 # Markdown emphasis before the mark is formatting, not content: projects write
@@ -590,9 +590,13 @@ def main():
         if git_dir:
             stale = []
             now_ts = datetime.datetime.now().timestamp()
-            for sub, _, files in os.walk(git_dir):
+            for sub, dirs, files in os.walk(git_dir):
+                # Внешний аудит 03.10.2026: отсечь спуск, а не только обработку.
+                if sub == git_dir:
+                    dirs[:] = [d for d in dirs if d in ("refs", "logs")]
                 rel_sub = os.path.relpath(sub, git_dir)
                 if rel_sub != "." and not rel_sub.split(os.sep)[0] in ("refs", "logs"):
+                    dirs[:] = []
                     continue
                 for f in files:
                     if f.endswith(".lock"):

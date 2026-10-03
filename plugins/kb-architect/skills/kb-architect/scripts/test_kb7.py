@@ -2570,7 +2570,8 @@ class ReleaseActions0210Tests(unittest.TestCase):
             {"type": "command", "command": "python3 agents/scripts/cold_start.py"}]}]}})
         got = " | ".join(self.actions())
         self.assertIn("`entry_role`", got)
-        self.assertIn("cold_start.py", got)
+        # Внешний аудит 03.10.2026: диагностика hook'а показывает отпечаток, не команду.
+        self.assertIn(hashlib.sha256(b"python3 agents/scripts/cold_start.py").hexdigest()[:12], got)
         self.assertIn("не называют исполняемый вход", got)
         roles["entry_role"] = "dev"
         self.save("PROJECT_ROLES.json", roles)
@@ -3124,6 +3125,25 @@ class ServicePass0210Tests(unittest.TestCase):
                   "- 2026-09-02 · b ✔ код исправлен\n- 2026-09-03 · c [x]\n- 2026-09-04 · d открыто\n")
         self.assertEqual(self.due()["corrections"], 1)
 
+    def test_day_first_dates_uppercase_closure_and_the_template_are_read_right(self):
+        """External audit 03.10.2026: «**ЗАКРЫТО.**» was not a closure (tg-archive, 37 entries);
+        entries dated 10.09.2026 or **25/09/2026 were glued to their neighbours (UAD, a company project),
+        so one neighbour's mark hid open entries; the template example counted as a debt."""
+        self.piled_up(rows=0)
+        self.save("CORRECTIONS.md", "# Канал\n\n"
+                  "- 2026-08-23 · `path/to/file.md` — утверждает X, на самом деле Y. Источник: <чем проверил>.\n"
+                  "- 2026-09-01 · a — **ЗАКРЫТО.** исправлено кодом\n"
+                  "- 2026-09-02 · b — порт 3306 закрыт снаружи, причина не найдена\n"
+                  "## 10.09.2026 — c открыто\n"
+                  "- **25/09/2026 · d** — открыто\n"
+                  "- 2026-09-26 · e ✔ закрыто\n")
+        import kb_service
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            dates = sorted(d for d, _ in kb_service.open_corrections(str(self.root)))
+        self.assertEqual(dates, ["2026-09-02", "2026-09-10", "2026-09-25"])
+        out = self.service("plan", "--all").stdout
+        self.assertIn("CORRECTIONS.md:7 ", out, "every entry carries its line address")
+
     def test_postponed_and_quiet_projects_are_not_nagged(self):
         self.piled_up()
         self.service("later", "--days", "3")
@@ -3196,6 +3216,1114 @@ open(out, "w").write("Источник: [QUESTIONS.md] — см. ниже\n" + j
         dead = self.service("exam", env=self.fake("dead"))
         self.assertIn("EXAM_FAILED", dead.stdout)
         self.assertEqual(dead.returncode, 1)
+
+
+class EntryLock0310Tests(unittest.TestCase):
+    """Внешний аудит 03.10.2026: полнота входа, Git-гейт, переносы и вывод hook'ов."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    hook = ExecutableEntry0110Tests.hook
+    start = ExecutableEntry0110Tests.start
+    marks = ExecutableEntry0110Tests.marks
+    confirm = ExecutableEntry0110Tests.confirm
+    bundle_of = ExecutableEntry0110Tests.bundle_of
+
+    def env(self, **extra):
+        extra = dict({"KB_ENTRY_HOOK": "", "KB_ENTRY_RERUN": ""}, **extra)
+        return ExecutableEntry0110Tests.env(self, **extra)
+
+    def assemble(self, roles=("dev",)):
+        import kb_entry
+        result = kb_entry.build(str(self.root), roles)
+        bundle = self.base / "ENTRY-test.md"
+        _, marks = kb_entry.write(str(self.root), result, str(bundle))
+        return result, bundle, "-".join(marks)
+
+    def assert_incomplete(self, result, bundle, token, missing):
+        import kb_start
+        side = json.loads(Path(str(bundle) + ".json").read_text())
+        self.assertEqual(side.get("missing"), result["missing"])
+        for state in (None, {"root": str(self.root), "bundle": str(bundle),
+                            "part_sha256": side["part_sha256"], "roles": side["roles"],
+                            "missing": result["missing"], "blocking": result["blocking"]}):
+            confirmed, why = kb_start.verify(str(self.root), state, token, str(bundle),
+                                              no_role="outside role")
+            self.assertIsNone(confirmed)
+            self.assertIn(missing, why)
+        out = self.confirm(token, "--bundle", str(bundle), "--no-role", "outside role")
+        self.assertEqual(out.returncode, 1, out.stdout + out.stderr)
+        self.assertIn(missing, out.stdout)
+
+    def test_missing_role_method_is_not_confirmed_by_cli_or_hook(self):
+        self.project()
+        (self.root / "skills/dev/SKILL.md").unlink()
+        context = self.start()["hookSpecificOutput"]["additionalContext"]
+        bundle = self.bundle_of(context)
+        token = "-".join(self.marks(bundle))
+        denied = self.hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                            "tool_input": {"command": f"python3 {HERE}/kb_start.py confirm "
+                                           f"{self.root} --token {token}"}})
+        self.assertEqual((denied or {}).get("hookSpecificOutput", {}).get("permissionDecision"),
+                         "deny")
+        result, bundle, token = self.assemble()
+        self.assertNotIn("dev", result["found_roles"])
+        self.assert_incomplete(result, bundle, token, "SKILL.md")
+
+    def test_oversized_and_binary_methods_are_incomplete(self):
+        import kb_entry
+        self.project()
+        method = self.root / "skills/dev/SKILL.md"
+        for data, reason in ((b"x" * (kb_entry.FILE_CAP + 1), "больше предела"),
+                             (b"method\0secret", "двоичный")):
+            with self.subTest(reason=reason):
+                method.write_bytes(data)
+                result, bundle, token = self.assemble()
+                self.assertNotIn("dev", result["found_roles"])
+                self.assert_incomplete(result, bundle, token, reason)
+
+    def test_unreadable_method_blocks_and_unreadable_current_warns(self):
+        """A role gap holds the lock (another role or «no role» is the way out). A missing or
+        unreadable non-role file is reported but does not: restoring it needs the open lock."""
+        import builtins, kb_start
+        self.project()
+        real_open = builtins.open
+        for rel in ("skills/dev/SKILL.md", "NOW.md"):
+            with self.subTest(path=rel):
+                blocked = self.root / rel
+                def unreadable(path, *args, **kwargs):
+                    if Path(path).resolve() == blocked.resolve():
+                        raise PermissionError("fixture unreadable")
+                    return real_open(path, *args, **kwargs)
+                with patch("builtins.open", unreadable):
+                    result, bundle, token = self.assemble()
+                if rel == "NOW.md":
+                    self.assertTrue(any("NOW.md" in m for m in result["missing"]))
+                    self.assertEqual(result["blocking"], [])
+                    confirmed, why = kb_start.verify(str(self.root), None, token, str(bundle))
+                    self.assertIsNotNone(confirmed, why)
+                else:
+                    self.assert_incomplete(result, bundle, token, rel)
+
+    def inherited_roles(self):
+        self.project()
+        roles = json.loads((self.root / "PROJECT_ROLES.json").read_text())
+        roles["roles"][0]["extends"] = "base"
+        roles["roles"][1]["extends"] = "base"
+        roles["roles"].insert(0, {"id": "base", "skill": "base", "knowledge_routes": ["parent"]})
+        roles["skills"].append({"name": "base", "canonical": "skills/base"})
+        self.save("PROJECT_ROLES.json", roles)
+        self.save("skills/base/SKILL.md", "# Parent method\nInherited stop.\n")
+        self.save("kb/parent.md", "Inherited mandatory source.\n")
+        index = json.loads((self.root / "KNOWLEDGE_INDEX.json").read_text())
+        index["routes"].append({"id": "parent", "load_when": ["always"], "paths": ["kb/parent.md"]})
+        self.save("KNOWLEDGE_INDEX.json", index)
+        return roles
+
+    def test_ancestors_and_shared_methods_are_read_once(self):
+        import kb_start
+        self.inherited_roles()
+        result, bundle, token = self.assemble(("dev", "ops", "dev"))
+        self.assertEqual(result["found_roles"], ["base", "dev", "ops"])
+        text = bundle.read_text()
+        self.assertEqual(text.count("# Parent method"), 1)
+        self.assertEqual(text.count("# Dev method"), 1)
+        self.assertIn("Inherited mandatory source.", text)
+        confirmed, why = kb_start.verify(str(self.root), None, token, str(bundle))
+        self.assertIsNotNone(confirmed, why)
+
+    def test_missing_ancestor_unknown_parent_and_cycle_block_confirmation(self):
+        roles = self.inherited_roles()
+        (self.root / "skills/base/SKILL.md").unlink()
+        result, bundle, token = self.assemble()
+        self.assert_incomplete(result, bundle, token, "base")
+        for parent in ("absent", "dev"):
+            with self.subTest(parent=parent):
+                roles["roles"][0]["extends"] = parent
+                self.save("PROJECT_ROLES.json", roles)
+                result, bundle, token = self.assemble()
+                self.assert_incomplete(result, bundle, token, parent)
+
+    def test_no_role_does_not_require_unselected_missing_methods(self):
+        import kb_start
+        self.project()
+        (self.root / "skills/dev/SKILL.md").unlink()
+        result, bundle, token = self.assemble(())
+        self.assertEqual(result["missing"], [])
+        confirmed, why = kb_start.verify(str(self.root), None, token, str(bundle),
+                                         no_role="calendar question")
+        self.assertIsNotNone(confirmed, why)
+
+    def test_role_id_wins_over_another_roles_skill_name(self):
+        """Adas startup 03.10.2026: the first role uses a skill named like the second role's id;
+        the lookup matched the skill first and built the entry for the wrong role."""
+        self.project()
+        self.save("PROJECT_ROLES.json", {
+            "roles": [{"id": "evidence", "skill": "steward"},
+                      {"id": "steward", "skill": "lead", "extends": "evidence"}],
+            "skills": [{"name": "steward", "canonical": "skills/evidence"},
+                       {"name": "lead", "canonical": "skills/lead"}]})
+        self.save("skills/evidence/SKILL.md", "# Evidence method\n")
+        self.save("skills/lead/SKILL.md", "# Lead method\n")
+        result, bundle, _ = self.assemble(("steward",))
+        self.assertEqual(result["found_roles"], ["evidence", "steward"])
+        self.assertIn("# Lead method", bundle.read_text())
+
+    def test_legacy_sidecar_without_completeness_is_accepted_as_before(self):
+        import kb_start
+        self.project()
+        _, bundle, token = self.assemble()
+        side_path = Path(str(bundle) + ".json")
+        side = json.loads(side_path.read_text())
+        side.pop("missing")
+        side.pop("blocking", None)
+        side_path.write_text(json.dumps(side))
+        confirmed, why = kb_start.verify(str(self.root), None, token, str(bundle))
+        self.assertIsNotNone(confirmed, "a bundle built before 7.7 confirms as before: " + str(why))
+
+    def test_git_repository_selection_environment_cannot_forge_owner(self):
+        import kb_owner_gate
+        self.init_git()
+        self.git("remote", "add", "origin", "git@github.com:sugestr/kb-architect-lab.git")
+        consumer = self.base / "consumer"
+        consumer.mkdir()
+        self.init_git(root=consumer)
+        self.git("remote", "add", "origin", "https://github.com/example/consumer.git", root=consumer)
+        runtime = {"CLAUDE_PROJECT_DIR": str(consumer)}
+        for injected in ({"GIT_DIR": str(self.root / ".git")},
+                         {"GIT_COMMON_DIR": str(self.root / ".git")},
+                         {"GIT_DIR": str(self.root / ".git"), "GIT_WORK_TREE": str(self.root),
+                          "GIT_INDEX_FILE": str(self.root / ".git/index"), "GIT_PREFIX": "spoof/",
+                          "GIT_OBJECT_DIRECTORY": str(self.root / ".git/objects")}):
+            with self.subTest(env=injected), patch.dict(os.environ, injected):
+                self.assertEqual(kb_owner_gate.evaluate(self.root, True, runtime)["state"],
+                                 "BLOCKED_WRONG_EXECUTOR")
+                self.assertEqual(kb_owner_gate.evaluate(consumer, env={})["state"],
+                                 "BLOCKED_WRONG_EXECUTOR")
+                self.assertEqual(kb_owner_gate.evaluate(self.root, True,
+                                 {"CLAUDE_PROJECT_DIR": str(self.root)})["state"], "PASS")
+
+    def move_event(self, destination):
+        return {"session_id": "move", "cwd": str(self.root), "hook_event_name": "PreToolUse",
+                "tool_name": "apply_patch", "tool_input": {"input":
+                f"*** Begin Patch\n*** Update File: source.md\n*** Move to: {destination}\n"
+                "@@\n-old\n+new\n*** End Patch"}}
+
+    def test_cross_project_move_checks_destination_lock_and_records_both_paths(self):
+        import kb_start
+        self.project()
+        other = self.base / "other"
+        self.save("CLAUDE.md", "kb_standard_version: 7.2.0\nвход: NOW.md\n", root=other)
+        self.save("NOW.md", "Обновлено: 2026-10-03\n", root=other)
+        event = self.move_event("../other/destination.md")
+        self.assertEqual(kb_start.touched_roots(event), [str(self.root), str(other)])
+        with patch.dict(os.environ, self.env()):
+            first, _ = kb_start.start_entry(str(self.root), "move", "codex", "startup")
+            first["confirmed"], why = kb_start.verify(str(self.root), first,
+                                      "-".join(self.marks(first["bundle"])))
+            self.assertIsNotNone(first["confirmed"], why)
+            kb_start.save_state(first)
+            blocked = kb_start.on_tool(event, "codex")
+            self.assertEqual(blocked["hookSpecificOutput"]["permissionDecision"], "deny")
+            self.assertIn(str(other), blocked["hookSpecificOutput"]["permissionDecisionReason"])
+            second = kb_start.load_state("move", str(other))
+            second["confirmed"], why = kb_start.verify(str(other), second,
+                                        "-".join(self.marks(second["bundle"])))
+            self.assertIsNotNone(second["confirmed"], why)
+            first["turn"], second["turn"] = {"effects": []}, {"effects": []}
+            kb_start.save_state(first)
+            kb_start.save_state(second)
+            self.assertIsNone(kb_start.on_tool(event, "codex"))
+            for root, path in ((self.root, "source.md"), (other, "destination.md")):
+                self.assertIn(["certain", "file", path],
+                              kb_start.load_state("move", str(root))["turn"]["effects"])
+
+    def test_local_move_records_source_and_destination_once(self):
+        import kb_start
+        self.project()
+        event = self.move_event("destination.md")
+        self.assertEqual(kb_start.touched_roots(event), [str(self.root)])
+        with patch.dict(os.environ, self.env()):
+            state, _ = kb_start.start_entry(str(self.root), "move", "codex", "startup")
+            state["turn"] = {"effects": []}
+            kb_start.save_state(state)
+            kb_start.record_effects(event, [str(self.root)], "move", "codex")
+            self.assertEqual(kb_start.load_state("move", str(self.root))["turn"]["effects"],
+                             [["certain", "file", "source.md"], ["certain", "file", "destination.md"]])
+
+    def test_foreign_hook_secret_never_reaches_apply_or_entry_output(self):
+        self.project()
+        self.save("KB_RELEASE_APPLICATION.json", {"schema": 3, "application": {
+            "from_version": None, "to_version": "7.2.0", "status": "finalized",
+            "source": {"commit": self.git("rev-parse", "HEAD"), "version_source": "CLAUDE.md"},
+            "owner": {"accepted_by": "fixture", "accepted_at": "2026-10-03"},
+            "finalized_at": "2026-10-03", "open": []}})
+        self.git("add", "--", "KB_RELEASE_APPLICATION.json")
+        planted = "ARTIFICIAL_SECRET_0310"
+        commands = (f"ACCESS={planted} python3 private_cold_start.py", f"echo {planted}_codex")
+        for agent, command in zip(("claude", "codex"), commands):
+            name = ".codex/hooks.json" if agent == "codex" else ".claude/settings.json"
+            self.save(name, {"hooks": {"SessionStart": [{"hooks": [
+                      {"type": "command", "command": command}]}]}})
+        out = subprocess.run([sys.executable, str(HERE / "kb_apply.py"), str(self.root)],
+                             capture_output=True, text=True, env=self.env(), timeout=30)
+        context = self.start()
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        combined = out.stdout + out.stderr + json.dumps(context, ensure_ascii=False)
+        self.assertNotIn(planted, combined)
+        self.assertNotIn("private_cold_start.py", combined)
+        for agent, command in zip(("claude", "codex"), commands):
+            name = ".codex/hooks.json" if agent == "codex" else ".claude/settings.json"
+            for output in (out.stdout, json.dumps(context, ensure_ascii=False)):
+                self.assertIn(name, output)
+                self.assertIn(hashlib.sha256(command.encode()).hexdigest()[:12], output)
+        self.assertIn("SessionStart", combined)
+
+
+class HonestChecks0310Tests(unittest.TestCase):
+    """Внешний аудит 03.10.2026: сбой проверки не означает отсутствие проблем."""
+
+    setUp = RedesignTests.setUp
+    save = RedesignTests.save
+    init_git = RedesignTests.init_git
+    git = RedesignTests.git
+    commit = RedesignTests.commit
+    run_tool = RedesignTests.run_tool
+
+    def test_due_failure_is_visible_and_retried_within_the_hour(self):
+        """A failed kb_due is shown as a failure, remembered for one hour (a slow project does
+        not pay the timeout on every start), and retried after it — never «ПОРА пусто» for a day."""
+        import kb_start
+        for failure in (subprocess.CompletedProcess([], 2, "", "failed"),
+                        subprocess.TimeoutExpired("kb_due", 20)):
+            with self.subTest(failure=type(failure).__name__), \
+                    patch.object(kb_start, "state_root", return_value=str(self.base / "state")), \
+                    patch.object(kb_start.subprocess, "run") as run:
+                if isinstance(failure, Exception):
+                    run.side_effect = failure
+                else:
+                    run.return_value = failure
+                self.assertIn("не выполнен", kb_start.due_summary(str(self.root)))
+                self.assertIn("не выполнен", kb_start.due_summary(str(self.root)))
+                self.assertEqual(run.call_count, 1, "same hour: the failure is remembered")
+                for stale in (self.base / "state" / "due").glob("*.fail"):
+                    stale.unlink()                    # the hour has passed
+                run.side_effect = None
+                run.return_value = subprocess.CompletedProcess([], 0, "ПОРА:\n  долг\n\n", "")
+                self.assertIn("долг", kb_start.due_summary(str(self.root)))
+                self.assertEqual(run.call_count, 2)
+            shutil.rmtree(self.base / "state", ignore_errors=True)
+
+    def test_due_partial_unknown_is_visible_in_the_cached_block(self):
+        import kb_start
+        with patch.object(kb_start, "state_root", return_value=str(self.base / "state")), \
+                patch.object(kb_start.subprocess, "run", return_value=
+                             subprocess.CompletedProcess([], 0,
+                                 "Сведения и границы проверки:\n  · код — НЕ ПРОВЕРЕНО\n", "")) as run:
+            for _ in range(2):
+                self.assertIn("НЕ ПРОВЕРЕНО", kb_start.due_summary(str(self.root)))
+            self.assertEqual(run.call_count, 1)
+
+    def test_due_success_is_cached(self):
+        import kb_start
+        with patch.object(kb_start, "state_root", return_value=str(self.base / "state")), \
+                patch.object(kb_start.subprocess, "run", return_value=
+                             subprocess.CompletedProcess([], 0, "", "")) as run:
+            self.assertEqual(kb_start.due_summary(str(self.root)), "ПОРА пусто.")
+            self.assertEqual(kb_start.due_summary(str(self.root)), "ПОРА пусто.")
+            self.assertEqual(run.call_count, 1)
+
+    def test_empty_verify_before_status_is_found(self):
+        self.init_git()
+        self.save("action.md", "---\nverify:   \nstatus: sent\n---\nAction\n")
+        self.commit("action.md")
+        result = self.run_tool("kb_check.py")
+        self.assertIn("ПУСТОЙ verify", result.stdout)
+        self.assertEqual(result.returncode, 1)
+
+    def test_generated_sources_distinguish_missing_untracked_and_external(self):
+        self.init_git()
+        self.save("sources/loose.md", "input")
+        for value, reason in (("sources/missing.md", "отсутствует"),
+                              ("sources/loose.md", "не в Git")):
+            with self.subTest(value=value):
+                findings = kb_check.generated_from_findings(str(self.root), "view.md",
+                                                           "generated_from: " + value)
+                self.assertEqual(len(findings), 1)
+                self.assertIn(reason, findings[0][2])
+        for value in ("https://example.invalid/sources/input.md", "Google Sheet", "чужой git"):
+            self.assertEqual(kb_check.generated_from_findings(str(self.root), "view.md",
+                                                             "generated_from: " + value), [])
+        self.commit("sources/loose.md")
+        self.assertEqual(kb_check.generated_from_findings(str(self.root), "view.md",
+                                                         "generated_from: sources/loose.md"), [])
+
+    def test_check_keeps_unknown_debt_scope_in_final_line(self):
+        import kb_debts
+        self.init_git()
+        self.save("NOW.md", "Current")
+        self.commit("NOW.md")
+        report = kb_debts.debts(str(self.root))
+        report["code"] = {"status": "NOT_CHECKED", "reason": "git log не ответил"}
+        for with_debt in (False, True):
+            with self.subTest(with_debt=with_debt), \
+                    patch.object(sys, "argv", ["kb_check.py", str(self.root)]), \
+                    patch.object(kb_debts, "debts", return_value=report), \
+                    patch.object(kb_debts, "summary_lines", return_value=
+                                 (["известный долг"] if with_debt else [],
+                                  ["код — НЕ ПРОВЕРЕНО: git log не ответил"])), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                kb_check.main()
+                final = output.getvalue().splitlines()[-1]
+                self.assertIn("НЕ ПРОВЕРЕНО", final)
+                self.assertNotIn("долги знания — нет", final)
+
+    def code_report(self, replies):
+        import kb_debts
+        with patch.object(kb_debts, "history", return_value=[("head", 1, {"module/f.py"})]), \
+                patch.object(kb_debts, "anchors_for", return_value=[("module/README.md", "whole")]), \
+                patch.object(kb_debts, "git", side_effect=replies):
+            return kb_debts.code(str(self.root), ["module/f.py", "module/package.json", "module/README.md"],
+                                 __import__("datetime").date.today(), 10)
+
+    def test_description_query_failure_is_unknown_and_empty_is_no_date(self):
+        for reply in (None, "malformed"):
+            with self.subTest(reply=reply):
+                report = self.code_report([reply])
+                self.assertEqual(report["status"], "NOT_CHECKED")
+                self.assertEqual(report["described"], 0)
+        self.assertNotEqual(self.code_report([""])["status"], "NOT_CHECKED",
+                            "git answered: no commit carries the description — not an unknown")
+
+    def test_lag_count_failure_is_unknown(self):
+        report = self.code_report(["older 1 2026-01-01", None])
+        self.assertEqual(report["status"], "NOT_CHECKED")
+        self.assertEqual(report["described"], 0)
+
+    def test_partial_code_debt_keeps_unknown_and_area_filter(self):
+        import kb_debts
+        self.init_git()
+        self.save("NOW.md", "Current")
+        self.commit("NOW.md")
+        files = ["broken/f.py", "broken/package.json", "missing/f.py", "missing/package.json"]
+        with patch.object(kb_debts, "history", return_value=[("head", 1, set(files))]), \
+                patch.object(kb_debts, "anchors_for", side_effect=
+                             [[("broken/README.md", "whole")], []]), \
+                patch.object(kb_debts, "git", return_value=None):
+            code = kb_debts.code(str(self.root), files, __import__("datetime").date.today(), 10)
+        self.assertEqual(code["status"], "DEBT")
+        self.assertEqual(code["unchecked"][0]["unit"], "broken")
+        report = kb_debts.debts(str(self.root))
+        report["code"] = code
+        lines, scope = kb_debts.summary_lines(report)
+        self.assertTrue(any("missing" in line for line in lines))
+        self.assertTrue(any("broken" in line and "НЕ ПРОВЕРЕНО" in line for line in scope))
+        for area, expected in (("broken", "NOT_CHECKED"), ("missing", "DEBT"), ("outside", "PASS")):
+            with self.subTest(area=area), patch.object(kb_debts, "code", return_value=__import__("copy").deepcopy(code)):
+                self.assertEqual(kb_debts.debts(str(self.root), area=area)["code"]["status"], expected)
+
+    def test_git_lock_walk_prunes_objects_but_keeps_refs_and_logs(self):
+        self.init_git()
+        self.save("NOW.md", "Current")
+        self.commit("NOW.md")
+        git_dir = self.root / ".git"
+        for name in ("objects/deep", "refs/deep", "logs/deep"):
+            lock = self.save(f".git/{name}/old.lock", "lock")
+            os.utime(lock, (1, 1))
+        walk = os.walk
+        visited = []
+
+        def observed_walk(path, *args, **kwargs):
+            for sub, dirs, files in walk(path, *args, **kwargs):
+                if str(path) == str(git_dir):
+                    visited.append(os.path.relpath(sub, git_dir))
+                yield sub, dirs, files
+
+        with patch.object(sys, "argv", ["kb_due.py", str(self.root)]), \
+                patch.object(kb_due.os, "walk", side_effect=observed_walk), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            kb_due.main()
+        self.assertFalse(any(p == "objects" or p.startswith("objects/") for p in visited))
+        self.assertIn("refs/deep", visited)
+        self.assertIn("logs/deep", visited)
+        self.assertIn("refs/deep/old.lock", output.getvalue())
+
+
+class InstallService0310Tests(unittest.TestCase):
+    """Внешний аудит 03.10.2026: установка проверенного снимка и честный сервисный обход."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    exam_project = ServicePass0210Tests.exam_project
+
+    def skill(self, path, version):
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "SKILL.md").write_text(f'---\nmetadata:\n  version: "{version}"\n---\n')
+        return path
+
+    def update(self, source, install, public=True, do=True):
+        import argparse
+        import kb_update
+        args = argparse.Namespace(do_update=do)
+        with patch.object(kb_update, "MESTA", [("Fixture", str(install))]), \
+                patch.object(kb_update, "record_public_receipt", return_value=None), \
+                patch.object(kb_update, "test_skill", return_value=(True, "")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            return kb_update.update_from_source(str(source), args, "fixture", record_receipt=public)
+
+    def test_public_remote_advance_cannot_change_verified_install(self):
+        import kb_update
+        remote = self.base / "remote"
+        self.skill(remote, "1.0.0")
+        self.init_git(root=remote)
+        self.git("add", "SKILL.md", root=remote)
+        self.git("commit", "-qm", "release", root=remote)
+        self.git("tag", "v1.0.0", root=remote)
+        checked = self.git("rev-parse", "HEAD", root=remote)
+        source, temp, error = None, None, None
+
+        def tagged(version):
+            self.skill(remote, "2.0.0")
+            self.git("add", "SKILL.md", root=remote)
+            self.git("commit", "-qm", "remote advanced", root=remote)
+            return checked, None
+
+        with patch.object(kb_update, "PUBLIC_REPOSITORY", str(remote)), \
+                patch.object(kb_update, "public_tag_commit", side_effect=tagged):
+            source, temp, error = kb_update.public_source()
+        self.addCleanup(shutil.rmtree, temp, ignore_errors=True)
+        self.assertIsNone(error)
+        install = self.skill(self.base / "install", "0.0.0")
+        self.assertEqual(self.update(source, install), 0)
+        self.assertEqual(kb_update.versiya(str(install)), "1.0.0")
+        self.assertEqual(self.git("rev-parse", "HEAD", root=Path(source)), checked)
+
+    def test_maintainer_source_keeps_prepare_route(self):
+        import kb_update
+        source = self.skill(self.base / "source", "1.0.0")
+        install = self.skill(self.base / "install", "0.0.0")
+        with patch.object(kb_update, "prepare_source", return_value=(True, "fixture", None)) as prepare:
+            self.assertEqual(self.update(source, install, public=False), 0)
+        prepare.assert_called_once_with(str(source), True)
+
+    def test_killed_between_renames_recovers_before_update(self):
+        import kb_update
+        source = self.skill(self.base / "source", "1.0.0")
+        install = self.skill(self.base / "install", "0.0.0")
+        killer = self.base / "kill_update.py"
+        killer.write_text("import os, signal, sys\n"
+                          f"sys.path.insert(0, {str(HERE)!r})\nimport kb_update\n"
+                          "rename = os.rename\n"
+                          "def kill_after_old(a, b):\n"
+                          "    rename(a, b)\n"
+                          "    if a == sys.argv[2]: os.kill(os.getpid(), signal.SIGKILL)\n"
+                          "kb_update.os.rename = kill_after_old\n"
+                          "kb_update.safe_replace(sys.argv[1], sys.argv[2], '0.0.0')\n")
+        killed = subprocess.run([sys.executable, str(killer), str(source), str(install)],
+                                capture_output=True, text=True, timeout=15)
+        self.assertLess(killed.returncode, 0)
+        self.assertFalse(install.exists())
+        self.assertEqual(self.update(source, install), 0)
+        self.assertEqual(kb_update.versiya(str(install)), "1.0.0")
+        self.assertTrue(any(kb_update.versiya(str(p)) == "0.0.0"
+                            for p in (install.parent / ".backups").iterdir()))
+
+    def test_recovery_precedes_fast_receipt_and_network_failure(self):
+        import kb_update
+        source = self.skill(self.base / "source", "1.0.0")
+        install = self.skill(self.base / "install", "0.0.0")
+        rename = os.rename
+
+        def stop(a, b):
+            rename(a, b)
+            if a == str(install):
+                raise SystemExit("остановка между rename")
+
+        with patch.object(kb_update.os, "rename", side_effect=stop):
+            with self.assertRaises(SystemExit):
+                kb_update.safe_replace(str(source), str(install), "0.0.0")
+        with patch.object(kb_update, "MESTA", [("Fixture", str(install))]), \
+                patch.object(sys, "argv", ["kb_update.py", "--public", "--fast", "--do"]), \
+                patch.object(kb_update, "fast_public_check", return_value=2), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(kb_update.main(), 2)
+        self.assertEqual(kb_update.versiya(str(install)), "0.0.0")
+
+    def test_completed_rename_recovery_keeps_new_release_and_report_only_does_not_write(self):
+        import kb_update
+        source = self.skill(self.base / "source", "1.0.0")
+        install = self.skill(self.base / "install", "0.0.0")
+        rename = os.rename
+
+        def stop(a, b):
+            rename(a, b)
+            if b == str(install):
+                raise SystemExit("остановка после обоих rename")
+
+        with patch.object(kb_update.os, "rename", side_effect=stop):
+            with self.assertRaises(SystemExit):
+                kb_update.safe_replace(str(source), str(install), "0.0.0")
+        journal = Path(kb_update.install_journal(str(install)))
+        self.assertTrue(journal.exists())
+        self.assertEqual(self.update(source, install, do=False), 2)
+        self.assertTrue(journal.exists())
+        self.assertEqual(self.update(source, install), 0)
+        self.assertFalse(journal.exists())
+        self.assertEqual(kb_update.versiya(str(install)), "1.0.0")
+
+    def test_external_questions_absolute_parent_and_symlink_are_refused(self):
+        import kb_service
+        self.project()
+        external = self.save("outside.md", "контрольные ответы", root=self.base)
+        for declared in (str(external), "../outside.md", "linked.md"):
+            with self.subTest(declared=declared):
+                link = self.root / "linked.md"
+                if not link.exists():
+                    link.symlink_to(external)
+                self.save("CLAUDE.md", f"# Rules\nвопросы: {declared}\n")
+                with patch.object(kb_service, "run_agent") as agent:
+                    report = kb_service.exam(str(self.root))
+                self.assertEqual(report["status"], "UNSAFE_QUESTIONS")
+                self.assertIn("вне", report["reason"])
+                agent.assert_not_called()
+                self.assertEqual(external.read_text(), "контрольные ответы")
+
+    def exam_agent(self, calls):
+        def run(prompt, cwd):
+            cwd = Path(cwd)
+            calls.append((prompt, cwd))
+            if prompt.startswith("ИЗВЛЕЧЕНИЕ"):
+                self.assertIn("Прочитай файл QUESTIONS.md", prompt)
+                self.assertIn("HEAD answer", (cwd / "QUESTIONS.md").read_text())
+                self.assertNotIn("dirty answer", (cwd / "QUESTIONS.md").read_text())
+                return json.dumps([{"question": "Вопрос?", "expected": "HEAD answer"}])
+            if prompt.startswith("ЭКЗАМЕН"):
+                self.assertFalse((cwd / "QUESTIONS.md").exists())
+                self.assertEqual((cwd / "kb" / "answer.md").read_text(), "HEAD answer")
+                self.assertFalse((cwd / "sibling.md").exists())
+                return json.dumps([{"id": "1", "answer": "HEAD answer", "source": "kb/answer.md"}])
+            return json.dumps([{"id": "1", "verdict": "PASS"}])
+        return run
+
+    def test_nested_exam_uses_one_head_snapshot_and_reports_dirty_questions(self):
+        import kb_service
+        repo = self.base / "repo"
+        repo.mkdir()
+        self.root = repo / "nested" / "project"
+        self.root.mkdir(parents=True)
+        self.init_git(root=repo)
+        self.save("CLAUDE.md", "# Rules\nвопросы: QUESTIONS.md\n")
+        self.save("QUESTIONS.md", "# Вопросы\nHEAD answer")
+        self.save("kb/answer.md", "HEAD answer")
+        self.save("sibling.md", "не часть проекта", root=repo)
+        self.git("add", ".", root=repo)
+        self.git("commit", "-qm", "snapshot", root=repo)
+        sha = self.git("rev-parse", "HEAD", root=repo)
+        self.save("QUESTIONS.md", "dirty answer")
+        self.save("kb/answer.md", "dirty answer")
+        calls = []
+        with patch.dict(os.environ, self.env()), \
+                patch.object(kb_service, "run_agent", side_effect=self.exam_agent(calls)):
+            report = kb_service.exam(str(self.root))
+        self.assertEqual(report["status"], "OK")
+        self.assertEqual(report["pass"], 1)
+        self.assertEqual(report["snapshot"], sha)
+        self.assertTrue(report["questions_dirty"])
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            kb_service.print_exam(report)
+        self.assertIn("HEAD", output.getvalue())
+        self.assertIn("незакоммич", output.getvalue())
+        self.assertEqual(len({str(cwd) for _, cwd in calls}), 1)
+        self.assertEqual((self.root / "QUESTIONS.md").read_text(), "dirty answer")
+
+    def test_untracked_questions_do_not_exam_a_different_snapshot(self):
+        import kb_service
+        self.project()
+        self.git("add", ".")
+        self.git("commit", "-qm", "snapshot")
+        self.save("QUESTIONS.md", "новые вопросы, которых нет в HEAD")
+        with patch.object(kb_service, "run_agent") as agent:
+            report = kb_service.exam(str(self.root))
+        self.assertEqual(report["status"], "NO_QUESTIONS_IN_HEAD")
+        self.assertTrue(report["questions_dirty"])
+        agent.assert_not_called()
+
+    def test_absolute_questions_inside_project_are_read_from_head_copy(self):
+        import kb_service
+        self.init_git()
+        self.save("CLAUDE.md", f"# Rules\nвопросы: {self.root / 'QUESTIONS.md'}\n")
+        self.save("QUESTIONS.md", "HEAD answer")
+        self.save("kb/answer.md", "HEAD answer")
+        self.git("add", ".")
+        self.git("commit", "-qm", "snapshot")
+        self.save("QUESTIONS.md", "dirty answer")
+        calls = []
+        with patch.dict(os.environ, self.env()), \
+                patch.object(kb_service, "run_agent", side_effect=self.exam_agent(calls)):
+            report = kb_service.exam(str(self.root))
+        self.assertEqual(report["status"], "OK")
+        self.assertEqual(report["pass"], 1)
+        self.assertTrue(report["questions_dirty"])
+        self.assertEqual((self.root / "QUESTIONS.md").read_text(), "dirty answer")
+
+    def test_snapshot_questions_symlink_cannot_escape_temporary_copy(self):
+        import kb_service
+        self.project()
+        external = self.save("outside.md", "ответы", root=self.base)
+        questions = self.root / "QUESTIONS.md"
+        questions.symlink_to(external)
+        self.git("add", ".")
+        self.git("commit", "-qm", "unsafe snapshot")
+        questions.unlink()
+        questions.write_text("безопасное рабочее дерево")
+        with patch.object(kb_service, "run_agent") as agent:
+            report = kb_service.exam(str(self.root))
+        self.assertEqual(report["status"], "UNSAFE_QUESTIONS")
+        agent.assert_not_called()
+        self.assertEqual(external.read_text(), "ответы")
+
+    def test_failed_due_has_hourly_retry_and_no_daily_success_flag(self):
+        import datetime
+        import kb_service
+        now = time.time()
+        with patch.dict(os.environ, self.env()), \
+                patch.object(time, "time", return_value=now), \
+                patch.object(kb_service, "accumulated", side_effect=RuntimeError("расчёт упал")) as calc:
+            with self.assertRaises(RuntimeError):
+                kb_service.due_text(str(self.root), once_a_day=True)
+            flag = Path(kb_service.state_dir("said")) / (kb_service.key(str(self.root)) + "-" +
+                                                       datetime.date.today().isoformat())
+            self.assertFalse(flag.exists())
+            self.assertEqual(kb_service.due_text(str(self.root), once_a_day=True), "")
+            self.assertEqual(calc.call_count, 1)
+            with patch.object(time, "time", return_value=now + 3601):
+                with self.assertRaises(RuntimeError):
+                    kb_service.due_text(str(self.root), once_a_day=True)
+            self.assertEqual(calc.call_count, 2)
+        with patch.dict(os.environ, self.env()), \
+                patch.object(time, "time", return_value=now + 7202), \
+                patch.object(kb_service, "accumulated", return_value={"due": False}) as calc:
+            self.assertEqual(kb_service.due_text(str(self.root), once_a_day=True), "")
+            self.assertTrue(flag.exists())
+            self.assertEqual(kb_service.due_text(str(self.root), once_a_day=True), "")
+            self.assertEqual(calc.call_count, 1)
+
+    def test_quoted_inline_and_fenced_closures_do_not_close_open_entries(self):
+        import kb_service
+        self.save("CORRECTIONS.md", "# Канал\n"
+                  "- 2026-09-01 · ошибка: система показывает CLOSED\n"
+                  "> статус CLOSED, ✔ закрыто [x] **ЗАКРЫТО**\n"
+                  "- 2026-09-02 · пример `статус CLOSED ✔ [x] ЗАКРЫТО`\n"
+                  "- 2026-09-03 · код\n```markdown\nстатус CLOSED ✔ [x] ЗАКРЫТО\n"
+                  "- 2026-09-20 · пример записи в коде\n```\n"
+                  "- 2026-09-04 · код\n~~~markdown\nстатус CLOSED ✔ [x] ЗАКРЫТО\n~~~\n"
+                  "- 2026-09-05 · пример ``статус CLOSED `✔` [x] ЗАКРЫТО``\n"
+                  "- 2026-09-06 · закрыто по делу — статус CLOSED\n"
+                  "- 2026-09-07 · закрыто по делу ✔ код исправлен\n")
+        dates = sorted(d for d, _ in kb_service.open_corrections(str(self.root)))
+        self.assertEqual(dates, [f"2026-09-{n:02d}" for n in range(1, 6)])
+
+    def test_closed_as_a_status_mark_closes_and_closed_in_prose_does_not(self):
+        """Lab check 03.10.2026 on real channels: the old parser closed entries on «fail-closed»,
+        «411/497 closed», «`closed`» (tg-archive 22, a health project 8, UAD 1 entries hidden);
+        «· CLOSED 2026-09-18:» is a real status mark and must keep closing."""
+        import kb_service
+        self.save("CORRECTIONS.md", "# Канал\n"
+                  "- 2026-09-01 · a — fail-closed барьер остался\n"
+                  "- 2026-09-02 · b — projection 411/497 closed, 86 open\n"
+                  "- 2026-09-03 · c — статус `closed` заменён на answered\n"
+                  "- 2026-09-04 · d — поправлено · CLOSED 2026-09-18: маршруты\n"
+                  "- 2026-09-05 · e — **CLOSED**\n")
+        dates = sorted(d for d, _ in kb_service.open_corrections(str(self.root)))
+        self.assertEqual(dates, ["2026-09-01", "2026-09-02", "2026-09-03"])
+
+    def test_registry_counts_from_exact_service_time_and_age_from_first_trigger(self):
+        import kb_service
+        import kb_turns
+        self.project()
+        self.git("add", ".")
+        self.git("commit", "-qm", "Сервисный обход базы: fixture")
+        cutoff = int(self.git("show", "-s", "--format=%ct", "HEAD"))
+        rows = [{"ts_epoch": cutoff - 10 * 86400, "session": "old", "certain": ["file"]},
+                {"ts_epoch": cutoff - 8 * 86400, "session": "first", "trigger": "owner"},
+                {"ts_epoch": cutoff - 1, "session": "before", "trigger": "owner", "certain": ["file"]}]
+        rows += [{"ts_epoch": cutoff + i + 1, "session": f"after{i}", "trigger": "owner",
+                  "certain": ["file"]} for i in range(10)]
+        with patch.dict(os.environ, self.env()):
+            path = Path(kb_turns.registry_path(str(self.root)))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            with patch.object(kb_turns.time, "time", return_value=cutoff + 100):
+                result = kb_service.accumulated(str(self.root))
+        self.assertEqual(result["unrecorded_turns"], 10)
+        self.assertIn("ходов с работой без записи в базу: 10", result["reasons"])
+
+    def test_registry_age_ignores_old_rows_without_trigger(self):
+        import kb_service
+        import kb_turns
+        self.project()
+        self.git("add", ".")
+        self.git("commit", "-qm", "snapshot")
+        now = time.time()
+        rows = [{"ts_epoch": now - 20 * 86400, "session": "legacy", "certain": ["file"]}]
+        rows += [{"ts_epoch": now - 100 + i, "session": str(i), "trigger": "owner",
+                  "certain": ["file"]} for i in range(10)]
+        with patch.dict(os.environ, self.env()):
+            path = Path(kb_turns.registry_path(str(self.root)))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            result = kb_service.accumulated(str(self.root))
+        self.assertEqual(result["unrecorded_turns"], 10)
+        self.assertFalse(any("ходов с работой" in r for r in result["reasons"]))
+
+
+class TurnRegistry0310Tests(unittest.TestCase):
+    """Внешний аудит 03.10.2026: реестр различает чтение, попытку и результат."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+    confirmed_project = TurnRegistry0210Tests.confirmed_project
+
+    def effects(self, cmd):
+        import kb_start, kb_turns
+        return kb_turns.shell_effects(cmd, kb_start.shell_segments(cmd), kb_start.shell_read_only)
+
+    def rows(self):
+        import kb_turns
+        with patch.dict(os.environ, self.env()):
+            path = Path(kb_turns.registry_path(str(self.root)))
+            return [json.loads(s) for s in path.read_text().splitlines()] if path.exists() else []
+
+    def test_real_read_patterns(self):
+        for cmd in ("ssh prime 'ps aux | head; ls /tmp'",
+                    "ssh -p 22 prime 'journalctl -u odoo -n 20 --no-pager'",
+                    "ssh -i /tmp/key prime 'cat README.md; ls'",
+                    "sed -n '/## 6. Текст Jose/,$p' chapter.md", "sleep 1",
+                    "curl -X GET https://example.invalid", "curl --request=GET https://example.invalid"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.effects(cmd), [])
+
+    def test_explicit_writes(self):
+        for cmd, kind in (("mkdir -p out", "file"), ("cp a b", "file"), ("mv a b", "file"),
+                          ("rm a", "file"), ("touch a", "file"), ("chmod 600 a", "file"),
+                          ("pkill -f odoo", "process"), ("kill 123", "process"),
+                          ("ssh prime 'cp a b'", "file"), ("scp a prime:/tmp/a", "remote"),
+                          ("rsync -e 'ssh -p 22' a prime:/tmp/", "remote"),
+                          ("rsync -p a prime:/tmp/", "remote"),
+                          ("curl --request=POST https://example.invalid", "http"),
+                          ("curl --request POST https://example.invalid", "http"),
+                          ("curl -X GET --data-raw=x https://example.invalid", "http")):
+            with self.subTest(cmd=cmd):
+                self.assertIn(("certain", kind), self.effects(cmd))
+
+    def test_complex_shell_stays_uncertain_but_keeps_writes(self):
+        for cmd in ("git commit -F - <<'EOF'\nfix\nEOF",
+                    "cat <<'EOF'\ngit commit -qm example\nEOF\ngit commit -qm real",
+                    "x=$(cat a); mkdir -p out"):
+            effects = self.effects(cmd)
+            self.assertTrue(any(c == "certain" for c, k in effects), effects)
+            self.assertTrue(any(c == "uncertain" for c, k in effects), effects)
+        for cmd in ("python3 read.py", "node read.js", "cat $(python3 write.py)",
+                    "cat <<'EOF'\ngit commit -qm example\nEOF", "ssh prime", "sftp prime",
+                    "scp prime:/tmp/a ./a", "ssh prime 'python3 x.py'",
+                    "sed -n '/start/,$p;w out' a"):
+            effects = self.effects(cmd)
+            self.assertTrue(any(c == "uncertain" for c, k in effects), effects)
+        self.assertNotIn(("certain", "git"), self.effects("cat <<'EOF'\ngit commit -qm example\nEOF"))
+
+    def test_prompt_duplicate_is_an_event_not_permanent_text_dedup(self):
+        self.confirmed_project()
+        event = {"hook_event_name": "UserPromptSubmit", "prompt": "правило: сделай A"}
+        self.hook(event)
+        self.hook(event)
+        self.assertEqual(self.rows(), [])
+        self.hook({"hook_event_name": "Stop"})
+        self.hook(event)
+        self.hook({"hook_event_name": "Stop"})
+        self.assertEqual(len(self.rows()), 1, "дубль после Stop тоже не создаёт пустой ход")
+        import kb_start
+        with patch.dict(os.environ, self.env()), patch.object(kb_start.time, "time", return_value=time.time() + 10):
+            state = kb_start.load_state("s1", str(self.root))
+            kb_start.begin_turn(state, str(self.root), event["prompt"])
+            kb_start.finish_turn(state)
+        self.assertEqual(len(self.rows()), 2, "тот же текст позднее — новая реплика")
+
+    def test_concurrent_hooks_keep_effects_and_one_stop(self):
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"})
+        events = [{"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_use_id": str(i),
+                   "tool_input": {"command": "mkdir -p out"}} for i in range(12)]
+        self.parallel_hooks(events)
+        self.parallel_hooks([{"hook_event_name": "Stop"}] * 4)
+        rows = self.rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["kinds"].get("certain:file"), 12)
+
+    def parallel_hooks(self, events):
+        procs = [subprocess.Popen([sys.executable, str(HERE / "kb_start.py"), "hook"],
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 text=True, env=self.env()) for event in events]
+        for proc, event in zip(procs, events):
+            proc.stdin.write(json.dumps(dict(session_id="s1", cwd=str(self.root), **event)))
+            proc.stdin.close()
+            proc.stdin = None
+        for proc in procs:
+            out, err = proc.communicate(timeout=30)
+            self.assertEqual(proc.returncode, 0, err)
+            self.assertEqual(out, "", out)
+
+    def test_result_events_and_no_result_are_distinct(self):
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"})
+        for ident, result in (("ok", {"exit_code": 0}), ("bad", {"isError": True}),
+                              ("unknown", None), ("failure", "failure")):
+            event = {"tool_name": "Bash", "tool_use_id": ident,
+                     "tool_input": {"command": "cp a b"}}
+            self.hook(dict(event, hook_event_name="PreToolUse"))
+            if result is not None:
+                post = dict(event, hook_event_name="PostToolUseFailure" if result == "failure" else "PostToolUse",
+                            tool_response=result)
+                self.hook(post)
+                self.hook(post)
+        self.hook({"hook_event_name": "Stop"})
+        row = self.rows()[-1]
+        self.assertEqual(row["outcomes"], {"attempt": 1, "succeeded": 1, "failed": 2})
+        self.assertEqual(row["certain_succeeded"], 1)
+        import kb_start
+        self.assertEqual([e[0] for e in kb_start.HOOK_EVENTS],
+                         ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"])
+
+    def test_attempt_without_a_result_counts_as_work_and_a_known_failure_does_not(self):
+        """Lab review 03.10.2026: result events (PostToolUse) are not installed yet, so an attempt
+        with an unknown outcome stays work as before 7.7 — never a «success»; once a result is
+        known, only what succeeded is work."""
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"})
+        self.hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                   "tool_input": {"command": "cp a b"}})
+        self.hook({"hook_event_name": "Stop"})
+        import kb_turns
+        with patch.dict(os.environ, self.env()):
+            s = kb_turns.summary(str(self.root))
+        self.assertEqual((s["turns_with_work"], s["turns_succeeded"]), (1, 0))
+        self.assertEqual(self.rows()[-1]["outcomes"], {"attempt": 1, "succeeded": 0, "failed": 0})
+        with patch.dict(os.environ, self.env()):
+            kb_turns.record(str(self.root), {"ts_epoch": time.time(), "trigger": "human", "certain": 1,
+                                             "outcomes": {"attempt": 0, "succeeded": 0, "failed": 1}})
+            self.assertEqual(kb_turns.summary(str(self.root))["turns_with_work"], 1,
+                             "a known failure adds no work")
+
+    def test_rotation_is_serialized(self):
+        import kb_turns
+        with patch.dict(os.environ, self.env()):
+            path = Path(kb_turns.registry_path(str(self.root)))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"seed": "x" * (kb_turns.ROTATE_BYTES + 1)}) + "\n")
+            code = "import kb_turns,sys; kb_turns.record(sys.argv[1], {'writer': sys.argv[2]})"
+            procs = [subprocess.Popen([sys.executable, "-c", code, str(self.root), str(i)],
+                                     cwd=HERE, env=self.env()) for i in range(12)]
+            for proc in procs:
+                self.assertEqual(proc.wait(timeout=30), 0)
+            self.assertIn("seed", json.loads(Path(str(path) + ".1").read_text()))
+            self.assertEqual({json.loads(s)["writer"] for s in path.read_text().splitlines()},
+                             {str(i) for i in range(12)})
+
+    def test_worktree_registry_and_local_snapshots(self):
+        self.confirmed_project()
+        worktree = self.base / "writer"
+        self.git("worktree", "add", "-q", "-b", "writer", str(worktree))
+        import kb_turns
+        with patch.dict(os.environ, self.env()):
+            self.assertEqual(kb_turns.registry_path(str(self.root)), kb_turns.registry_path(str(worktree)))
+            self.assertNotEqual(kb_turns.snap_path("s1", str(self.root)), kb_turns.snap_path("s1", str(worktree)))
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"}, cwd=worktree)
+        self.hook({"hook_event_name": "Stop"})
+        row = self.rows()[-1]
+        self.assertTrue(row["worktree"])
+        self.assertEqual(row["project"], self.root.name)
+
+    def test_cli_defaults_to_current_generation(self):
+        import kb_turns
+        with patch.dict(os.environ, self.env()):
+            kb_turns.record(str(self.root), {"ts_epoch": time.time()})
+            kb_turns.record(str(self.root), {"ts_epoch": time.time(), "trigger": "human"})
+        for options, count in (([], 1), (["--all-generations"], 2)):
+            out = subprocess.run([sys.executable, str(HERE / "kb_turns.py"), str(self.root), "--json", *options],
+                                 env=self.env(), capture_output=True, text=True, timeout=30)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual(json.loads(out.stdout)["turns"], count)
+
+    def test_snapshot_has_one_budget_and_bounded_reflog(self):
+        import kb_turns
+        calls, clock = [], [100.0]
+        def slow_run(args, **kw):
+            calls.append((args, kw["timeout"]))
+            clock[0] += kw["timeout"]
+            raise subprocess.TimeoutExpired(args, kw["timeout"])
+        with patch.object(kb_turns.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(kb_turns.subprocess, "run", side_effect=slow_run):
+            snap = kb_turns.snapshot(str(self.root))
+        self.assertLessEqual(sum(timeout for args, timeout in calls), 10)
+        self.assertIsNone(snap["dirty"])
+        self.assertTrue(snap["incomplete"])
+        with patch.object(kb_turns, "git", return_value=b"") as run:
+            kb_turns.reflog(str(self.root))
+        self.assertTrue(any(str(a).startswith("-n") for a in run.call_args.args), run.call_args)
+
+    def test_saturated_reflog_still_finds_new_commits(self):
+        import kb_turns
+        before = [(str(i), "commit: old") for i in range(501)]
+        with patch.object(kb_turns, "reflog", return_value=before):
+            snap = kb_turns.snapshot(str(self.root))
+        with patch.object(kb_turns, "reflog", return_value=[("new", "commit: new")] + before[:500]):
+            self.assertEqual(kb_turns.local_commits(str(self.root), snap), ["new"])
+
+    def test_rollback_of_preexisting_dirty_knowledge_is_not_capture(self):
+        self.confirmed_project()
+        self.save("NOW.md", "dirty before turn\n")
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "отмени"})
+        self.git("restore", "NOW.md")
+        self.hook({"hook_event_name": "Stop"})
+        self.assertEqual(self.rows()[-1]["knowledge_files"], 0)
+
+    def test_prompt_dedup_is_session_specific_and_parallel(self):
+        self.confirmed_project()
+        event = {"hook_event_name": "UserPromptSubmit", "prompt": "go"}
+        self.parallel_hooks([event] * 4)
+        self.hook({"hook_event_name": "Stop"})
+        self.assertEqual(len(self.rows()), 1)
+        import kb_start
+        with patch.dict(os.environ, self.env()):
+            state = kb_start.load_state("s1", str(self.root))
+            state["session"] = "s2"
+            kb_start.save_state(state)
+        self.hook(dict(event, session_id="s2"))
+        self.hook({"hook_event_name": "Stop", "session_id": "s2"})
+        self.assertEqual(len(self.rows()), 2)
+
+    def test_subprojects_are_not_merged_by_common_git_dir(self):
+        self.confirmed_project()
+        nested = self.root / "nested"
+        nested.mkdir()
+        import kb_turns
+        with patch.dict(os.environ, self.env()):
+            self.assertNotEqual(kb_turns.registry_path(str(self.root)), kb_turns.registry_path(str(nested)))
+
+    def test_read_gate_does_not_accept_scripts_or_complex_sed(self):
+        import kb_start
+        for cmd in ("sed -n '/## 6/,$p' a", "sed -n '/a\\/b/,$p' a", "sleep 1"):
+            self.assertTrue(kb_start.shell_read_only(cmd), cmd)
+        for cmd in ("sed -n -e 1p -e 'w out' a", "sed -n '/a/,$p;w out' a",
+                    "python3 -c 'print(1)'", "node -e 'console.log(1)'", "cat $(touch out)",
+                    "cat <<'EOF'\nhi\nEOF", "sleep $N"):
+            self.assertFalse(kb_start.shell_read_only(cmd), cmd)
+        self.assertIn(("certain", "file"), self.effects("curl -X GET -o out https://example.invalid"))
+        self.assertIn(("uncertain", "remote"), self.effects("ssh -o 'ProxyCommand=touch out' prime 'cat a'"))
+
+    def test_missing_snapshot_does_not_capture_preexisting_dirty_files(self):
+        self.confirmed_project()
+        self.save("NOW.md", "dirty before turn\n")
+        import kb_turns
+        snap = {"dirty": None, "reflog_n": None, "incomplete": True}
+        self.assertEqual(kb_turns.changed_since(str(self.root), snap), set())
+
+    def test_separate_git_dirs_keep_distinct_project_keys(self):
+        self.git("init", "-q", "--separate-git-dir", str(self.base / "first.git"))
+        second = self.base / "second"
+        second.mkdir()
+        self.git("init", "-q", "--separate-git-dir", str(self.base / "second.git"), root=second)
+        import kb_turns
+        with patch.dict(os.environ, self.env()):
+            self.assertNotEqual(kb_turns.root_key(str(self.root)), kb_turns.root_key(str(second)))
+            self.assertFalse(kb_turns.project_identity(str(self.root))[1])
+
+    def test_result_callback_keeps_secrets_out_of_state(self):
+        self.confirmed_project()
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "go"})
+        event = {"tool_name": "mcp__fixture__send", "tool_use_id": "tool-secret-marker",
+                 "tool_input": {"password": "input-secret-marker"}}
+        self.hook(dict(event, hook_event_name="PreToolUse"))
+        self.hook(dict(event, hook_event_name="PostToolUse",
+                       tool_response={"error": "response-secret-marker"}))
+        self.hook({"hook_event_name": "Stop"})
+        self.assertEqual(self.rows()[-1]["outcomes"]["failed"], 1)
+        stored = "".join(p.read_text() for p in (self.base / "state").rglob("*.json*"))
+        self.assertNotIn("secret-marker", stored)
+
+    def test_legacy_certain_is_not_a_successful_result(self):
+        import kb_turns
+        with patch.dict(os.environ, self.env()):
+            kb_turns.record(str(self.root), {"ts_epoch": time.time(), "trigger": "human", "certain": 1})
+            summary = kb_turns.summary(str(self.root), whole_only=True)
+        self.assertEqual(summary["turns_certain"], 1)
+        self.assertEqual(summary["turns_attempted"], 1)
+        self.assertEqual(summary["turns_with_work"], 1, "unknown outcome: work, as before 7.7")
+        self.assertEqual(summary["turns_succeeded"], 0, "but never a success")
+
+
+
+class Review0310Tests(unittest.TestCase):
+    """Independent review of the 7.7.0 candidate, 03.10.2026: a turn begun under 7.6 keeps its
+    effects, an unclosed code fence does not swallow the next entries, a git failure inside a
+    repository stays unknown."""
+
+    setUp = RedesignTests.setUp
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+
+    def test_a_turn_begun_before_7_7_keeps_its_effects(self):
+        import kb_start
+        self.project()
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            state, _ = kb_start.start_entry(str(self.root), "s1", "claude", "startup")
+            state["confirmed"] = {"at": "now", "roles": ["dev"], "receipt": ""}
+            state["turn"] = {"at": "then", "decision": False, "trigger": "human",
+                             "effects": [["certain", "remote"], ["uncertain", "shell"]]}
+            kb_start.save_state(state)
+            kb_start.record_effects({"tool_name": "Bash", "cwd": str(self.root),
+                                     "tool_input": {"command": "mkdir -p out"}},
+                                    [os.path.realpath(str(self.root))], "s1", "claude")
+            turn = kb_start.load_state("s1", str(self.root))["turn"]
+        kinds = [f"{e[0]}:{e[1]}" for e in turn["effects"]]
+        self.assertIn("certain:remote", kinds)
+        self.assertIn("uncertain:shell", kinds)
+        self.assertTrue(any(k.startswith("certain:file") for k in kinds), kinds)
+
+    def test_an_unclosed_fence_does_not_swallow_the_next_entries(self):
+        import kb_service
+        self.save("CORRECTIONS.md", "# Канал\n- 2026-09-01 · a\n```\nнезакрытый блок\n"
+                                    "- 2026-09-02 · b\n- 2026-09-03 · c\n")
+        self.save("CLAUDE.md", "# Rules\nканал правок: CORRECTIONS.md\n")
+        dates = sorted(d for d, _ in kb_service.open_corrections(str(self.root)))
+        self.assertEqual(dates, ["2026-09-01", "2026-09-02", "2026-09-03"])
+
+    def test_git_failure_inside_a_repository_is_not_checked(self):
+        import kb_debts
+        self.init_git()
+        with patch.object(kb_debts, "tracked", return_value=None), \
+                patch.object(kb_debts.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 10)):
+            d = kb_debts.debts(str(self.root))
+        self.assertEqual(d["code"]["status"], "NOT_CHECKED")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

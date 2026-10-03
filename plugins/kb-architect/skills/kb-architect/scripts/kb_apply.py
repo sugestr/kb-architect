@@ -57,7 +57,7 @@ CHOICE = re.compile(r"⟦В:\s*(.+?)⟧", re.DOTALL)
 LINE = re.compile(r"⟦LINE:\s*(\d+(?:\.\d+)+)\s*⟧")
 MIN_PROJECT = re.compile(r"⟦MIN_PROJECT:\s*(\d+(?:\.\d+)+)\s*⟧")
 APPLICATION_RECEIPT = "KB_RELEASE_APPLICATION.json"
-RECEIPT_REQUIRED_FROM = (6, 0)
+# Внешний аудит 03.10.2026: неиспользуемая RECEIPT_REQUIRED_FROM удалена.
 APPLICATION_DECISIONS = {
     "applied", "deferred", "declined", "not-applicable", "tool-inherited",
 }
@@ -475,21 +475,7 @@ def base_traits(root):
     return t
 
 
-# Ключевое слово в строке выпуска → признак базы, который делает её применимой.
-APPLICABLE = [
-    ("вход", "вход"),
-    ("подпапк", "вход не в корне"),
-    ("журнал", "журнал"),
-    ("колонк", "журнал"),
-    ("канал правок", "канал правок"),
-    ("многострочн", "многострочные записи канала"),
-    ("контрольны", "контрольные вопросы"),
-    ("прогон", "журнал прогонов"),
-    ("git", "git"),
-    ("коммит", "git"),
-    ("пишущ", "несколько пишущих"),
-    ("зеркал", "зеркала"),
-]
+# Внешний аудит 03.10.2026: неиспользуемая APPLICABLE удалена.
 
 
 def release_actions(root):
