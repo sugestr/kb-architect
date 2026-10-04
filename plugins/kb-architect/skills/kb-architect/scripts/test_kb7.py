@@ -2358,6 +2358,25 @@ class ExecutableEntryReview0210Tests(unittest.TestCase):
         self.assertEqual(self.confirm("-".join(marks), "--session", "s1").returncode, 0)
         self.assertEqual(self.tool("Edit"), "allow")
 
+    def test_a_role_entered_after_a_confirmed_entry_replaces_the_old_receipt(self):
+        """UAD 04.10.2026: confirm returned the earlier «no role» receipt for the role file."""
+        self.project(big_now=True)
+        first = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        ok = self.confirm("-".join(self.marks(first)), "--session", "s1")
+        self.assertEqual(ok.returncode, 0, ok.stdout)
+        self.assertIn("ENTRY_CONFIRMED: роль dev", ok.stdout)
+        out = self.run_tool("kb_entry.py", "--role", "ops")
+        bundle = re.search(r"ENTRY_BUNDLE=(\S+)", out.stdout).group(1)
+        again = self.confirm("-".join(self.marks(bundle)), "--session", "s1", "--bundle", bundle)
+        self.assertEqual(again.returncode, 0, again.stdout)
+        self.assertIn("ENTRY_CONFIRMED: роль ops", again.stdout)
+        status = subprocess.run([sys.executable, str(HERE / "kb_start.py"), "status", str(self.root),
+                                 "--session", "s1"], capture_output=True, text=True, timeout=60,
+                                env=self.env())
+        self.assertIn("ops", status.stdout)
+        repeat = self.confirm("-".join(self.marks(bundle)), "--session", "s1")
+        self.assertIn("ENTRY_CONFIRMED: роль ops", repeat.stdout, "the same file keeps its record")
+
     def test_the_hook_confirms_the_command_itself_without_session_env_or_cache_writes(self):
         self.project(big_now=True)
         bundle = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
@@ -4373,6 +4392,35 @@ class Review0310Tests(unittest.TestCase):
                 patch.object(kb_debts.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 10)):
             d = kb_debts.debts(str(self.root))
         self.assertEqual(d["code"]["status"], "NOT_CHECKED")
+
+class Consistency0410Tests(unittest.TestCase):
+    """K4 04.10.2026: text and scripts must say the same thing."""
+
+    setUp = RedesignTests.setUp
+    save = RedesignTests.save
+
+    def test_declared_globs_keep_their_star_and_markup_is_removed_in_pairs(self):
+        import kb_paths
+        self.save("CLAUDE.md", "# Rules\nвне знания: knowledge/output-*\n"
+                               "**обновление скилла: по сигналу**\n"
+                               "- **канал правок:** CORRECTIONS.md\n"
+                               "`код без описания допустим`: `vendor*`\n")
+        get = lambda *k: kb_paths.declared_value(str(self.root), k)[0]
+        self.assertEqual(get("вне знания"), "knowledge/output-*")
+        self.assertEqual(get("обновление скилла"), "по сигналу")
+        self.assertEqual(get("канал правок"), "CORRECTIONS.md")
+        self.assertEqual(get("код без описания допустим"), "vendor*")
+
+    def test_entry_receipt_and_negation_do_not_close_the_subject(self):
+        import kb_service
+        self.save("CORRECTIONS.md", "# Канал\n"
+                                    "- 2026-09-01 · a — ✔ Вход учтён 2026-09-02; расхождение открыто\n"
+                                    "- 2026-09-03 · b — не ✔ закрыто, ждёт владельца\n"
+                                    "- 2026-09-04 · c — ✔ закрыто 2026-09-05, внесено в NOW.md\n")
+        self.save("CLAUDE.md", "# Rules\nканал правок: CORRECTIONS.md\n")
+        dates = sorted(d for d, _ in kb_service.open_corrections(str(self.root)))
+        self.assertEqual(dates, ["2026-09-01", "2026-09-03"])
+
 
 class RouteCostV8Tests(unittest.TestCase):
     """J3: the 8.0 router moved resources and selectors; cost must follow each address."""

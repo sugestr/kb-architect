@@ -144,14 +144,38 @@ def declared_value(root, keys, docs=None):
     for path in (docs if docs is not None else context_docs(root)):
         text = read(path)
         for key in keys:
-            m = re.search(r"^[ \t]*(?:[-*>+][ \t]*)?[`*_\"']{0,2}[ \t]*"
-                          + re.escape(key) + r"[`*_\"']{0,2}[ \t]*:[ \t]*(.+)$",
+            # Маркер списка или цитаты — с пробелом после него: «**ключ**» не список.
+            m = re.search(r"^[ \t]*(?:[-*>+][ \t]+)?([`*_\"']{0,2})[ \t]*"
+                          + re.escape(key) + r"([`*_\"']{0,2})[ \t]*:[ \t]*(.+)$",
                           text, re.IGNORECASE | re.MULTILINE)
             if m:
-                val = m.group(1).strip().strip("`*_ ").strip()
+                val = unmark(m.group(3), m.group(1), m.group(2))
                 if val and not val.startswith("<"):
                     return val, path
     return None, None
+
+
+def unmark(value, opened="", closed=""):
+    """Снять Markdown вокруг значения парами, не трогая значащие символы.
+
+    Прежний strip("`*_ ") срезал и «*» шаблона: `вне знания: knowledge/output-*`
+    становилось `knowledge/output-` и переставало исключать (K4, 04.10.2026).
+    Разметка, открытая перед ключом, снимается с конца значения; остальная — только
+    симметричной парой вокруг значения."""
+    val = value.strip()
+    for mark in (opened, closed):
+        if mark and val.startswith(mark) and len(val) > len(mark):   # «**ключ:** значение»
+            val = val[len(mark):].lstrip()
+        if mark and val.endswith(mark) and len(val) > len(mark):     # «**ключ: значение**»
+            val = val[:-len(mark)].rstrip()
+    changed = True
+    while changed:
+        changed = False
+        for mark in ("**", "__", "`", "*", "_"):
+            if len(val) > 2 * len(mark) and val.startswith(mark) and val.endswith(mark):
+                val = val[len(mark):-len(mark)].strip()
+                changed = True
+    return val
 
 
 def section(text, headings):

@@ -1416,7 +1416,11 @@ def confirm(root, token, sid, bundle=None, no_role=None):
     if done:
         checked, _ = check_marks(candidates(root, None, done.get("bundle")), fragments_of(token))
     # Внешний аудит 03.10.2026: старая квитанция тоже требует полного входа роли.
-    if done and checked and not checked.get("blocking"):
+    # UAD 04.10.2026: метки другого файла (вход роли после входа без роли) тоже проходят
+    # проверку по папке входов; прежняя запись возвращается только для того же файла.
+    same = bool(done and checked) and (os.path.realpath(checked.get("bundle") or "")
+                                       == os.path.realpath(done.get("bundle") or ""))
+    if same and not checked.get("blocking"):
         confirmed = done                      # hook уже проверил и записал эту команду
     else:
         confirmed, why = verify(root, state, token, bundle, no_role)
@@ -1504,8 +1508,9 @@ def project_actions(root):
     roles, default = kb_entry.declared_roles(root)
     if len(roles) > 1 and not default:
         actions.append(f"ролей {len(roles)}, а `entry_role` в PROJECT_ROLES.json нет: объяви роль "
-                       "большинства задач — иначе каждый новый чат сначала собирает вход роли, "
-                       "без неё замок входа не откроется (references/migration.md → release_actions; references/service-layer.md → entry)")
+                       "большинства задач либо выбирай роль каждой задачи при входе "
+                       "(`kb_entry.py --role`); без роли замок входа не откроется "
+                       "(references/migration.md → release_actions; references/service-layer.md → entry)")
     for path, event, digest in foreign_entry_hooks(root):
         actions.append(f"свой hook старта сессии в {path} ({event}, sha256:{digest}): "
                        "если он собирает вход, "
