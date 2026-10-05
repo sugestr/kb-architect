@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-kb_check.py — целостность базы. Семь проверок, которые не шумят.
+kb_check.py — целостность базы. Проверки, которые не шумят.
 
     python3 kb_check.py <корень базы>
 
@@ -9,7 +9,7 @@ kb_check.py — целостность базы. Семь проверок, ко
 срабатываний — то есть выключался на второй день. Выключенный линтер хуже
 отсутствующего: на нём висит всё обещание проверяемости.
 
-Здесь семь проверок. Каждая либо находит настоящую поломку, либо молчит.
+Каждая проверка либо находит настоящую поломку, либо молчит.
 Молчит — но не за счёт того, что не выполнилась: отчёт всегда печатает,
 что именно проверено, и промах поиска входа сам становится находкой.
 
@@ -55,6 +55,12 @@ kb_check.py — целостность базы. Семь проверок, ко
      на scratchpad, /tmp или сессионный каталог либо на путь внутри проекта,
      которого нет в Git. Отчёт UAD 12.09.2026: выпуск для руководства собран
      из эфемерного каталога, поле стояло, воспроизводимости не было.
+
+ 10. Канон держит то, чего не будет у следующей сессии (8.1.0, отчёты 05.10.2026):
+     ссылку во временный каталог (/tmp, scratchpad — стирается перезапуском), а во входе
+     и правилах — и упоминание такого пути; ссылку на файл памяти агента (её нет у Codex,
+     другого клиента и машины); ссылку на файл, который Git игнорирует (его нет в clone).
+     Входящие, объявленные снимки и локальные файлы не проверяются. Код в ``` — тоже.
 """
 
 import datetime
@@ -83,6 +89,15 @@ LINE_LOCATOR = re.compile(r"([^:]+):0*[1-9][0-9]*\Z")
 VALID_UNTIL = re.compile(r"^\s*valid_until\s*:\s*(\S+)", re.MULTILINE)
 # Внешний аудит 03.10.2026: пустое поле не заимствует следующую строку.
 VERIFY = re.compile(r"^[ \t]*verify[ \t]*:[ \t]*(.*)$", re.MULTILINE)
+# Пути, которые не переживут сессию или машину (8.1.0). Плейсхолдеры «<…>» — не адрес.
+TEMP_PATH = re.compile(r"(?<![\w.-])(?:/private)?/(?:tmp|var/folders)/[^\s`'\")\]>|,;]+"
+                       r"|(?<![\w.-])[^\s`'\"(\[<|,;]*scratchpad/[^\s`'\")\]>|,;]+")
+# Адрес факта в памяти агента: конкретный файл памяти Claude или «память `имя`». Упоминание
+# памяти Codex как предмета разговора адресом факта не является.
+MEMORY_FILE = re.compile(r"\.claude/projects/[^/\s`'\"<>]+/memory/[^\s`'\")\]>|,;]+\.md"
+                         r"|(?i:\bпамят[ьи](?:[ \t]+агента)?[ \t]+`[\w.-]+`)")
+TEMP_ALLOWED_KEYS = ("временные пути допустимы", "temporary paths allowed")
+LOCAL_ALLOWED_KEYS = ("локальные файлы допустимы", "local files allowed")
 DATE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 
 EMPTY_VERIFY = {"", "-", "—", "tbd", "TBD", "?", "null", "none", "нет"}
@@ -369,6 +384,35 @@ def strip_code(text):
     return INLINE.sub("", text)
 
 
+def ignored_links(root, linked):
+    """(файл, ссылка) для целей, которые Git игнорирует и не отслеживает; без репозитория — пусто.
+    Ссылка из файла, который сам вне Git (приватные заметки), не считается: оба вне clone."""
+    if not linked:
+        return []
+    root = os.path.realpath(root)
+    sources = {os.path.realpath(os.path.join(root, rel)) for rel, _, _ in linked}
+    paths = sorted({p for _, _, p in linked} | sources)
+
+    def check(batch):
+        try:
+            got = subprocess.run(["git", "-C", root, "check-ignore", "--stdin"], input="\n".join(batch),
+                                 capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if got.returncode not in (0, 1):
+            return None
+        return {os.path.realpath(os.path.join(root, line)) for line in got.stdout.splitlines() if line.strip()}
+    hit = check(paths)
+    if hit is None:                      # одна странная цель не выключает проверку остальных
+        hit = set()
+        for p in paths[:400]:
+            one = check([p])
+            if one:
+                hit |= one
+    return [(rel, clean) for rel, clean, p in linked
+            if p in hit and os.path.realpath(os.path.join(root, rel)) not in hit]
+
+
 def is_internal(target):
     t = target.strip()
     if not t or t.startswith(("#", "http://", "https://", "mailto:", "tel:", "data:")):
@@ -389,6 +433,19 @@ def main():
 
     today = datetime.date.today()
     broken, expired, blank = [], [], []
+    temporary, memory_refs, linked_files = [], [], []
+    root_real = os.path.realpath(root)
+    raw_temp, _ = kb_paths.declared_value(root, TEMP_ALLOWED_KEYS)
+    temp_allowed = [g.strip().strip("`\"'«»") for g in re.split(r"[,;]", raw_temp or "") if g.strip()]
+    raw_local, _ = kb_paths.declared_value(root, LOCAL_ALLOWED_KEYS)
+    local_allowed = [g.strip().strip("`\"'«»") for g in re.split(r"[,;]", raw_local or "") if g.strip()]
+    entry_doc = kb_paths.locate(root, "entry").path
+    # Упоминание пути проверяется только во входе и правилах: в датированных квитанциях и
+    # передачах оно — история (ревью 8.1.0: иначе красными стали все 9 проектов).
+    boot_docs = {os.path.realpath(p) for p in [entry_doc] + [os.path.join(root, n) for n in
+                 ("CLAUDE.md", "AGENTS.md", "KNOWLEDGE_INDEX.json")] if p}
+    inbox_root = inbox_dir(root)
+    inbox_root = os.path.realpath(inbox_root) + os.sep if inbox_root else None
     wrong_name, no_verify, nesource = [], [], []
     files_all = collect(root)
     ORDER = infer_order(open(f, encoding="utf-8", errors="ignore").read() for f in files_all[:400])
@@ -401,6 +458,22 @@ def main():
         except OSError:
             continue
         body = strip_code(raw)
+        prose = FENCE.sub("", raw)          # путь в `кавычках` — тоже адрес; блок кода — нет
+
+        # 10. временное и память агента — адресом канона не бывают
+        seen_here = set()
+        snapshot = any(fnmatch.fnmatch(rel, g) for g in temp_allowed) or \
+            bool(inbox_root and os.path.realpath(path).startswith(inbox_root))
+        mentions = TEMP_PATH.finditer(prose) if os.path.realpath(path) in boot_docs else \
+            (TEMP_PATH.search(t) for t in LINK.findall(body))
+        for m in ([] if snapshot else [x for x in mentions if x]):
+            target = m.group(0).rstrip(".:")
+            if "<" not in target and target not in seen_here:
+                seen_here.add(target)
+                temporary.append((rel, target))
+        for m in MEMORY_FILE.finditer(prose):
+            if "<" not in m.group(0):
+                memory_refs.append((rel, m.group(0)))
 
         # 1. битые ссылки
         for target in LINK.findall(body):
@@ -409,6 +482,8 @@ def main():
             clean = target.split("#")[0].split("?")[0].strip()
             if not clean:
                 continue
+            if TEMP_PATH.search(clean):
+                continue                       # временный путь — своя находка выше
             # Markdown-ссылка на имя с пробелами пишется `%20`; файл на диске —
             # с пробелом (02.10.2026: имя отчёта deep-research с пробелами).
             decoded = urllib.parse.unquote(clean)
@@ -440,6 +515,14 @@ def main():
                     if os.path.isfile(located_near) or os.path.isfile(located_root):
                         continue
                 broken.append((rel, clean))
+                continue
+            for p in (near, from_root):
+                real = os.path.realpath(p)
+                if os.path.isfile(p) and (real == root_real or real.startswith(root_real + os.sep)) \
+                        and not any(fnmatch.fnmatch(os.path.relpath(real, root_real), g)
+                                    for g in local_allowed):
+                    linked_files.append((rel, clean, real))
+                    break
 
         # 9. производный файл без проверяемого источника
         nesource.extend(generated_from_findings(root, rel, raw))
@@ -452,7 +535,7 @@ def main():
                     expired.append((rel, d, (today - d).days))
 
         # 3. verify: пустой, подменённый именем, отсутствующий при статусе действия
-        for val in VERIFY.findall(raw):
+        for val in VERIFY.findall(FENCE.sub("", raw)):   # пример в блоке кода — не утверждение
             if val.strip().strip("<>").lower() in EMPTY_VERIFY:
                 blank.append(rel)
 
@@ -725,6 +808,31 @@ def main():
         print("  Локальная цель по этим адресам не найдена.")
         print("  Проверь путь ссылки и доступность файла в исходном источнике.\n")
 
+    ignored = ignored_links(root, linked_files)
+    for title, items, advice in (
+            ("ССЫЛКИ НА ВРЕМЕННОЕ", temporary,
+             ["Временный каталог стирается перезапуском машины или концом сессии.",
+              "Перенеси файл в репозиторий или назови стойкий адрес. Датированные снимки, которые",
+              "не переписывают, объяви в правилах: «временные пути допустимы: <маска>»."]),
+            ("КАНОН ССЫЛАЕТСЯ НА ПАМЯТЬ АГЕНТА", memory_refs,
+             ["Память одного клиента не видят Codex, другая машина и соседние сессии.",
+              "Перенеси факт в канон, в памяти оставь адрес канона."]),
+            ("НЕ ВОССТАНОВИТСЯ ИЗ CLONE", ignored,
+             ["Ссылка канона ведёт на файл, который Git игнорирует: в clone его нет.",
+              "Нужен в clone — сними исключение для этого файла. Намеренно вне Git (чувствительное,",
+              "сборка) — объяви в правилах «локальные файлы допустимы: <маска>» и назови внешний канон."])):
+        if not items:
+            continue
+        found += len(items)
+        print(f"{title} — {len(items)}:")
+        for rel, target in items[:20]:
+            print(f"  {rel} → {target}")
+        if len(items) > 20:
+            print(f"  … и ещё {len(items) - 20}")
+        for line in advice:
+            print(f"  {line}")
+        print()
+
     if expired:
         found += len(expired)
         print(f"ИСТЁК СРОК ГОДНОСТИ — {len(expired)}:")
@@ -824,9 +932,16 @@ def main():
             scope.append(f"max project bootstrap — {bootstrap} B "
                          "(informational; project budget not declared)")
         else:
-            state = "EXCEEDED" if budget_exceeded else "PASS"
+            # 05.10.2026: вход на 39 977 из 40 000 Б — PASS, а новое правило работы агента во вход
+            # уже не помещалось и ушло в память. Заполненный вход назван отдельно; это не находка.
+            full = not budget_exceeded and budget and bootstrap >= budget * 0.99
+            state = "EXCEEDED" if budget_exceeded else ("FULL" if full else "PASS")
             scope.append(f"project bootstrap budget — {state} "
                          f"({bootstrap}/{budget} B)")
+            if full:
+                print(f"ВХОД ЗАПОЛНЕН: {bootstrap} из {budget} B. Новое правило работы агента во вход "
+                      "не поместится — освободи место или запиши правило в главу с адресом раздела "
+                      "входа, куда его поднять; память агента местом не служит.\n")
     else:
         scope.append("max project bootstrap — NOT_CHECKED")
 
@@ -836,6 +951,7 @@ def main():
         scope.append(f"достижимость знания — {cover['status']} "
                      f"({cover['reachable']}/{cover['files']} в {', '.join(cover['roots'])})")
     scope.append("generated_from (эфемерный · отсутствующий · вне Git)")
+    scope.append("временные пути · память агента · игнорируемые файлы в каноне")
     scope.append(debt_scope)
 
     if not found:

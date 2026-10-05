@@ -71,6 +71,19 @@ KB_MARK = re.compile(r"^[ \t]*(?:[-*>+][ \t]*)?[`*_\"']{0,2}[ \t]*kb_standard_ve
 AUTO_RULES = {"claude": ("CLAUDE.md",), "codex": ("AGENTS.md",)}
 SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")
 DEDUP_SECONDS = 5             # два hook'а одного события приходят почти одновременно
+# «Закрой сессию» (8.1.0): команда владельца, а не память агента — правило «записывай сразу»
+# дважды не удержало класс (6.3.0, 7.3.2); hook держит конец хода до отметки один раз.
+# Только реплика, которая сама и есть команда: «Не закрывай сессию», «закрой сессию браузера»,
+# цитата и обсуждение команды — не команда (ревью 8.1.0: 11 срабатываний в живых репликах, 4 ложных).
+CLOSE_COMMAND = re.compile(r"(?i)^(?:пожалуйста[,\s]+)?(?:закрой|закроем)\s+(?:эту\s+|текущую\s+|свою\s+)?"
+                           r"сессию(?:[,\s]+пожалуйста)?$|^сессию\s+закрой$|^close\s+(?:the\s+|this\s+)?session$")
+
+
+def is_close_command(prompt):
+    lines = [line for line in str(prompt or "").splitlines()
+             if line.strip() and not line.lstrip().startswith((">", "<!--"))]
+    text = re.sub(r"[\s.!…]+$", "", " ".join(" ".join(lines).split()))
+    return bool(CLOSE_COMMAND.match(text))
 READ_TOOLS = {"Read", "Glob", "Grep", "LS", "NotebookRead", "WebFetch", "WebSearch", "ToolSearch",
               "TodoWrite", "AskUserQuestion", "Skill", "Agent", "Task", "EnterPlanMode",
               "ExitPlanMode", "view_image", "read_file", "list_dir", "grep_files"}
@@ -89,7 +102,8 @@ GIT_READ = {"status", "log", "show", "diff", "rev-parse", "ls-files", "blame", "
 # Внешний аудит 03.10.2026: единственная операция p, включая адрес /регулярка/.
 SED_ADDRESS = r"(?:\d+|\$|/(?:\\.|[^/\\\n])*/[IM]?)"
 SED_PRINT = re.compile(rf"^(?:{SED_ADDRESS}(?:,{SED_ADDRESS})?)?p$")
-KB_READ_SCRIPTS = {"kb_due.py", "kb_check.py", "kb_debts.py"}
+# kb_session.py пишет только в каталог состояния: «закрой сессию» доступна и до подтверждения входа.
+KB_READ_SCRIPTS = {"kb_due.py", "kb_check.py", "kb_debts.py", "kb_session.py"}
 MCP_READ = re.compile(r"^(?:get|list|search|read|find|query|describe|fetch|whoami|identity|"
                       r"server_info|server_status|vault_status|chat_info|chat_rights|"
                       r"delivery_status|transport_health|labels?|label_values|loki_query|"
@@ -930,9 +944,15 @@ def on_session_start(event, agent):
     skill = skill or {"status": "SKIPPED", "line": "скилл после сжатия не перепроверялся"}
     state["project_update"] = project["short"]
     save_state(state)
+    after = []
+    if source == "compact":
+        after = ["", "## После сжатия контекста",
+                 "Подробности до сжатия есть только в журнале сессии. Перед передачей работы и в конце "
+                 "долгой работы — «закрой сессию»: python3 "
+                 f"{q(os.path.join(scripts_dir(), 'kb_session.py'))} {q(root)} (capture.md → close)."]
     text = entry_message(state, all_roles, label, due, agent,
                          update=update_section(root, skill, project) +
-                         (["", "## Пора обслужить базу", service] if service else []))
+                         (["", "## Пора обслужить базу", service] if service else []) + after)
     notice = (f"KB-вход {os.path.basename(root)}: файл входа собран, правки закрыты до "
               f"подтверждения ({state['parts']} частей, роль "
               f"{', '.join(state['roles']) or 'не выбрана'}); {skill['line']}; проект: "
@@ -980,6 +1000,15 @@ def session_state(sid, root, agent):
     return None, False
 
 
+def open_turn(state, root, trigger, decision):
+    """Новый ход в состоянии сессии: отпечаток рабочей копии и пустые следствия."""
+    canonical, worktree = kb_turns.project_identity(root)
+    kb_turns.save_snap(state["session"], root, kb_turns.snapshot(root))
+    state["turn"] = {"at": now_iso(), "decision": decision, "effects": [], "calls": [],
+                     "trigger": trigger, "project": os.path.basename(canonical), "worktree": worktree,
+                     "project_key": hashlib.sha256(canonical.encode()).hexdigest()[:12]}
+
+
 def begin_turn(state, root, prompt):
     """Отпечаток рабочей копии в начале хода — для итога хода в реестре. Ход без конца
     (прерван Esc или ошибкой) записывается здесь как прерванный, а не теряется.
@@ -1007,15 +1036,36 @@ def begin_turn(state, root, prompt):
                     save_state(state)
                     return
                 _finish_turn(state, interrupted=True)
-            canonical, worktree = kb_turns.project_identity(root)
-            kb_turns.save_snap(state["session"], root, kb_turns.snapshot(root))
-            state["turn"] = {"at": now_iso(), "decision": kb_turns.is_decision(prompt),
-                             "effects": [], "calls": [], "trigger": kind,
-                             "project": os.path.basename(canonical), "worktree": worktree,
-                             "project_key": hashlib.sha256(canonical.encode()).hexdigest()[:12]}
+            open_turn(state, root, kind, kb_turns.is_decision(prompt))
             save_state(state)
     except Exception:
         pass
+
+
+def close_text(root):
+    script = q(os.path.join(scripts_dir(), "kb_session.py"))
+    return ("Команда владельца «закрой сессию». Выполни её сейчас, до продолжения прежней задачи: "
+            f"python3 {script} {q(root)} — кандидаты из журнала всей сессии; затем маршрут "
+            "references/capture.md → close: у каждого пункта адрес в каноне или запись, commit и push, "
+            f"короткий итог владельцу; в конце python3 {script} {q(root)} --done. Hook один раз не даст "
+            "закончить ход без этой отметки; если выполнить нельзя — --done --note «почему».")
+
+
+def mark_close(sid, root):
+    with kb_turns.file_lock(state_path(sid, root)):
+        current = load_state(sid, root)
+        if current:
+            current["close"] = {"asked": now_iso(), "held": False}
+            save_state(current)
+
+
+def closed_at(sid, root):
+    path = os.path.join(state_root(), "sessions", f"{safe_name(sid)}--{root_key(root)}.closed")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("at") or ""
+    except (OSError, ValueError):
+        return ""
 
 
 def on_prompt(event, agent):
@@ -1026,15 +1076,20 @@ def on_prompt(event, agent):
     state, fresh = session_state(sid, root, agent)
     if state:
         begin_turn(state, root, event.get("prompt") or "")
+    human = kb_turns.prompt_kind(event.get("prompt")) == "human"
+    close = bool(state) and human and is_close_command(event.get("prompt"))
+    if close:
+        mark_close(sid, root)
     if not state or state.get("confirmed") or state.get("error"):
-        return None
+        return context_payload("UserPromptSubmit", close_text(root)) if close else None
     if fresh:
         return context_payload("UserPromptSubmit",
                                entry_message(state, kb_entry.declared_roles(root)[0],
-                                             "сессия старше hook'а", None, agent))
-    if kb_turns.prompt_kind(event.get("prompt")) != "human":
+                                             "сессия старше hook'а", None, agent)
+                               + ("\n\n" + close_text(root) if close else ""))
+    if not human:
         return None                           # замок остаётся; напоминание — на реплику владельца
-    return context_payload("UserPromptSubmit", reminder(state))
+    return context_payload("UserPromptSubmit", reminder(state) + ("\n\n" + close_text(root) if close else ""))
 
 
 def memory_text_after(tool, ti, path):
@@ -1308,9 +1363,9 @@ def _finish_turn(state, interrupted=False, stop_hook_active=False):
 
 
 def on_stop(event, agent):
-    """Конец хода. 7.5 — только запись, агенту ничего не говорится: неделя замера
-    точности классификации до подсказок и блокировок (решение 02.10.2026). Любая
-    собственная ошибка здесь молча пропускается: замок входа ею не открывается."""
+    """Конец хода. Реестр хода — только запись (неделя замера, решение 02.10.2026). Единственное,
+    что говорится агенту, — невыполненная команда владельца «закрой сессию» (8.1.0), один раз.
+    Любая собственная ошибка здесь молча пропускается: замок входа ею не открывается."""
     sid = event.get("session_id")
     if not sid:
         return None
@@ -1320,14 +1375,38 @@ def on_stop(event, agent):
                  if n.startswith(f"{safe_name(sid)}--") and n.endswith(".json")]
     except OSError:
         return None
+    hold = None
     for name in names:
         try:
             with open(os.path.join(folder, name), encoding="utf-8") as f:
                 state = json.load(f)
             finish_turn(state, stop_hook_active=bool(event.get("stop_hook_active")))
+            hold = hold or close_hold(state, bool(event.get("stop_hook_active")))
         except Exception:
             continue
-    return None
+    return hold
+
+
+def close_hold(state, active):
+    """Команда «закрой сессию» без отметки --done: конец хода держится один раз на команду."""
+    sid, root = state.get("session"), state.get("root")
+    close = state.get("close") or {}
+    if active or not sid or not root or not close.get("asked") or close.get("held"):
+        return None
+    if closed_at(sid, root) >= close["asked"]:
+        return None
+    with kb_turns.file_lock(state_path(sid, root)):
+        current = load_state(sid, root)
+        if not current or (current.get("close") or {}).get("held"):
+            return None
+        current["close"]["held"] = True
+        # Удержание продолжает работу без новой реплики: ход открывается здесь, иначе правки,
+        # коммит и push закрытия не попали бы в реестр ходов (ревью 8.1.0).
+        open_turn(current, root, "close-hold", False)
+        save_state(current)
+    return {"decision": "block",
+            "reason": "Команда владельца «закрой сессию» ещё не выполнена (нет отметки kb_session.py "
+                      "--done). " + close_text(root)}
 
 
 def run_hook(agent):

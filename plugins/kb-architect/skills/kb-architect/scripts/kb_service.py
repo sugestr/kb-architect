@@ -450,7 +450,10 @@ def run_agent(prompt, cwd, timeout=2400):
     os.close(fd)
     home = isolated_home()
     try:
+        # Ввод закрыт: у Bash агента он открыт, и `codex exec` ждал бы его до тайм-аута
+        # (самопроверка лаборатории 05.10.2026; урок 03.10 был записан, но не у этого вызова).
         r = subprocess.run(agent_argv(prompt, cwd, out), cwd=cwd, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL,
                            timeout=timeout, env=dict(os.environ, KB_ENTRY_HOOK="off",
                                                      KB_ENTRY_UPDATE="off", CODEX_HOME=home))
         with open(out, encoding="utf-8") as f:

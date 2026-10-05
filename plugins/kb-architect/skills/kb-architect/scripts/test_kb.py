@@ -142,7 +142,7 @@ def t_620_thin_router_points_to_versioned_contract():
     out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
     check("версионируемое ядро сохраняет обязательные правила и их маршруты",
           len(router.encode("utf-8")) <= 14_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B.
-          and 'version: "8.0.2"' in router
+          and 'version: "8.1.0"' in router
           and all(path in router for path in (
               "references/project-roles.md", "references/retrieval.md",
               "references/adopt-existing.md", "references/migration.md"))
@@ -193,7 +193,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 14_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == '8.0.2'
+          and data.get("baseline_version") == '8.1.0'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
@@ -5386,7 +5386,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "8.0.2"
+          kb_paths.skill_version() == "8.1.0"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == "7.2.0"
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

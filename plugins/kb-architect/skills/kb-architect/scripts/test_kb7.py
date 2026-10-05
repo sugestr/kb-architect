@@ -4464,5 +4464,320 @@ class RouteCostV8Tests(unittest.TestCase):
         self.assertIn("route repeats resource (Duplicate): references/modules.md", result["errors"])
 
 
+class CloseSession0510Tests(unittest.TestCase):
+    """05.10.2026: the owner's self-check text found knowledge outside the canon in every one of 14
+    sessions while kb_debts and kb_check said "no debts". 8.1.0 makes it the owner's command
+    «закрой сессию»: kb_session.py reads the whole transcript, the hook holds the end of the turn."""
+
+    setUp = RedesignTests.setUp
+    save = RedesignTests.save
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    run_tool = RedesignTests.run_tool
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+    start = ExecutableEntry0110Tests.start
+
+    @staticmethod
+    def stamp(minutes_ago):
+        import datetime as _dt
+        moment = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=minutes_ago)
+        return moment.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    def transcript(self, rows):
+        path = self.base / "session.jsonl"
+        path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+        return path
+
+    def user(self, text, minutes):
+        return {"type": "user", "timestamp": self.stamp(minutes), "message": {"role": "user", "content": text}}
+
+    def call(self, name, minutes, **inp):
+        return {"type": "assistant", "timestamp": self.stamp(minutes),
+                "message": {"content": [{"type": "tool_use", "id": f"t{minutes}{name}", "name": name,
+                                         "input": inp}]}}
+
+    def say(self, text, minutes):
+        return {"type": "assistant", "timestamp": self.stamp(minutes),
+                "message": {"content": [{"type": "text", "text": text}]}}
+
+    def close_run(self, path, *extra):
+        out = self.base / "close"
+        got = subprocess.run([sys.executable, str(HERE / "kb_session.py"), str(self.root), "--transcript",
+                              str(path), "--out", str(out), "--tz", "Europe/Madrid", *extra],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(got.returncode, 0, got.stdout + got.stderr)
+        files = {p.relative_to(out).as_posix(): p.read_text(encoding="utf-8") for p in out.rglob("*.md")}
+        return got.stdout, files
+
+    def test_every_form_of_owner_words_and_every_outside_action_is_a_candidate(self):
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        other = self.base / "neighbour"
+        (other / "_inbox").mkdir(parents=True)
+        (other / "CLAUDE.md").write_text("# Rules\nkb_standard_version: 7.2.0\n", encoding="utf-8")
+        memory = self.base / "home" / ".claude" / "projects" / "-x" / "memory" / "fact.md"
+        rows = [
+            self.user("Сделай сверку оплат", 60),
+            self.user([{"type": "text", "text": "<system-reminder>служебное</system-reminder>"},
+                       {"type": "text", "text": "<!-- reply 1 -->\n> вопрос\n\nОставляем как есть"}], 59),
+            self.user("<task-notification><task-id>x</task-id></task-notification>", 58),
+            self.user("Another Claude session sent a message:\n<cross-session-message from=\"a\">счёт ведётся "
+                      "в CRM</cross-session-message>", 57),
+            {"type": "queue-operation", "operation": "enqueue", "timestamp": self.stamp(56),
+             "content": "Решение: график проверок делаем так"},
+            {"type": "attachment", "timestamp": self.stamp(55),
+             "attachment": {"type": "queued_command", "prompt": "И ещё посреди хода: пароль: Hunter2Secret!"}},
+            self.user("[Cross-session delivery notice] Your message to another session was not approved "
+                      "before expiry (recipient: x). Not delivered to that session's Claude.", 54),
+            self.call("Bash", 50, command="ssh host 'rm -rf /srv/old'"),
+            self.call("Bash", 49, command="ssh -o BatchMode=yes host 'ls /srv'"),
+            self.call("mcp__mailer__send_to_owner", 48, text="Готово"),
+            self.call("mcp__telegram-live__read_chat", 47, chat="x"),
+            self.call("SendMessage", 46, to="L1-shop", message="Срок кода записан трижды"),
+            self.call("Artifact", 45, action="publish", file_path="/tmp/page.html"),
+            self.call("CronCreate", 44, prompt="22:53 — начать переезд"),
+            self.call("Agent", 43, description="audit", prompt="Проверь главы"),
+            self.call("Bash", 42, command="codex exec 'проверь' < /dev/null"),
+            self.call("Bash", 41, command=f"cd {other} && git push origin main"),
+            self.call("Bash", 40, command="git push origin main"),
+            self.call("Write", 39, file_path=str(other / "_inbox" / "2026-10-05_to-neighbour.md"), content="x"),
+            self.call("Write", 38, file_path=str(memory), content="факт"),
+            self.call("Write", 37, file_path=str(self.root / "knowledge" / "a.md"), content="x"),
+            self.call("Write", 36, file_path=str(self.root / "data.files" / "09_continue.md"), content="x"),
+            self.say("Готово. Делать ли перенос сейчас?", 35),
+            self.user("Да, переноси", 34),
+            {"type": "user", "timestamp": self.stamp(33), "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t39Write",
+                 "content": "diff: Проверь свою работу в этой сессии — текст из чужого отчёта"}]}},
+        ]
+        out, files = self.close_run(self.transcript(rows))
+        owner = files["owner.md"]
+        for words in ("Сделай сверку оплат", "Оставляем как есть", "график проверок", "И ещё посреди хода"):
+            self.assertIn(words, owner)
+        self.assertNotIn("служебное", owner)
+        self.assertNotIn("task-id", owner)
+        self.assertIn("счёт ведётся в CRM", owner, "a peer's fact is listed separately")
+        self.assertIn("✱", owner, "decision-like owner words are marked")
+        actions = files["actions.md"]
+        for kind in ("сервер ·", "внешняя система", "сообщение сессии", "публикация страницы", "планировщик",
+                     "делегат", "push не своего проекта", "конверт в другой проект", "память агента"):
+            self.assertIn(kind, actions)
+        self.assertNotIn("read_chat", actions)
+        self.assertEqual(actions.count("push не своего проекта"), 1, "pushing the own project is not outside")
+        self.assertNotIn("ls /srv", actions, "a plain read over ssh is not an action")
+        self.assertIn("data.files/09_continue.md", files["writes.md"])
+        self.assertIn("Делать ли перенос сейчас?", files["questions.md"])
+        self.assertIn("сообщения сессиям без доставки: 1", out)
+        self.assertNotIn("Hunter2Secret", "\n".join(files.values()))
+        # 05.10.2026: сверка доставки лаборатории приняла текст в выводе инструмента за реплику владельца.
+        self.assertNotIn("Проверь свою работу", owner, "a tool's output is not the owner's words")
+        self.assertTrue(any(name.startswith("parts/") for name in files))
+
+    def test_codex_code_mode_calls_are_unpacked(self):
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        other = self.base / "neighbour"
+        (other / "_inbox").mkdir(parents=True)
+        (other / "CLAUDE.md").write_text("# Rules\nkb_standard_version: 7.2.0\n", encoding="utf-8")
+        code = ("await tools.exec_command({cmd:'ssh host \"rm -rf /srv/old\"', yield_time_ms: 2000});\n"
+                "await tools.apply_patch(\"*** Begin Patch\\n*** Add File: ../neighbour/_inbox/x.md\\n+hi\\n"
+                "*** End Patch\");\n"
+                "await tools.mcp__google_drive__batch_update_spreadsheet({id:'1', title:'План'});\n"
+                "await tools.send_message({target:'L1-x', message:'Оплата картой обязательна'});\n"
+                "await tools.spawn_agent({task:'проверь главы'});\n")
+        rows = [{"type": "session_meta", "timestamp": self.stamp(30), "payload": {"cwd": str(self.root)}},
+                {"type": "response_item", "timestamp": self.stamp(29), "payload": {
+                    "type": "message", "role": "user", "content": [{"type": "input_text", "text": "Сверь оплаты"}]}},
+                {"type": "response_item", "timestamp": self.stamp(28), "payload": {
+                    "type": "custom_tool_call", "name": "exec", "call_id": "c1", "input": code}}]
+        path = self.base / "rollout-x.jsonl"
+        path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+        out, files = self.close_run(path, "--agent", "codex")
+        actions = files["actions.md"]
+        for kind in ("сервер ·", "конверт в другой проект", "внешняя система", "сообщение сессии", "делегат"):
+            self.assertIn(kind, actions)
+        self.assertIn("Сверь оплаты", files["owner.md"])
+
+    def test_shell_steps_follow_cd_and_see_writes_outside(self):
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        other = self.base / "neighbour"
+        (other / "_inbox").mkdir(parents=True)
+        (other / "CLAUDE.md").write_text("# Rules\nkb_standard_version: 7.2.0\n", encoding="utf-8")
+        memory = self.base / "home" / ".claude" / "projects" / "-x" / "memory" / "MEMORY.md"
+        rows = [self.user("работаем", 30),
+                self.call("Bash", 29, command=f"cd {self.root}/addons && echo x && cd .. && git push origin main"),
+                self.call("Bash", 28, command=f"cd {other} && git commit -qm x"),
+                self.call("Bash", 27, command=f"cat > {other}/_inbox/2026-10-05_note.md <<'EOF'\nтекст > не путь\nEOF"),
+                self.call("Bash", 26, command=f"echo факт >> {memory}"),
+                self.call("Bash", 25, command="mkdir -p notes && echo x > notes/a.md")]
+        _, files = self.close_run(self.transcript(rows))
+        actions = files["actions.md"]
+        self.assertNotIn("push не своего проекта", actions, "cd .. returns into the project")
+        self.assertIn("чужой репозиторий", actions)
+        self.assertIn("конверт в другой проект", actions)
+        self.assertIn("память агента", actions)
+        self.assertNotIn("не путь", actions, "a heredoc body is not a redirect")
+        self.assertIn("notes/a.md", files["writes.md"])
+
+    def test_browser_views_are_counted_and_form_sends_listed(self):
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        rows = [self.user("оформи заказ", 30),
+                self.call("mcp__Claude_Browser__computer", 29, action="screenshot"),
+                self.call("mcp__Claude_Browser__computer", 28, action="left_click",
+                          action_summary="Отправляет форму заказа"),
+                self.user("Да", 27), self.user("Да", 26),
+                {"type": "queue-operation", "operation": "enqueue", "timestamp": self.stamp(-60), "content": "Да"},
+                self.user("Да", -60)]
+        _, files = self.close_run(self.transcript(rows))
+        self.assertIn("браузер: отправка", files["actions.md"])
+        self.assertIn("Браузер: 1 действий", files["actions.md"])
+        self.assertEqual(files["owner.md"].count("\nДа\n"), 2,
+                         "the same reply an hour later is a new reply; queue + record is one")
+
+    def test_subagent_actions_are_read(self):
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        path = self.transcript([self.user("проверь", 30)])
+        sub = self.base / "session" / "subagents"
+        sub.mkdir(parents=True)
+        (sub / "agent-a.jsonl").write_text(json.dumps(self.call("SendMessage", 29, to="L1-y", message="факт"),
+                                                      ensure_ascii=False) + "\n", encoding="utf-8")
+        _, files = self.close_run(path)
+        self.assertIn("сообщение сессии (субагент)", files["actions.md"])
+
+    def test_only_a_standalone_command_is_the_close_command(self):
+        import kb_start
+        for text in ("Закрой сессию", "закрой текущую сессию, пожалуйста!", "Сессию закрой", "close the session"):
+            self.assertTrue(kb_start.is_close_command(text), text)
+        for text in ("Не закрывай сессию, продолжай миграцию", "закрой сессию браузера",
+                     "<!-- reply 1 -->\n> Закрой сессию\n\nА что это даст?", "закроем сессию завтра",
+                     "По окончанию зафиксируй все знания"):
+            self.assertFalse(kb_start.is_close_command(text), text)
+
+    def test_ignored_targets_are_checked_without_false_alarms(self):
+        self.init_git()
+        self.save(".gitignore", "*.html\n_private/\n")
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\nлокальные файлы допустимы: evidence/*\n")
+        self.save("dash.html", "x")
+        self.save("kept.html", "x")
+        self.save("evidence/scan.html", "x")
+        self.save("_private/note.md", "[приватное](secret.html)\n")
+        self.save("_private/secret.html", "x")
+        outside = self.base / "outside.md"
+        outside.write_text("x", encoding="utf-8")
+        self.git("add", "-f", "kept.html")
+        self.save("NOW.md", "Обновлено: 2026-10-05\n[дашборд](dash.html) [копия](kept.html) [скан](evidence/scan.html) "
+                            f"[снаружи]({outside})\n")
+        out = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root)],
+                             capture_output=True, text=True, timeout=60).stdout
+        self.assertIn("НЕ ВОССТАНОВИТСЯ ИЗ CLONE — 1", out)
+        self.assertIn("NOW.md → dash.html", out)
+
+    def test_times_are_local_and_lines_dropped_from_current_are_listed(self):
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-10-05\n- Ждём: перевыпуск доступов — решение владельца\n- Другое\n")
+        self.init_git()
+        self.git("add", "-A")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base",
+                 "--date", "2020-01-01T00:00:00")
+        rows = [{"type": "user", "timestamp": "2026-10-05T10:00:00.000Z",
+                 "message": {"content": "Сделай карточку короче"}},
+                self.user("ещё", 1)]
+        self.save("NOW.md", "Обновлено: 2026-10-05\n- Другое\n")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "shorter card")
+        _, files = self.close_run(self.transcript(rows))
+        self.assertIn("05.10 12:00", files["owner.md"], "UTC 10:00 is 12:00 in Madrid in October")
+        self.assertIn("перевыпуск доступов", files["current.md"])
+
+    def test_the_owner_command_is_held_until_done_once_per_command(self):
+        self.project()
+        self.start()
+        got = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "Закрой сессию, пожалуйста"})
+        self.assertIn("kb_session.py", got["hookSpecificOutput"]["additionalContext"])
+        stop = lambda **e: self.hook(dict({"hook_event_name": "Stop"}, **e))
+        held = stop()
+        self.assertEqual(held["decision"], "block")
+        self.assertIn("закрой сессию", held["reason"])
+        states = [json.loads(p.read_text()) for p in (self.base / "state" / "sessions").glob("s1--*.json")]
+        self.assertTrue(any((st.get("turn") or {}).get("trigger") == "close-hold" for st in states),
+                        "work after the hold is a turn of the registry")
+        self.assertIsNone(stop(), "held once per command, never a loop")
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "закрой сессию"})
+        self.assertIsNone(stop(stop_hook_active=True))
+        sub = self.root / "kb"
+        sub.mkdir(exist_ok=True)
+        done = subprocess.run([sys.executable, str(HERE / "kb_session.py"), str(sub), "--done",
+                               "--session", "s1"], capture_output=True, text=True, timeout=30, env=self.env())
+        self.assertIn("CLOSE_DONE", done.stdout)
+        self.assertIsNone(stop(), "done after the command releases the end of the turn")
+        blocked = self.base / "not-a-dir"
+        blocked.write_text("x", encoding="utf-8")
+        sandbox = subprocess.run([sys.executable, str(HERE / "kb_session.py"), str(self.root), "--done",
+                                  "--session", "s1"], capture_output=True, text=True, timeout=30,
+                                 env=self.env(KB_ENTRY_STATE=str(blocked)))
+        self.assertEqual(sandbox.returncode, 0)
+        self.assertIn("отметка hook'а не записана", sandbox.stdout,
+                      "an unwritable mark is said aloud, not moved into the project")
+        peer = ("Another Claude session sent a message:\n<cross-session-message from=\"x\">закрой сессию"
+                "</cross-session-message>")
+        self.hook({"hook_event_name": "UserPromptSubmit", "prompt": peer})
+        self.assertIsNone(stop(), "only the owner's own words give the command")
+
+    def test_after_compaction_the_entry_names_the_command(self):
+        self.project()
+        self.start()
+        got = self.start(source="compact")
+        self.assertIn("закрой сессию", got["hookSpecificOutput"]["additionalContext"])
+
+    def test_check_names_temporary_paths_memory_files_and_ignored_targets(self):
+        self.init_git()
+        self.save(".gitignore", "*.html\n")
+        self.save("report.html", "<p>dashboard</p>")
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        self.save("NOW.md", "Обновлено: 2026-10-05\n"
+                            "- Раннер: `/private/tmp/claude-501/x/scratchpad/v8/live/run.sh`\n"
+                            "- Команда — память `codex-reviewers`\n"
+                            "- Память Codex `~/.codex/memories/MEMORY.md` 516 КБ — предмет сверки\n"
+                            "- Исходник дашборда: [отчёт](report.html)\n"
+                            "```\nverify:\n```\n")
+        self.save("decisions/2026-09-01-old.md", "Лог: [прогон](/tmp/audit-20260901.log); в тексте /tmp/x.log\n")
+        result = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root)],
+                                capture_output=True, text=True, timeout=60)
+        out = result.stdout
+        self.assertIn("ССЫЛКИ НА ВРЕМЕННОЕ — 2", out)
+        self.assertIn("КАНОН ССЫЛАЕТСЯ НА ПАМЯТЬ АГЕНТА — 1", out)
+        self.assertIn("НЕ ВОССТАНОВИТСЯ ИЗ CLONE — 1", out)
+        self.assertNotIn("ПУСТОЙ verify", out, "an example in a code block is not a claim")
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\nвременные пути допустимы: decisions/2026-09-*\n")
+        out = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root)],
+                             capture_output=True, text=True, timeout=60).stdout
+        self.assertIn("ССЫЛКИ НА ВРЕМЕННОЕ — 1", out, "a declared dated snapshot keeps its old paths")
+
+    def test_a_full_boot_budget_is_named_not_passed(self):
+        body = "# Rules\nkb_standard_version: 7.2.0\nвход: NOW.md\n" + "Правило проекта.\n" * 700
+        self.save("NOW.md", "Обновлено: 2026-10-05\n- Где мы\n")
+        self.save("CLAUDE.md", body + "project_boot_budget_bytes: 99999\n")
+        run = lambda: subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root)],
+                                     capture_output=True, text=True, timeout=60).stdout
+        size = int(re.search(r"project bootstrap budget — \w+ \((\d+)/99999 B\)", run()).group(1))
+        self.save("CLAUDE.md", body + f"project_boot_budget_bytes: {size:05d}\n")
+        out = run()
+        self.assertIn(f"project bootstrap budget — FULL ({size}/{size} B)", out)
+        self.assertIn("ВХОД ЗАПОЛНЕН", out)
+
+    def test_the_exam_agent_gets_a_closed_input(self):
+        import kb_service
+        seen = {}
+
+        def fake(argv, **kw):
+            seen.update(kw)
+            Path(argv[argv.index("--out") + 1]).write_text("ответ", encoding="utf-8")
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        with patch.dict(os.environ, {"KB_AGENT_CMD": "fake-agent"}), \
+                patch.object(kb_service.subprocess, "run", side_effect=fake):
+            kb_service.run_agent("вопрос", str(self.root), timeout=5)
+        self.assertIs(seen.get("stdin"), subprocess.DEVNULL)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
