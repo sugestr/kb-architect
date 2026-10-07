@@ -1,4 +1,4 @@
 interface:
   display_name: "KB Architect"
-  short_description: "Lightweight KB, project skills, agent vaults"
+  short_description: "Project knowledge base: no recap, nothing lost"
   default_prompt: "Use $kb-architect as a thin router: read only the procedure triggered by this task, preserve project role and action authority gates, and keep one canonical checkout."

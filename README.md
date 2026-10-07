@@ -2,361 +2,64 @@
 
 [Русский](#русский) · [English](#english)
 
-**Beta toolkit for durable Claude and Codex projects: one knowledge canon,
-recoverable professional roles, and checks that make confident contradictions
-visible.**
+**Навык для Claude Code и Codex, который ведёт базу знаний проекта: новый чат продолжает
+работу без пересказа, решения и факты не теряются, а база не обманывает уверенным тоном.**
 
-**Бета-инструментарий для долгих проектов Claude и Codex: один канон знаний,
-восстанавливаемые профессиональные роли и проверки, которые делают уверенные
-противоречия видимыми.**
+**A skill for Claude Code and Codex that keeps a project's knowledge base: a new chat picks up
+the work without a recap, decisions and facts are not lost, and the base does not mislead
+with confident but stale answers.**
 
-> Agent Skill · one-page versioned core · optional reference library · tested
-> maintenance tools · Russian contract and references · bilingual overview · MIT
-
----
-
-## English
-
-`kb-architect` is a lightweight operating contract for AI-assisted projects that
-must survive new chats, new agents and changing facts. It does not add another
-memory database. It tells the project which files are authoritative, how current
-claims expire, how contradictions are handled, and what a fresh session must verify
-before it confidently acts on old knowledge.
-
-Try it when a project already has useful files but repeatedly loses context, keeps
-two versions of “what is current”, or moves work between Claude and Codex. A tiny
-one-off project probably does not need it.
-
-### Send this to a beta tester
-
-Give them the [latest release](https://github.com/sugestr/kb-architect/releases/latest)
-and this five-step route:
-
-1. Install the skill and open a real, ongoing project with its existing files.
-2. Paste the starter prompt below. The first pass is explanation and inspection, not a blind rewrite.
-3. Continue two or three normal project tasks in separate chats.
-4. Run the fresh-chat check below.
-5. Submit one [beta report](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md), including “no useful difference” if that is what happened.
-
-Report routing is deterministic: an owner-local project keeps its declared private
-inbox even when the current runtime cannot write there (`BLOCKED_LOCAL`, never a
-public fallback); an external/remote beta project submits an anonymised GitHub issue.
-`scripts/kb_report.py` previews and executes that route.
-
-Starter prompt:
-
-```text
-I am beta-testing kb-architect on this project. Explain in plain language why it may
-help here, what it will change, and what it will leave untouched. Then inspect the
-project read-only and show me its competing sources of current state, stale claims,
-and a minimal adoption plan. Do not change files until I approve the plan. If this
-project makes professional judgements, do not invent expertise: tell me which
-project-owned professional roles I have provided and which decisions remain outside
-their authority.
-```
-
-Fresh-chat check:
-
-```text
-Without a recap from me, use the project canon to state what is current, what is
-uncertain, what is stale, and what requires a professional role. Name the exact
-sources you relied on and stop on contradictions.
-```
-
-### What it owns — and what it does not
-
-| Layer | Responsibility |
-|---|---|
-| `kb-architect` | Knowledge lifecycle: one canon per class of state, freshness, provenance, contradictions, handoffs and maintenance checks. |
-| Project knowledge base | Any project-specific knowledge: facts, evidence, law, diagnoses, events, hypotheses, plans, current state and external-system instructions. The project chooses its own structure. |
-| Project roles | Local Agent Skills that define how an agent uses knowledge: professional method, source hierarchy, evidence threshold, stop conditions and prohibited actions. |
-| Deterministic tools | Repeatable transformations and mechanical validation. |
-
-The default durable-project composition is `kb-architect` as knowledge and
-communication infrastructure plus one or more project-owned professional roles.
-A project that makes material domain judgements must declare role coverage; work
-without a matching required role stops. A pure storage/transport project may instead
-declare `not-applicable` with a reason, and a restructuring project may declare
-`transitioning` with covered work and open gaps.
-
-Roles are knowledge artifacts and use the same canon, version, cost, change and
-recovery rules as the rest of the project; there is no second role-management
-framework. `kb-architect` adds only a visible role manifest and knowledge-route
-index, verifies that Claude and Codex discover the same Git-tracked source, and tests
-recovery and authority boundaries. It
-does **not** decide which professions your project needs, invent professional
-expertise, or replace primary sources and qualified review. Multiple matching roles
-load together; their conflict is preserved and escalated. One skill may implement
-several named roles only when they genuinely share triggers, source hierarchy,
-evidence threshold and stop conditions. Portal recipes, laws and project facts stay
-in the indexed knowledge base, not in the role.
-
-Role readiness distinguishes structural checks, unforced discovery, behavioural
-cases and owner acceptance in one compact manifest. Accepted unchanged components
-are reused; one end-to-end static budget includes the registry and index. A candidate
-keeps the pre-change Git commit for rollback. Same-name active runtime copies are
-inventoried; shared roles use exact pins; all-roles cost is a separate upper scenario.
-
-The concise [project-role guide](plugins/kb-architect/skills/kb-architect/references/project-roles.md)
-covers creation, growth, splitting, cost checks, migration and rare pinned reuse.
-
-Material project conclusions need traceable evidence and coverage. An accepted
-query/ledger can supply it; otherwise the lexical fallback records support/challenge
-searches and candidate review. The project role owns professional criteria.
-
-### First beta run
-
-1. Install the stable release for the platform you will test.
-2. Start a fresh chat and say: `Explain what kb-architect would change in this project and what it would leave untouched.`
-3. In an existing repository, say: `Adopt this knowledge base. Inspect first and show the proposed canon, conflicts and migration plan before changing files.`
-4. If the project makes professional judgements, ask: `Inventory the project roles, separate role behaviour from knowledge and tools, and check recovery for Claude and Codex. Do not migrate until I approve the report.`
-5. Use the project across several real sessions, then ask a fresh session to check for stale state and contradictions.
-
-The useful beta result is not “installation succeeded”. It is an observed behaviour:
-the agent found the right canon, stopped on a contradiction, missed a known fact,
-invented authority, or could not recover a role in a fresh clone. Please report the
-exact prompt, version, expected behaviour and observed behaviour in a
-[GitHub issue](https://github.com/sugestr/kb-architect/issues). Remove secrets and
-personal data first.
-
-### Honest limits
-
-- This is a research prototype with an acceptance suite, not a claim of universal maturity.
-- The built-in lookup is lexical. An empty result is **not** proof that knowledge is absent.
-- `KNOWLEDGE_INDEX.json` improves discovery but does not impose a universal knowledge taxonomy or become a second fact canon.
-- An evidence receipt proves that the declared searches and candidate review ran; it does not make lexical matching a professional judgement.
-- Measured retrieval misses can justify a semantic/vector index as a derived search layer; it finds candidates, but source files remain the canon.
-- It does not supply professional advice, credentials, runtime access or permission for external actions.
-- Cloud-ready project files do not prove that a local MCP, account or secret exists in a cloud runtime.
-- The mandatory core is one versioned document behind the compact entry; optional modules are adopted only for a demonstrated project need. A core revision is a project migration, not a silent install-side change.
-
-### Installation
-
-**Claude Code plugin marketplace**
-
-```text
-/plugin marketplace add sugestr/kb-architect
-/plugin install kb-architect@sugestr
-```
-
-Update later with `/plugin marketplace update sugestr`.
-
-**Codex**
-
-Download a stable public release and copy
-`plugins/kb-architect/skills/kb-architect` as a managed directory to
-`~/.codex/skills/kb-architect`. Do not symlink a working installation to a
-development checkout. Future updates are handled by:
-
-```bash
-python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
-```
-
-When automatic updates are accepted, a fresh task with a valid receipt and local
-parity performs one cheap remote-HEAD check after the first safe source result. Matching
-HEAD avoids a clone, package reread and tests; missing parity enters the full gate,
-and a receipt alone never claims `CURRENT`. After
-`INSTALLED`, it reads the installed entry and current route. A long task updates
-only at a safe boundary and does not pretend old prompt instructions disappeared.
-Installing files does not raise a project's marker. For v6+, migration is complete
-only when `KB_RELEASE_APPLICATION.json` preserves the pre-change source snapshot,
-every release outcome and post-results owner acceptance.
-
-Inside an existing project, the natural command `Update the knowledge-base skill`
-is enough: it means update stable and continue reversible local migration work to
-the next real owner gate, not stop after another audit. Explicit `read-only` still
-means no writes; final acceptance, private credentials/runtimes and push remain
-separate permissions.
-
-**Cowork or a regular chat**
-
-Download `kb-architect.skill` from the
-[latest release](https://github.com/sugestr/kb-architect/releases/latest), attach it
-to the chat and install it from the file card.
+> Agent Skill · обычные файлы в Git, без сервера и базы данных · Claude Code и Codex ·
+> бета, используется в живых проектах · MIT
 
 ---
 
 ## Русский
 
-## Для чего это
+### Что это
 
-Понедельник: ты объясняешь новому чату, что за проект, что уже решено и чего ждём.
-К вечеру агент разобрался. Во вторник открывается новый чат — и всё начинается
-сначала.
+`kb-architect` — набор правил и небольших скриптов, который превращает файлы вашего проекта
+в базу знаний с понятным устройством: где лежит текущее состояние, где решения, где
+источники, куда записывать новое и как проверять, что база не устарела.
 
-Через месяц появляется папка с заметками. В двух файлах уже разные сроки, два списка
-«что дальше» живут независимо, а самый свежий по дате файл пересказывает состояние
-чужой системы трёхмесячной давности. Агент открывает один из вариантов и уверенно
-отвечает. Проблема уже не в нехватке памяти: **база выглядит надёжной и врёт**.
+Всё хранится в обычных файлах репозитория проекта. Отдельный сервер, векторная база или
+платный сервис памяти не нужны. Правила одинаково работают для Claude Code и Codex, поэтому
+оба агента ведут один проект, а не две его копии.
 
-`kb-architect` добавляет проекту лёгкий эксплуатационный контракт:
+### Какие проблемы решает
 
-- один канонический источник для каждого класса текущего состояния;
-- срок годности утверждения отдельно от даты правки файла;
-- различение источника, наблюдения, факта, интерпретации и решения;
-- исполняемый evidence-gate для существенных выводов: подтверждения, ограничения и честный `UNKNOWN`;
-- явную реакцию на противоречие вместо случайного выбора одной версии;
-- контрольные вопросы, проверку просрочки и проверку целостности;
-- передачу работы между сессиями, Claude и Codex без двух копий проекта;
-- проверяемое восстановление project-owned профессиональных skills и внешних runtime-возможностей.
-
-## Что переслать другу-тестеру
-
-Дай ему ссылку на [последний выпуск](https://github.com/sugestr/kb-architect/releases/latest)
-и короткий маршрут:
-
-1. Установить skill и открыть не пустой пример, а свой живой проект с уже существующими файлами.
-2. Вставить стартовый запрос ниже. Первый проход только объясняет и осматривает — ничего не перестраивает вслепую.
-3. Выполнить две-три обычные задачи проекта в разных чатах.
-4. Открыть ещё один свежий чат и выполнить контрольный запрос.
-5. Заполнить один [beta-отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md), даже если результат — «заметной пользы нет».
-
-Куда отправлять отчёт, запоминать не нужно: локальный проект сохраняет объявленный
-private inbox даже при отсутствии текущего права записи (`BLOCKED_LOCAL`, не public
-fallback); чужой/удалённый бета-проект отправляет обезличенный GitHub issue. Маршрут
-показывает и выполняет `scripts/kb_report.py`.
-
-Стартовый запрос:
-
-```text
-Я тестирую kb-architect на этом проекте. Объясни простыми словами, зачем он может
-быть здесь полезен, что изменит и что оставит как есть. Затем проведи read-only
-осмотр: покажи конкурирующие источники текущего состояния, протухшие утверждения
-и минимальный план подключения. Не меняй файлы, пока я не одобрю план. Если проект
-делает профессиональные выводы, не выдумывай экспертизу: назови уже предоставленные
-project-owned профессиональные роли и решения, которые остаются вне их полномочий.
-```
-
-Контрольный запрос в свежем чате:
-
-```text
-Без пересказа с моей стороны используй канон проекта и скажи: что сейчас является
-фактом, что не доказано, что протухло и где нужна профессиональная роль. Назови
-точные источники и остановись, если они противоречат друг другу.
-```
-
-Общие обязанности и маршруты находятся в `SKILL.md`. Справочник и
-инструменты подключаются только тогда, когда проект встретил соответствующую
-проблему. Векторная база, отдельный сервер и proprietary memory service не нужны.
-
-## Важная граница: база знаний — не профессия
-
-Для практического проекта полезно разделить четыре слоя:
-
-| Слой | За что отвечает |
+| Проблема | Что делает kb-architect |
 |---|---|
-| `kb-architect` | Как знания хранятся, стареют, проверяются, конфликтуют и передаются. |
-| KB проекта | Любые знания проекта: факты, доказательства, законы, диагнозы, события, гипотезы, планы, текущее состояние и инструкции внешних систем. Структуру выбирает сам проект. |
-| Проектные роли | Локальные selector-ы задач плюс Agent Skills о том, как агент использует знания: метод, иерархия источников, порог доказательности, остановки и запреты. Несколько selector-ов могут делить один общий method skill. |
-| Скрипты и tools | Воспроизводимые преобразования и механические проверки. |
+| Каждый новый чат приходится вводить в курс дела заново | В начале сессии среда сама собирает «вход»: правила проекта, текущее состояние и нужную роль. Пока агент его не прочитал, менять файлы он не может |
+| Решения и находки остаются в чате, в рабочих заметках или в памяти агента | Правило «записывай в том же шаге» и команда **«закрой сессию»**: агент восстанавливает всю сессию по журналу и вносит пропущенное |
+| База уверенно отвечает устаревшим: два «текущих» файла, прошедшие сроки, противоречия | Один источник текущего состояния, сроки годности у утверждений, проверка целостности; на противоречии агент останавливается, а не выбирает удобный файл |
+| Агент работает «вообще», без профессионального метода | Роли проекта (юрист, бухгалтер, разработчик и другие) подключаются по задаче; скилл не выдумывает экспертизу, роли пишет и принимает владелец |
+| Несколько сессий и агентов мешают друг другу | Один канон, правила передачи работы, сообщения между проектами с подтверждением доставки |
+| База со временем зарастает | Сам подскажет «пора обслужить базу» и по команде **«обслужи базу»** разнесёт накопленное |
 
-Типовая композиция длительного проекта: `kb-architect` как инфраструктура знания и
-коммуникации плюс одна или несколько project-owned профессиональных ролей. Если
-проект делает существенные предметные выводы, покрытие ролями обязательно; вывод без
-совпавшей required-роли блокируется. Чистое хранилище/транспорт может явно объявить
-`not-applicable` с причиной, перестраиваемый проект — `transitioning` с покрытой
-работой и открытыми пробелами.
+### Как начать
 
-Это не персонажи в промпте. Role selector выбирает принадлежащий проекту и проверяемый
-локальный method skill о поведении агента. Оба являются элементами знания проекта и
-обслуживаются теми же правилами канона, version, стоимости, изменения и recovery;
-отдельная система
-управления ролями не создаётся. Специальная дельта — видимый `PROJECT_ROLES.json`,
-project-specific `KNOWLEDGE_INDEX.json`, один Git-канон и discovery для Claude/Codex.
+1. **Установите** скилл (см. [Установка](#установка)).
+2. **Откройте свой живой проект** и скажите одно из двух:
+   - если файлы уже есть — `Присоедини kb-architect к этому проекту. Сначала только осмотр и план, ничего не меняй без моего согласия.`
+   - если проект новый — `Заведи базу знаний этого проекта.`
 
-Но он **не выбирает профессии за владельца, не сочиняет экспертизу и не заменяет
-первичные источники или квалифицированную проверку**. Законы, факты дела, диагнозы и
-рецепты госпорталов остаются индексируемым знанием, а не текстом роли. Все совпавшие
-роли загружаются вместе; конфликт сохраняется и эскалируется. Один method skill
-обслуживает несколько selector-ов только при общей иерархии источников, evidence
-threshold, stop-gates и quality owner; иначе skills разделяются.
+   Первый проход только осматривает и предлагает план. Файлы меняются после вашего «да», с
+   резервной копией в Git.
+3. **Дальше работайте как обычно.** Команды запоминать не нужно; несколько коротких фраз
+   помогают в нужный момент:
 
-Готовность роли разделяет structural validity, unforced fresh-session discovery,
-synthetic-first behavior и post-results owner acceptance. Квитанция связана с named
-quality review, hashes дерева/manifest/index и раздельными static cost baselines.
-Shadow не становится каноном раньше времени; одноимённые active runtime copies видны;
-заимствованная роль грузится из exact pin, а all-roles scenario показывает общую цену.
-
-Короткое руководство [«Проектные роли»](plugins/kb-architect/skills/kb-architect/references/project-roles.md)
-объясняет создание, рост, разделение, стоимость, миграцию и редкое pinned-заимствование.
-
-Для существенного вывода из KB ядро даёт двухфазный evidence-gate: оно записывает
-поиск подтверждений и возражений, остаётся красным до разбора каждого кандидата и
-закрывается только как `supported`, `qualified` или `unknown`. Какие темы искать и
-какой порог доказательности достаточен, по-прежнему определяет project role.
-
-## Как попробовать на реальном проекте
-
-После установки открой свежий чат и сначала попроси:
-
-```text
-Объясни, что kb-architect изменит в этом проекте, а что оставит как есть.
-```
-
-Если файлы уже существуют:
-
-```text
-Присоедини kb-architect к этому проекту. Сначала проведи read-only осмотр и покажи:
-текущий канон, конкурирующие источники, риски и план. Ничего не переноси без согласования.
-```
-
-Для нового проекта:
-
-```text
-Заведи базу знаний этого проекта. Сначала уточни читателей, крупные части проекта
-и владельцев записи; структуру предложи под ответы, а не по универсальному шаблону.
-```
-
-Если у проекта есть одна или несколько профессиональных ролей:
-
-```text
-Проведи read-only опись ролей проекта. Отдели правила поведения роли от знаний и
-tools, покажи knowledge routes, стоимость типовых загрузок и вопросы ко мне. Ничего
-не мигрируй до моего ответа.
-```
-
-Потом работай как обычно. Команды запоминать не нужно: короткий `SKILL.md`
-маршрутизирует агента только к нужной процедуре. Полезные контрольные запросы:
-
-| Сказать | Что должно произойти |
+| Сказать | Что произойдёт |
 |---|---|
-| «что просрочено» | агент назовёт только найденные просрочки и точный охват проверки; |
-| «цела ли база» | проверит ссылки, сроки, незаполненные доказательства и объём входа; |
-| «проверь, не врёт ли база» | прогонит реальные контрольные вопросы в чистом контексте; |
-| «перестрой базу» | сначала покажет обратимый план с Git-бэкапом; |
-| «подключи Codex к проекту» | создаст один канон правил и отдельные точки входа, а не копию базы; |
-| «сделай хендовер» | передаст наблюдение на проверку, а не объявит его автоматически принятым фактом. |
+| «закрой сессию» | агент сверит всю сессию с базой, внесёт пропущенное, закоммитит и коротко отчитается |
+| «обслужи базу» | разнесёт накопившиеся записи, обновит текущее состояние, проверит базу контрольными вопросами |
+| «обновись» | подтянет проект до новой версии скилла |
+| «что просрочено» | назовёт прошедшие сроки и устаревшие утверждения |
+| «цела ли база» | проверит ссылки, сроки, незаполненные доказательства и объём входа |
+| «перестрой базу» | сначала покажет обратимый план с резервной копией |
+| «сделай хендовер» | подготовит передачу работы другой сессии или агенту |
 
-## Что именно тестировать в бете
-
-Не ограничивайся зелёной установкой. Она доказывает только доставку файлов.
-Хороший бета-тест даёт наблюдение из реальной работы:
-
-1. Нашёл ли новый чат правильный канон без пересказа всей истории?
-2. Заметил ли он заранее подготовленное противоречие или уверенно выбрал удобный файл?
-3. Отличил ли «отправлено» от «принято», «счёт создан» от «оплачено», а дату правки от свежести знания?
-4. Сохранил ли профессиональную роль, её source ladder и stop conditions в fresh clone и на обеих платформах?
-5. Нашёл ли агент существующее знание через индекс без подсказки владельца?
-6. Назвала ли проверка точный охват или выдала широкое «чисто» после неполного запуска?
-7. Стала ли работа заметно дороже без измеримой пользы?
-
-Если что-то сломалось, заполни
-[beta-отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md) и приложи версию, обезличенный
-контекст, точный запрос, ожидаемое и фактическое поведение. Наблюдение ценнее готового
-предложения по исправлению: стандарту сейчас нужны не новые идеи, а воспроизводимые
-факты эксплуатации.
-
-## Честные ограничения
-
-- Это исследовательский прототип с приёмочным контуром, а не объявленный универсальный стандарт.
-- Встроенный `kb_lookup.py` — лексический поиск. Пустая выдача **не доказывает**, что знания нет.
-- `KNOWLEDGE_INDEX.json` улучшает обнаружение, но не навязывает проектам единую классификацию и не становится вторым каноном фактов.
-- Semantic/vector retrieval можно добавить как производный индекс после измеренных промахов; ответ всё равно проверяется в исходном файле, а индекс не становится вторым каноном.
-- Skill не даёт профессиональный совет, credential, доступ к аккаунту или разрешение на внешнее действие.
-- Git не переносит local MCP, Keychain и ignored-секреты в облако. Каждая runtime-возможность принимается отдельно по аккаунту, scope и безопасной пробе.
-- На маленькой одноразовой папке накладные расходы будут выше пользы.
-
-## Установка
+### Установка
 
 **Claude Code — через marketplace плагина:**
 
@@ -367,70 +70,114 @@ tools, покажи knowledge routes, стоимость типовых загр
 
 Обновление: `/plugin marketplace update sugestr`.
 
-**Codex:** скачай стабильный публичный выпуск и скопируй каталог
-`plugins/kb-architect/skills/kb-architect` как управляемую копию в
-`~/.codex/skills/kb-architect`. Не связывай рабочую установку симлинком с
-development-checkout. Следующие обновления выполняет одна команда:
+**Codex:** скачайте [последний выпуск](https://github.com/sugestr/kb-architect/releases/latest)
+и скопируйте папку `plugins/kb-architect/skills/kb-architect` в `~/.codex/skills/kb-architect`.
+
+**Включите вход в проект — один раз на машину** (это и даёт «чат без пересказа»):
 
 ```bash
-python3 ~/.codex/skills/kb-architect/scripts/kb_update.py --public --fast --do
+python3 <папка скилла>/scripts/kb_start.py install --agent claude
+python3 <папка скилла>/scripts/kb_start.py install --agent codex
 ```
 
-Если принято автоматическое обновление, новая задача с валидной квитанцией и local
-parity после первого безопасного результата один раз дешёво проверяет remote HEAD. Совпавший HEAD
-экономит clone, повторное чтение package и tests; отсутствие parity включает полный
-gate, а одна квитанция не доказывает
-`CURRENT`. После `INSTALLED` агент читает новый entry и нужный маршрут. Длинная
-сессия обновляется только на безопасной границе и не выдаёт старый prompt за забытый.
-Установка файлов не повышает marker проекта. Для v6+ миграцию закрывает только
-`KB_RELEASE_APPLICATION.json`: source snapshot до записи, исход каждой редакции и
-post-results приёмка владельца.
+В Codex новый hook нужно один раз одобрить в настройках («Review hooks»). Файловая установка
+после этого сама проверяет обновления в начале сессии.
 
-В существующем проекте достаточно сказать: **«Обнови скилл базы знаний»**. Это
-означает обновить stable и продолжить обратимую локальную миграцию до следующего
-настоящего owner gate, а не остановиться после ещё одного аудита. Явный `read-only`
-по-прежнему запрещает запись; финальная приёмка, private credentials/runtime и push
-остаются отдельными полномочиями.
+**Обычный чат или Cowork:** скачайте `kb-architect.skill` из
+[последнего выпуска](https://github.com/sugestr/kb-architect/releases/latest), приложите к
+чату и установите с карточки файла.
 
-**Cowork или обычный чат:** скачай `kb-architect.skill` из
-[последнего выпуска](https://github.com/sugestr/kb-architect/releases/latest), приложи
-в чат и установи с карточки файла.
+Проверка: в новом чате скажите «объясни, что это за skill».
 
-Проверка установки: скажи в новом чате «объясни, что это за skill».
-
-## Что внутри
+### Что внутри
 
 ```text
 plugins/kb-architect/skills/kb-architect/
-  SKILL.md               обязательное ядро и маршруты по задачам
-  references/            процедуры и выбираемые способы работы
-  references/releases.md служебный журнал для kb_apply.py
-  assets/templates/      шаблоны новых баз: правила, NOW, журнал, вопросы и передача
-  agents/openai.yaml     интерфейс skill в Codex
-  scripts/kb_init.py     развернуть минимальную базу
-  scripts/kb_due.py      найти просроченное
-  scripts/kb_check.py    проверить целостность
-  scripts/kb_debts.py    найти работу, не дошедшую до базы (входящие, ветки, код, сроки)
-  scripts/kb_lookup.py   найти известное и закрыть evidence-gate до вывода
-  scripts/kb_skills.py   проверить project-owned профессиональные skills
-  scripts/kb_apply.py    разобрать изменения между редакциями
-  scripts/kb_update.py   безопасно обновить файловые установки
+  SKILL.md            ядро: обязательные правила и маршрут к нужной процедуре
+  references/         процедуры; агент читает только нужную под задачу
+  assets/templates/   шаблоны для новой базы
+  scripts/            проверки и служебные шаги:
+    kb_start.py         вход в проект в начале сессии
+    kb_session.py       «закрой сессию»: что сессия сделала и узнала
+    kb_service.py       «обслужи базу» и экзамен базы
+    kb_check.py         целостность: ссылки, сроки, доказательства
+    kb_debts.py         работа, не дошедшая до базы
+    kb_due.py           просроченное
+    kb_update.py        безопасное обновление установки
 ```
 
-Справочник читает агент, а не человек. Человеку достаточно этого README, короткого
-`SKILL.md` и собственного решения о том, какие профессиональные роли нужны проекту.
+Справочник читает агент. Человеку достаточно этого описания и решения, какие
+профессиональные роли нужны проекту.
 
-## Версии и лицензия
+### Честные ограничения
 
-Номер в `metadata.version` файла `SKILL.md` меняется при любой правке содержимого
-пакета. Patch означает малую совместимую починку, minor — заметное совместимое
-изменение, major — смену operating model. `metadata.minimum_project_version` не
-является второй версией: оно лишь говорит, должен ли старый проект принять текущую
-дельту. Для `7.0.11` минимальный совместимый проект — `7.0.0`. История лежит в
-`references/releases.md`.
+- Скилл не даёт профессиональных советов, доступов и разрешений на внешние действия; роли и
+  решения остаются за владельцем.
+- Поиск по базе текстовый: пустой результат не доказывает, что знания нет.
+- Для маленькой одноразовой папки накладные расходы больше пользы.
+- Это бета: правила проверяются тестами и на живых проектах автора, но не объявлены стандартом.
 
-MIT. Бери, адаптируй и проверяй на своей работе. Если сломалось — расскажи как.
+### Обратная связь
 
-<!-- В plugin.json намеренно нет второго поля version. Канон версии —
-     metadata.version в SKILL.md; две независимо обновляемые версии неизбежно
-     разошлись бы. -->
+Сломалось или пользы не видно — заполните
+[отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md): версия,
+точный запрос, что ожидали и что произошло. Уберите личные данные и пароли. История версий —
+[`references/releases.md`](plugins/kb-architect/skills/kb-architect/references/releases.md).
+
+---
+
+## English
+
+### What it is
+
+`kb-architect` is a set of rules and small scripts that turns a project's files into a
+knowledge base with a clear layout: where the current state lives, where decisions and
+sources are, where new knowledge goes, and how to check that the base is not stale. It is
+plain files in the project's Git repository — no server, no vector database. Claude Code and
+Codex follow the same rules, so both work on one project instead of two copies. The rules and
+references are written in Russian; the agent reads them, you do not have to.
+
+### Problems it solves
+
+- **Every new chat needs a recap.** At session start the environment assembles the entry —
+  project rules, current state, the matching role — and blocks edits until the agent has read it.
+- **Knowledge stays in chats, scratch notes or agent memory.** Record-as-you-go rules plus the
+  command «закрой сессию» (close the session): the agent rebuilds the whole session from its
+  journal and records what was missed.
+- **The base answers confidently with stale facts.** One source for current state, expiry
+  dates on claims, integrity checks, and a stop on contradictions.
+- **The agent works without a professional method.** Project roles (lawyer, accountant,
+  developer, …) load per task; the skill never invents expertise.
+- **Several sessions and agents get in each other's way.** One canon, handoff rules, and
+  cross-project messages with delivery receipts.
+- **The base grows cluttered.** It says when maintenance is due and runs it on «обслужи базу».
+
+### Getting started
+
+1. Install (below).
+2. In a real project say `Adopt kb-architect for this project. Inspect and propose a plan first;
+   change nothing until I approve.` — or, for a new project, `Set up the knowledge base for this
+   project.` The first pass is read-only; changes follow your approval with a Git backup.
+3. Work as usual. Short commands: «закрой сессию» (close the session), «обслужи базу» (maintain
+   the base), «обновись» (update the project to the new skill version), «что просрочено» (what
+   is overdue), «цела ли база» (integrity check).
+
+### Installation
+
+Claude Code: `/plugin marketplace add sugestr/kb-architect`, then
+`/plugin install kb-architect@sugestr`. Codex: copy `plugins/kb-architect/skills/kb-architect`
+from the [latest release](https://github.com/sugestr/kb-architect/releases/latest) to
+`~/.codex/skills/kb-architect`. Enable the session entry once per machine:
+`python3 <skill folder>/scripts/kb_start.py install --agent claude` (and `--agent codex`, then
+approve the hook in Codex). In a regular chat, attach `kb-architect.skill` from the latest release.
+
+### Limits
+
+No professional advice, credentials or permission for external actions; text search, so an
+empty result does not prove absence; overkill for a tiny one-off folder; beta.
+
+Feedback: [open a report](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md).
+MIT.
+
+<!-- plugin.json intentionally has no second version field. The version canon is
+     metadata.version in SKILL.md; two independently updated versions would drift. -->
