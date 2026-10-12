@@ -102,6 +102,23 @@ def releases_between(low, high):
     return sorted(rows, key=lambda r: ver_key(r[0]))
 
 
+TAG_ROW = re.compile(r"^\|\s*(\d+(?:\.\d+)+)\s*\|.*\|\s*([^|]*?)\s*\|\s*$", re.MULTILINE)
+
+
+def RELEASE_TAGS(low, high):
+    """(версия, краткие метки третьей колонки) выпусков в (low, high]."""
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     os.pardir, "references", "releases.md")
+    out = []
+    for v, tag in TAG_ROW.findall(kb_paths.read(p)):
+        try:
+            if ver_key(low) < ver_key(v) <= ver_key(high):
+                out.append((v, tag))
+        except ValueError:
+            continue
+    return sorted(out, key=lambda r: ver_key(r[0]))
+
+
 def release_contract_line(version):
     """Return the minimum project level carried by one release."""
     for current, text in releases_between("0", version):
@@ -524,7 +541,9 @@ def main():
     try:
         target_key = ver_key(target)
         installed_key = ver_key(inst)
-        target_line = release_contract_line(target)
+        # Цель «обновись» — полный уровень выпуска (его линия), а минимум 7.2.0 — только порог
+        # совместимости (владелец 11.10, проект стартапа: «должен требовать подъём на полный уровень»).
+        target_line = contract_line(target)
         installed_line = contract_line(declared_line)
         released_line = release_contract_line(inst)
     except (AttributeError, ValueError):
@@ -548,7 +567,7 @@ def main():
     if not proj:
         print(f"Редакция проекта не записана числом{f' (записано: «{raw}»)' if raw else ''}.")
         print(f"Установлен скилл {inst}. Впиши в «Соответствие» строку")
-        print(f"«kb_standard_version: {line_text(declared_line)}» только после короткой приёмки —")
+        print(f"«kb_standard_version: {line_text(target)}» только после короткой приёмки —")
         print("без исходной редакции сначала надо восстановить source snapshot.")
         return 1
     try:
@@ -567,27 +586,25 @@ def main():
                 return 1
             print(f"APPLICATION_RECEIPT_OK: {APPLICATION_RECEIPT} подтверждает версию проекта "
                   f"{proj}.")
-        if project_line == target_line and ver_key(proj) != target_key:
-            print(f"PROJECT_VERSION_OK: проект принят на версии {proj}; "
-                  f"номер проекта для выпуска {target} менять не нужно.")
-        elif target != inst:
-            print(f"TARGET_APPLICATION_OK: версия проекта {line_text(proj)} уже покрывает "
+        if target != inst:
+            print(f"TARGET_APPLICATION_OK: версия проекта {proj} уже покрывает "
                   f"цель {line_text(target)}.")
         else:
-            print(f"версия проекта {proj}, установлен скилл {inst} — "
-                  "номер проекта менять не нужно")
-        release_actions(root)
+            print(f"PROJECT_VERSION_OK: проект {proj} на полном уровне выпуска {inst}; "
+                  "номер проекта менять не нужно.")
+        if target == inst:
+            release_actions(root)
         return 0
 
-    # A migration applies the current minimum project level directly. Patch
-    # history is tool provenance, not a to-do list every project must replay.
+    # Переход ведёт к полному уровню выпуска: дела и возможности — из выпусков выше номера
+    # проекта. Патчи внутри принятой линии миграцию не открывают.
     target_line_name = ".".join(str(part) for part in target_line)
-    rows = []
-    for version, text in releases_between("0", target):
-        marker = MIN_PROJECT.search(text) or LINE.search(text)
-        if ((marker and contract_line(marker.group(1)) == target_line) or
-                (not marker and version == target_line_name)):
-            rows.append((version, text))
+    below_minimum = project_line < installed_line
+    # Ниже минимума проект сразу принимает минимум, не проигрывая старую историю (5.x → 7.2.0
+    # без чисток 5.4): дельта считается от минимума, а не от номера проекта.
+    floor = proj if not below_minimum else line_text(declared_line)
+    rows = [r for r in releases_between("0", target)
+            if ver_key(r[0]) >= ver_key(floor) and (below_minimum or ver_key(r[0]) > ver_key(proj))]
     traits = base_traits(root)
 
     dela = []
@@ -597,15 +614,28 @@ def main():
             value = " ".join(m.split())
             # Releases 4.17/4.21 name the marker syntax itself as `⟦Д: …⟧`.
             # The ellipsis is documentation, not an instruction to a project.
-            if value not in {"…", "..."}:
+            # «миграции нет» — отметка выпуска, не дело проекта; дело — то, что после неё.
+            value = re.sub(r"^миграции нет[;,.]?\s*", "", value, flags=re.I)
+            if value and value not in {"…", "..."}:
                 dela.append((v, value))
         for m in CHOICE.findall(text):
             value = " ".join(m.split())
             if value not in {"…", "..."}:
                 vozmozhnosti.append((v, value))
 
-    print(f"Версия проекта {line_text(proj)}, цель {target_line_name}, "
-          f"установлен скилл {inst}.\n")
+    print(f"Версия проекта {proj}, цель {target_line_name} — полный уровень выпуска; "
+          f"установлен скилл {inst}, минимум совместимости {line_text(declared_line)}.\n")
+    if below_minimum:
+        print("Проект ниже минимума совместимости: сначала блоки references/migration.md "
+              "для его уровня, затем дела ниже.\n")
+    tags = [f"{v} — {t}" for v, t in RELEASE_TAGS("0", target)
+            if ver_key(v) >= ver_key(floor) and (below_minimum or ver_key(v) > ver_key(proj))]
+    if tags:
+        print(f"ВЫПУСКИ ВЫШЕ НОМЕРА ПРОЕКТА: {len(tags)}. Сверь с проектом то, что касается "
+              "его устройства; неизменное подтверди, а не переделывай.")
+        for line in tags:
+            print(f"  · {line}")
+        print()
 
     if not dela:
         print("ОБЯЗАТЕЛЬНЫХ ДЕЛ НЕТ. Правки инструментов и текста уже работают,")
@@ -623,6 +653,10 @@ def main():
     else:
         print("НОВЫХ ВОЗМОЖНОСТЕЙ, ТРЕБУЮЩИХ РЕШЕНИЯ, НЕТ.\n")
 
+    if target == inst:
+        # Действия выпуска — требования установленной редакции; явная ранняя цель их не берёт
+        # (ревью 8.2.0: 7.2.0 → 7.3.0 получал требования 7.4).
+        release_actions(root)
     hits_all = sorted({t for t in traits if traits[t]})
     if hits_all:
         print(f"Что в этой базе вообще есть: {', '.join(hits_all)}.")
@@ -630,7 +664,7 @@ def main():
     print("─" * 70)
     print("Короткий путь:")
     print("  1. сохранить exact pre-change Git commit;")
-    print("  2. применить текущий минимальный уровень, не проигрывая patch history;")
+    print("  2. применить дела выше и проверить выпуски из списка, не проигрывая patch history;")
     print("  3. проверить затронутую дельту; неизменную принятую миграцию/роли не повторять;")
     print("  4. показать владельцу изменения и честные OPEN;")
     print(f"  5. после acceptance записать одну schema-3 квитанцию в {APPLICATION_RECEIPT},")
@@ -642,4 +676,10 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except subprocess.TimeoutExpired as exc:
+        # Под нагрузкой git может не ответить: это «не проверено», не трассировка (проект стартапа, 11.10).
+        print(f"APPLICATION_UNKNOWN: git не ответил за {exc.timeout:g} с "
+              f"({' '.join(exc.cmd[3:5])}); уровень проекта не проверен — повтори позже")
+        sys.exit(2)

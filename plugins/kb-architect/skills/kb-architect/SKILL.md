@@ -3,7 +3,7 @@ name: kb-architect
 description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "8.1.1"
+  version: "8.2.0"
   minimum_project_version: "7.2.0"
   author: "sugestr"
 ---
@@ -63,7 +63,9 @@ metadata:
 внесение в базу и результат во внешней системе подтверждаются отдельно.
 
 Перед записью в область выполни `scripts/kb_debts.py <root> --area <путь>`.
-Относящиеся долги закрой либо оставь с владельцем и адресом продолжения. По
+Относящиеся долги закрой либо оставь с владельцем и адресом продолжения.
+Меняя действующее утверждение, найди прежнее и его копии: новое заменяет старое,
+копию замени ссылкой, обязательство, уходящее из current, закрой или дай адрес. По
 завершении связного блока выполни относящиеся проверки и точечный commit при
 имеющихся полномочиях; запрет коммита соблюдай. Результат, проверку и остаток
 различай в отчёте. Неизвестное и незапущенное никогда не называй успешным.
@@ -124,6 +126,7 @@ Authority действия — право выполнить его в теку�
 | «Закрой сессию», передача работы | `references/capture.md` → `close` + `scripts/kb_session.py` |
 | Отделить факт, интерпретацию и решение | `references/knowledge-roles.md` |
 | Обслужить базу | `scripts/kb_service.py plan` + `references/service-layer.md` → `service_pass` |
+| Проверить согласованность, горячие главы | `scripts/kb_consistency.py` + `references/service-layer.md` → `service_pass` |
 | Собрать мусор | `references/patterns.md` → `garbage_collection` |
 | Понять authority и границы публикации | `references/authority.md` |
 | Измерить пользу/стоимость слоёв | `references/measurement.md` + `scripts/kb_cost.py --check` |
@@ -131,5 +134,5 @@ Authority действия — право выполнить его в теку�
 | Собрать или доставить баг-репорт | `assets/templates/defect-report.md` + `scripts/kb_report.py --help` |
 
 `references/releases.md` — служебный журнал для `kb_apply.py`, а не маршрут
-обычной работы агента. Версия установленного скилла и принятый минимальный
-уровень проекта различаются; порядок перехода описан в `references/migration.md`.
+обычной работы агента. «Обновись» поднимает проект до полного уровня установленного
+выпуска, минимум — только порог совместимости; порядок — `references/migration.md`.

@@ -1281,6 +1281,16 @@ def main():
         print(f"KNOWLEDGE_DEBTS={len(lines)}")
     else:
         print_report(d)
+    if area and "--json" not in args:
+        # Карточка области перед записью: горячая глава — правь на месте, не дописывай поверх
+        # (Fable 12.10: исполнитель правила там, где сессия уже платит).
+        try:
+            import kb_consistency
+            card = kb_consistency.area_card(root, area)
+        except Exception:
+            card = []
+        for line in card:
+            print(f"  ⚑ {line}")
     return 0
 
 

@@ -1994,10 +1994,11 @@ def active_registry(root: Path, registry: Path) -> tuple[Path, dict | None, list
 
 
 def current_contract_line() -> str:
+    """Полный уровень проекта для установленного выпуска — его линия, не минимум совместимости
+    (владелец 11.10: «обновись» поднимает проект до полного уровня)."""
     skill_file = Path(__file__).resolve().parent.parent / "SKILL.md"
-    version = (frontmatter_value(skill_file, "minimum_project_version")
-               or frontmatter_value(skill_file, "contract_line")
-               or frontmatter_value(skill_file, "version") or "7.0.0")
+    version = (frontmatter_value(skill_file, "version")
+               or frontmatter_value(skill_file, "minimum_project_version") or "7.0.0")
     try:
         return kb_apply.line_text(version)
     except (AttributeError, ValueError):

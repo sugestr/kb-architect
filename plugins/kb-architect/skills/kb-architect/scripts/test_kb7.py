@@ -2697,7 +2697,11 @@ class ReleaseActions0210Tests(unittest.TestCase):
         updater.assert_not_called()
 
     def test_due_and_update_print_the_actions_instead_of_no_migration(self):
+        import kb_apply
+        import kb_paths
+        line = kb_apply.line_text(kb_paths.skill_version())
         self.project()
+        self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {line}\n")
         roles = json.loads((self.root / "PROJECT_ROLES.json").read_text())
         roles.pop("entry_role")
         self.save("PROJECT_ROLES.json", roles)
@@ -2710,6 +2714,18 @@ class ReleaseActions0210Tests(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             kb_update.actions_of_project(str(HERE.parent), str(self.root), True)
         self.assertIn("SESSION_ACTION=APPLY_RELEASE_ACTIONS", out.getvalue())
+        # Below the full line, apply must still show the outstanding release actions.
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
+        due = self.run_tool("kb_due.py").stdout
+        self.assertIn(f"полный уровень проекта для него — {line}", due)
+        self.assertIn("примени применимое и обнови строку", due)
+        applied = self.run_tool("kb_apply.py")
+        self.assertEqual(applied.returncode, 1, applied.stdout + applied.stderr)
+        self.assertIn("NEEDS_APPLICATION", applied.stdout)
+        self.assertIn(f"цель {line}", applied.stdout)
+        self.assertIn("PROJECT_RELEASE_ACTIONS", applied.stdout)
+        self.assertIn("`entry_role`", applied.stdout)
+        self.assertNotIn("миграции нет", applied.stdout)
 
 
 class FoxKb0210Tests(unittest.TestCase):
@@ -2776,14 +2792,17 @@ class FoxKb0210Tests(unittest.TestCase):
         self.assertNotIn("Доступ%20агента", out)
 
     def test_project_born_at_its_version_finalizes_its_receipt(self):
+        import kb_apply
+        import kb_paths
+        line = kb_apply.line_text(kb_paths.skill_version())
         self.init_git()
-        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
+        self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {line}\n")
         self.save("NOW.md", "Обновлено: 2026-10-02\n")
         self.git("add", "CLAUDE.md", "NOW.md")
         self.git("commit", "-qm", "born")
         first = self.git("rev-parse", "HEAD")
         self.save("KB_RELEASE_APPLICATION.json", {"schema": 3, "application": {
-            "from_version": None, "to_version": "7.2.0", "status": "finalized",
+            "from_version": None, "to_version": line, "status": "finalized",
             "source": {"commit": first, "version_source": "CLAUDE.md"},
             "owner": {"accepted_by": "owner", "accepted_at": "2026-10-02"},
             "finalized_at": "2026-10-02", "open": []}})
@@ -2804,12 +2823,31 @@ class VersionLine0210Tests(unittest.TestCase):
     run_tool = RedesignTests.run_tool
     save = RedesignTests.save
 
-    def test_a_number_above_the_minimum_is_not_a_due_item(self):
-        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.4.2\n")
+    def test_full_line_is_not_due_and_lower_lines_agree_with_apply(self):
+        """Full lines stay current; lower lines have the same target in due/apply."""
+        import kb_apply
+        import kb_paths
+        line = kb_apply.line_text(kb_paths.skill_version())
         self.save("NOW.md", "Обновлено: 2026-10-02\n")
-        out = self.run_tool("kb_due.py").stdout
-        self.assertNotIn("примени применимое и обнови строку", out)
-        self.assertIn("версия проекта: 7.4.2", out)
+        for version in dict.fromkeys((line, kb_paths.skill_version())):
+            with self.subTest(current=version):
+                self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {version}\n")
+                out = self.run_tool("kb_due.py").stdout
+                self.assertNotIn("примени применимое и обнови строку", out)
+                self.assertIn(f"версия проекта: {version}", out)
+                self.assertIn("номер проекта менять не нужно", out)
+        for version in ("7.4.2", "7.2.0"):
+            with self.subTest(version=version):
+                self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {version}\n")
+                due = self.run_tool("kb_due.py").stdout
+                applied = self.run_tool("kb_apply.py")
+                self.assertIn(f"версия проекта {version}", due)
+                self.assertIn(f"полный уровень проекта для него — {line}", due)
+                self.assertIn("примени применимое и обнови строку", due)
+                self.assertEqual(applied.returncode, 1, applied.stdout + applied.stderr)
+                self.assertIn("NEEDS_APPLICATION", applied.stdout)
+                self.assertIn(f"Версия проекта {version}, цель {line}", applied.stdout)
+                self.assertNotIn("PROJECT_VERSION_OK", applied.stdout)
         self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.0.0\n")
         self.assertIn("примени применимое и обнови", self.run_tool("kb_due.py").stdout)
         self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 9.1.0\n")
@@ -3164,6 +3202,17 @@ class ServicePass0210Tests(unittest.TestCase):
                   "- 2026-09-02 · b ✔ код исправлен\n- 2026-09-03 · c [x]\n- 2026-09-04 · d открыто\n")
         self.assertEqual(self.due()["corrections"], 1)
 
+    def test_dated_closure_mark_closes_whatever_follows(self):
+        """a shop project 12.10.2026: «✔ закрыто 2026-09-26 как неактуальное: …» at the end of an entry
+        stayed open although kb_due itself advises «✔ закрыто <дата>» in the same entry."""
+        for value in ("- 2026-09-03 · x — крон. ✔ закрыто 2026-09-26 как неактуальное: Online закрыта",
+                      "- 2026-09-04 · y — адрес. ✔ закрыто 26.09.2026 как дубль следующей записи",
+                      "- 2026-09-05 · z — ✔ закрыто **2026-09-26**"):
+            self.assertEqual(kb_due.correction_status(value), "closed", value)
+        for value in ("- 2026-08-14 · x — пример: ✔ закрыто", "- `✔ закрыто 2026-09-26` is an example",
+                      "> ✔ закрыто 2026-09-26", "- x — ✔ закрыто после проверки"):
+            self.assertEqual(kb_due.correction_status(value), "unknown", value)
+
     def test_day_first_dates_uppercase_closure_and_the_template_are_read_right(self):
         """External audit 03.10.2026: «**ЗАКРЫТО.**» was not a closure (tg-archive, 37 entries);
         entries dated 10.09.2026 or **25/09/2026 were glued to their neighbours (UAD, a company project),
@@ -3249,6 +3298,9 @@ open(out, "w").write("Источник: [QUESTIONS.md] — см. ниже\n" + j
         self.exam_project()
         leak = self.service("exam", env=self.fake("leak"))
         self.assertIn("неверно 1", leak.stdout)
+        self.assertIn(": FAIL;", leak.stdout, "a wrong answer is not «OK» (проект магазина, 12.10)")
+        self.assertEqual(leak.returncode, 1)
+        self.assertEqual(self.due()["exam_age"], 0, "an exam with a failure was still held")
         self.assertIn("неверно 1", self.service("exam", env=self.fake("outside")).stdout)
         inside = self.service("exam", env=self.fake("inside"))
         self.assertIn("верно 2", inside.stdout, "a full path inside the exam copy is not a leak")
@@ -3398,7 +3450,7 @@ class EntryLock0310Tests(unittest.TestCase):
         self.assertIsNotNone(confirmed, why)
 
     def test_role_id_wins_over_another_roles_skill_name(self):
-        """Adas startup 03.10.2026: the first role uses a skill named like the second role's id;
+        """проект стартапа 03.10.2026: the first role uses a skill named like the second role's id;
         the lookup matched the skill first and built the entry for the wrong role."""
         self.project()
         self.save("PROJECT_ROLES.json", {
@@ -3495,9 +3547,15 @@ class EntryLock0310Tests(unittest.TestCase):
                              [["certain", "file", "source.md"], ["certain", "file", "destination.md"]])
 
     def test_foreign_hook_secret_never_reaches_apply_or_entry_output(self):
+        import kb_apply
+        import kb_paths
+        line = kb_apply.line_text(kb_paths.skill_version())
         self.project()
+        self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {line}\n")
+        self.git("add", "--", "CLAUDE.md")
+        self.git("commit", "-qm", "born at full level")
         self.save("KB_RELEASE_APPLICATION.json", {"schema": 3, "application": {
-            "from_version": None, "to_version": "7.2.0", "status": "finalized",
+            "from_version": None, "to_version": line, "status": "finalized",
             "source": {"commit": self.git("rev-parse", "HEAD"), "version_source": "CLAUDE.md"},
             "owner": {"accepted_by": "fixture", "accepted_at": "2026-10-03"},
             "finalized_at": "2026-10-03", "open": []}})
@@ -4738,6 +4796,7 @@ class CloseSession0510Tests(unittest.TestCase):
                             "- Раннер: `/private/tmp/claude-501/x/scratchpad/v8/live/run.sh`\n"
                             "- Команда — память `codex-reviewers`\n"
                             "- Память Codex `~/.codex/memories/MEMORY.md` 516 КБ — предмет сверки\n"
+                            "- Касса хранит ключ памяти `catalogKey` в браузере\n"
                             "- Исходник дашборда: [отчёт](report.html)\n"
                             "```\nverify:\n```\n")
         self.save("decisions/2026-09-01-old.md", "Лог: [прогон](/tmp/audit-20260901.log); в тексте /tmp/x.log\n")
@@ -4752,6 +4811,54 @@ class CloseSession0510Tests(unittest.TestCase):
         out = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root)],
                              capture_output=True, text=True, timeout=60).stdout
         self.assertIn("ССЫЛКИ НА ВРЕМЕННОЕ — 1", out, "a declared dated snapshot keeps its old paths")
+
+    def test_apply_names_a_git_timeout_instead_of_a_traceback(self):
+        """a startup project 11.10.2026: under load kb_apply died with a TimeoutExpired traceback."""
+        import kb_apply
+        import kb_paths
+        line = kb_apply.line_text(kb_paths.skill_version())
+        code = ("import runpy, subprocess, sys\n"
+                "def slow(*a, **k):\n"
+                "    raise subprocess.TimeoutExpired(['git', '-C', 'x', 'rev-parse', 'HEAD'], 30)\n"
+                "subprocess.run = slow\n"
+                f"sys.argv = ['kb_apply.py', {str(self.root)!r}]\n"
+                f"runpy.run_path({str(HERE / 'kb_apply.py')!r}, run_name='__main__')\n")
+        self.save("CLAUDE.md", f"# Rules\nkb_standard_version: {line}\n")
+        self.save("KB_RELEASE_APPLICATION.json", "{}")
+        run = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60,
+                             cwd=str(HERE))
+        self.assertNotIn("Traceback", run.stderr)
+        self.assertIn("APPLICATION_UNKNOWN: git не ответил за 30 с (rev-parse HEAD)", run.stdout)
+        self.assertEqual(run.returncode, 2)
+
+    def test_a_project_on_the_minimum_is_not_told_the_update_is_done(self):
+        """a startup project 11.10.2026: a 7.2.0 project under a newer release got «номер менять не нужно»;
+        the owner requires the full level of the installed release."""
+        import kb_apply
+        import kb_paths
+        line = kb_apply.line_text(kb_paths.skill_version())
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        self.save("NOW.md", "Обновлено: 2026-10-11\n")
+        run = subprocess.run([sys.executable, str(HERE / "kb_apply.py"), str(self.root)],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 1, run.stdout)
+        self.assertIn(f"цель {line} — полный уровень выпуска", run.stdout)
+        self.assertIn("ВЫПУСКИ ВЫШЕ НОМЕРА ПРОЕКТА", run.stdout)
+        self.assertIn("NEEDS_APPLICATION", run.stdout)
+        self.assertNotIn("номер проекта менять не нужно", run.stdout)
+        self.assertNotRegex(run.stdout, r"\[\d+\.\d+(\.\d+)?\] миграции нет\s*$")
+
+    def test_check_skips_files_declared_outside_knowledge(self):
+        """a shop project 10.10.2026: 126 site addresses in article sources counted as broken links."""
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\nвне знания: web/src/content/\n")
+        self.save("NOW.md", "Обновлено: 2026-10-05\n- Глава: [доставка](kb/delivery.md)\n")
+        self.save("web/src/content/consejos/es/verde.md", "Ver [ramo](/ramos/verde-mojito/)\n")
+        out = subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root)],
+                             capture_output=True, text=True, timeout=60).stdout
+        self.assertIn("БИТЫЕ ССЫЛКИ — 1", out, "a broken link in the canon is still found")
+        self.assertIn("NOW.md → kb/delivery.md", out)
+        self.assertNotIn("verde-mojito", out)
+        self.assertIn("вне знания по объявлению, не проверено: 1 файл", out)
 
     def test_a_full_boot_budget_is_named_not_passed(self):
         body = "# Rules\nkb_standard_version: 7.2.0\nвход: NOW.md\n" + "Правило проекта.\n" * 700
@@ -4777,6 +4884,330 @@ class CloseSession0510Tests(unittest.TestCase):
                 patch.object(kb_service.subprocess, "run", side_effect=fake):
             kb_service.run_agent("вопрос", str(self.root), timeout=5)
         self.assertIs(seen.get("stdin"), subprocess.DEVNULL)
+
+
+class Consistency1210Tests(unittest.TestCase):
+    """a shop project 11–12.10.2026: ~130 противоречий при «целостность: чисто». Горячие главы,
+    журнал проверок и честный итог (решение — Astra и Fable 12.10)."""
+
+    def setUp(self):
+        self.base = Path(tempfile.mkdtemp(prefix="kb-consistency-"))
+        self.root = self.base / "p"
+        self.root.mkdir()
+        self.env = dict(os.environ, KB_ENTRY_HOOK="off", KB_ENTRY_UPDATE="off",
+                        KB_ENTRY_STATE=str(self.base / "state"), GIT_AUTHOR_NAME="t",
+                        GIT_AUTHOR_EMAIL="t@example.invalid", GIT_COMMITTER_NAME="t",
+                        GIT_COMMITTER_EMAIL="t@example.invalid")
+        self.git("init", "-q")
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
+        self.save("NOW.md", "Обновлено: 2026-10-12\n- Где мы: запуск\n")
+        self.commit("base")
+
+    def tearDown(self):
+        shutil.rmtree(self.base, ignore_errors=True)
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.root), *args], capture_output=True, text=True,
+                              env=self.env, check=True).stdout
+
+    def save(self, rel, text):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def commit(self, message):
+        self.git("add", "-A")
+        self.git("commit", "-qm", message)
+
+    def run_py(self, script, *args):
+        return subprocess.run([sys.executable, str(HERE / script), *args], capture_output=True,
+                              text=True, timeout=120, env=self.env)
+
+    def service_mark(self, message):
+        now = self.root / "NOW.md"
+        self.save("NOW.md", now.read_text(encoding="utf-8") + "- обход\n")
+        self.commit(message)
+
+    def state(self):
+        out = self.run_py("kb_consistency.py", str(self.root), "--json")
+        return json.loads(out.stdout)
+
+    @staticmethod
+    def para(i, words=130):
+        return f"## Пункт {i}\n\n" + " ".join(f"слово{i}_{k}" for k in range(words)) + "\n\n"
+
+    def grow(self, rel, commits=22, rewrite=False):
+        body = "# Глава\n\n" + "".join(self.para(-k) for k in range(40))
+        self.save(rel, body)
+        self.commit("chapter")
+        self.service_mark("Сервисный обход базы: глава заведена")
+        for i in range(commits):
+            if rewrite:
+                body = "# Глава\n\n" + "".join(self.para(i * 100 + k) for k in range(40))
+            else:
+                body += self.para(i)
+            self.save(rel, body)
+            self.commit(f"edit {i}")
+
+    def test_append_only_growth_is_hot_and_blocks_a_clean_verdict(self):
+        self.grow("kb/site.md")
+        state = self.state()
+        self.assertEqual(state["status"], "PENDING")
+        self.assertEqual([c["path"] for c in state["chapters"]], ["kb/site.md"])
+        self.assertIn("рост без замены", state["chapters"][0]["reasons"][0])
+        out = self.run_py("kb_check.py", str(self.root)).stdout
+        self.assertIn("СОГЛАСОВАННОСТЬ НЕ ПРОВЕРЕНА — 1 горячая глава", out)
+        self.assertNotIn("целостность: чисто", out)
+        self.assertIn("согласованность — PENDING", out)
+
+    def test_a_rewrite_with_the_same_number_of_commits_is_not_hot(self):
+        self.grow("kb/site.md", rewrite=True)
+        state = self.state()
+        self.assertEqual(state["status"], "PASS", state)
+        self.assertIn("согласованность — PASS: сигналов нет",
+                      self.run_py("kb_check.py", str(self.root)).stdout)
+
+    def test_lost_form_is_hot_but_journals_and_dated_snapshots_are_not(self):
+        long_line = "Длинный абзац без деления " * 300 + "\n"
+        for rel in ("kb/orders.md", "CHANGELOG.md", "reports/2026-10-analysis.md"):
+            self.save(rel, "# Заголовок\n\n" + long_line)
+        self.commit("long")
+        for i in range(3):
+            for rel in ("kb/orders.md", "CHANGELOG.md", "reports/2026-10-analysis.md"):
+                self.save(rel, (self.root / rel).read_text(encoding="utf-8") + f"строка {i}\n")
+            self.commit(f"touch {i}")
+        paths = [c["path"] for c in self.state()["chapters"]]
+        self.assertEqual(paths, ["kb/orders.md"])
+
+    def test_a_recorded_review_holds_only_for_the_version_read(self):
+        self.grow("kb/site.md")
+        rec = self.run_py("kb_consistency.py", "record", str(self.root), "kb/site.md",
+                          "--found", "5", "--confirmed", "3", "--fixed", "3", "--by", "codex")
+        self.assertEqual(rec.returncode, 0, rec.stdout)
+        self.assertEqual(self.state()["status"], "PASS")
+        self.assertIn("согласованность — PASS", self.run_py("kb_check.py", str(self.root)).stdout,
+                      "the window of a reviewed chapter starts at its review")
+        record = json.loads((self.root / "KB_CONSISTENCY.json").read_text(encoding="utf-8"))
+        self.assertEqual(record["reviews"]["kb/site.md"]["confirmed"], 3)
+        self.commit("review recorded")
+        self.save("kb/site.md", (self.root / "kb/site.md").read_text(encoding="utf-8") + self.para(999))
+        self.commit("one more append")
+        self.assertEqual(self.state()["status"], "PASS",
+                         "one commit after the review is not a new hot window")
+        for i in range(21):
+            self.save("kb/site.md", (self.root / "kb/site.md").read_text(encoding="utf-8")
+                      + self.para(2000 + i))
+            self.commit(f"again {i}")
+        self.assertEqual(self.state()["status"], "PENDING", "the window starts at the review")
+
+    def test_a_service_commit_alone_does_not_close_a_hot_chapter(self):
+        """Review 8.2.0: a service-pass commit moved the window and the hot chapter vanished."""
+        self.grow("kb/site.md")
+        self.service_mark("Сервисный обход базы: всё разнесено")
+        self.assertEqual(self.state()["status"], "PENDING", "right after the service commit")
+
+    def test_confirmed_but_unfixed_contradictions_keep_fail(self):
+        self.grow("kb/site.md")
+        self.run_py("kb_consistency.py", "record", str(self.root), "kb/site.md", "--found", "4",
+                    "--confirmed", "3", "--fixed", "1", "--open", "цена доставки — ждёт решения")
+        state = self.state()
+        self.assertEqual(state["status"], "FAIL")
+        out = self.run_py("kb_check.py", str(self.root)).stdout
+        self.assertIn("ПРОТИВОРЕЧИЯ НЕ ИСПРАВЛЕНЫ — 1 глава", out)
+        self.assertIn("согласованность — FAIL", out)
+        self.run_py("kb_consistency.py", "record", str(self.root), "kb/site.md", "--found", "4",
+                    "--confirmed", "3", "--fixed", "3")
+        self.assertEqual(self.state()["status"], "PASS")
+
+    def test_a_git_failure_is_unknown_not_clean(self):
+        import kb_consistency
+        self.grow("kb/site.md")
+        with patch.object(kb_consistency, "history",
+                          side_effect=kb_consistency.GitFailed("git log: broken")):
+            state = kb_consistency.signals(str(self.root))
+        self.assertEqual(state["status"], "UNKNOWN")
+        self.assertIn("НЕ ПРОВЕРЕНО", kb_consistency.status_line(state))
+
+    def test_unknown_is_not_clean_for_check_and_the_service_signal(self):
+        import kb_consistency
+        import kb_service
+        self.grow("kb/site.md")
+        fake = {"status": "UNKNOWN", "reason": "git не ответил", "chapters": [], "pending": 0}
+        with patch.object(kb_consistency, "signals", return_value=fake), \
+                patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            acc = kb_service.accumulated(str(self.root))
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), patch.object(sys, "argv", ["kb_check.py", str(self.root)]):
+                code = kb_check.main()
+        self.assertIn("согласованность не проверена (git не ответил)", acc["reasons"])
+        self.assertIn("СОГЛАСОВАННОСТЬ НЕ ПРОВЕРЕНА — git не ответил", buf.getvalue())
+        self.assertNotIn("целостность: чисто", buf.getvalue())
+        self.assertNotEqual(code, 0)
+
+    def test_broken_entries_and_unreadable_chapters_never_turn_green(self):
+        self.grow("kb/site.md")
+        self.run_py("kb_consistency.py", "record", str(self.root), "kb/site.md", "--found", "3",
+                    "--confirmed", "3", "--fixed", "0")
+        data = json.loads((self.root / "KB_CONSISTENCY.json").read_text(encoding="utf-8"))
+        data["reviews"]["kb/other.md"] = {"confirmed": 2, "fixed": 0}
+        (self.root / "KB_CONSISTENCY.json").write_text(json.dumps(data), encoding="utf-8")
+        refused = self.run_py("kb_consistency.py", "record", str(self.root), "kb/site.md",
+                              "--found", "3", "--confirmed", "3", "--fixed", "3")
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn("kb/other.md", (self.root / "KB_CONSISTENCY.json").read_text(encoding="utf-8"))
+        self.assertEqual(self.state()["status"], "FAIL", "the known conflict stays visible")
+        del data["reviews"]["kb/other.md"]
+        (self.root / "KB_CONSISTENCY.json").write_text(json.dumps(data), encoding="utf-8")
+        os.chmod(self.root / "kb/site.md", 0)
+        try:
+            state = self.state()
+        finally:
+            os.chmod(self.root / "kb/site.md", 0o644)
+        self.assertEqual(state["status"], "FAIL", "an unreadable chapter does not hide its conflict")
+
+    def test_odd_file_names_reach_the_history(self):
+        import kb_consistency
+        self.grow("@@notes.md")
+        self.assertIn("@@notes.md", kb_consistency.history(str(self.root), ["@@notes.md"]))
+        self.assertEqual([c["path"] for c in self.state()["chapters"]], ["@@notes.md"])
+
+    def test_review_requires_complete_findings(self):
+        self.grow("kb/site.md")
+        self.fake_agent('[{"subject": "s", "a": "x", "b": "y", "confidence": "high"}]')
+        out = self.run_py("kb_consistency.py", "review", str(self.root))
+        self.assertEqual(out.returncode, 1, "a finding without lines and a way to check is not usable")
+
+    def test_one_physical_chapter_counts_once(self):
+        import kb_consistency
+        self.save("kb/chapter.md", "# Глава\n")
+        os.symlink("chapter.md", self.root / "kb" / "alias.md")
+        self.commit("alias")
+        files = kb_consistency.canon_files(str(self.root))
+        self.assertIn("kb/chapter.md", files)
+        self.assertNotIn("kb/alias.md", files)
+
+    def test_a_conflict_survives_a_symlink_path_and_a_rename(self):
+        self.grow("kb/chapter.md")
+        os.symlink("chapter.md", self.root / "kb" / "alias.md")
+        self.commit("alias")
+        self.run_py("kb_consistency.py", "record", str(self.root), "kb/alias.md", "--found", "3",
+                    "--confirmed", "3", "--fixed", "0")
+        self.assertEqual(self.state()["status"], "FAIL", "recorded through the symlink")
+        record = json.loads((self.root / "KB_CONSISTENCY.json").read_text(encoding="utf-8"))
+        self.assertIn("kb/chapter.md", record["reviews"])
+        (self.root / "kb" / "alias.md").unlink()
+        self.git("mv", "kb/chapter.md", "kb/renamed.md")
+        self.commit("rename")
+        state = self.state()
+        self.assertEqual(state["status"], "FAIL", "the unfixed conflict follows the rename as a finding")
+        self.assertTrue(any("главы, которой больше нет" in r for c in state["chapters"] for r in c["reasons"]))
+        done = self.run_py("kb_consistency.py", "record", str(self.root), "kb/chapter.md", "--found", "3",
+                           "--confirmed", "3", "--fixed", "3")
+        self.assertEqual(done.returncode, 0, done.stdout)
+        self.assertNotIn("kb/chapter.md", json.loads(
+            (self.root / "KB_CONSISTENCY.json").read_text(encoding="utf-8"))["reviews"])
+
+    def test_paths_with_spaces_cyrillic_and_outside_targets(self):
+        self.grow("kb/глава с пробелом.md")
+        self.assertEqual([c["path"] for c in self.state()["chapters"]], ["kb/глава с пробелом.md"])
+        (self.base / "outside.md").write_text("# снаружи\n", encoding="utf-8")
+        self.save("KNOWLEDGE_INDEX.json", json.dumps({"routes": [
+            {"id": "x", "task": "x", "paths": ["../outside.md"]}]}))
+        self.commit("index")
+        import kb_consistency
+        self.assertNotIn("../outside.md", kb_consistency.canon_files(str(self.root)))
+
+    def test_record_refuses_a_broken_journal_untracked_files_and_bad_numbers(self):
+        self.grow("kb/site.md")
+        (self.root / "KB_CONSISTENCY.json").write_text("{битый", encoding="utf-8")
+        out = self.run_py("kb_consistency.py", "record", str(self.root), "kb/site.md", "--found", "1",
+                          "--confirmed", "1", "--fixed", "1")
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("повреждён", out.stdout)
+        self.assertEqual((self.root / "KB_CONSISTENCY.json").read_text(encoding="utf-8"), "{битый")
+        (self.root / "KB_CONSISTENCY.json").unlink()
+        self.save("kb/draft.md", "# черновик\n")
+        self.assertIn("не отслеживается", self.run_py(
+            "kb_consistency.py", "record", str(self.root), "kb/draft.md").stdout)
+        self.assertIn("RECORD_REFUSED", self.run_py(
+            "kb_consistency.py", "record", str(self.root), "kb/site.md", "--found", "1",
+            "--confirmed", "2", "--fixed", "0").stdout)
+
+    def test_open_items_dropped_from_the_entry_are_listed_for_reading(self):
+        import kb_consistency
+        self.save("NOW.md", "Обновлено: 2026-10-12\n- Приёмка владельцем после запуска: вход по новым PIN, "
+                            "«новая карточка» с фото, первая продажа, задача 15\n")
+        self.commit("now")
+        base = self.git("rev-parse", "HEAD").strip()
+        self.save("NOW.md", "Обновлено: 2026-10-12\n- Приёмка владельцем: задача 15\n")
+        self.commit("history lines shortened so the entry stays within the boot budget")
+        pieces = kb_consistency.evicted(str(self.root), base)
+        self.assertTrue(any("новая карточка" in p for p in pieces), pieces)
+
+    def fake_agent(self, reply, exit_code=0):
+        fake = self.base / "fake_agent.py"
+        fake.write_text("import sys\nargs = sys.argv[1:]\nout = args[args.index('--out') + 1]\n"
+                        f"open(out, 'w', encoding='utf-8').write({reply!r})\n"
+                        f"sys.exit({exit_code})\n", encoding="utf-8")
+        self.env["KB_AGENT_CMD"] = f"{sys.executable} {fake}"
+
+    def test_review_prints_findings_and_a_broken_answer_is_not_a_pass(self):
+        self.grow("kb/site.md")
+        self.fake_agent('[{"subject": "доставка", "a": "8,90", "a_line": 3, "b": "9,90", '
+                        '"b_line": 40, "confidence": "high", "check": "живая база"}]')
+        good = self.run_py("kb_consistency.py", "review", str(self.root))
+        self.assertEqual(good.returncode, 0, good.stdout)
+        self.assertIn("находок 1, высокой уверенности 1", good.stdout)
+        self.assertIn("стр. 3 «8,90» ⟷ стр. 40 «9,90»", good.stdout)
+        self.fake_agent("[]")
+        self.assertIn("находок 0", self.run_py("kb_consistency.py", "review", str(self.root)).stdout)
+        for reply in ("не смог прочитать файл", "Cannot read file; expected format []", "[{}]",
+                      "НЕ_ПРОЧИТАНО"):
+            self.fake_agent(reply)
+            bad = self.run_py("kb_consistency.py", "review", str(self.root))
+            self.assertEqual(bad.returncode, 1, reply)
+            self.assertIn("REVIEW_FAILED", bad.stdout, reply)
+        self.fake_agent("[]", exit_code=1)
+        crashed = self.run_py("kb_consistency.py", "review", str(self.root))
+        self.assertEqual(crashed.returncode, 1, "an agent that exited 1 did not review anything")
+        self.assertEqual(self.state()["status"], "PENDING", "a review records nothing by itself")
+
+    def test_area_card_warns_before_writing_into_a_hot_chapter(self):
+        self.grow("kb/site.md")
+        out = self.run_py("kb_debts.py", str(self.root), "--area", "kb/site.md").stdout
+        self.assertIn("⚑ горячая глава kb/site.md (не проверена на противоречия)", out)
+        self.assertIn("новое заменяет старое", out)
+        self.assertNotIn("⚑", self.run_py("kb_debts.py", str(self.root), "--area", "NOW.md").stdout)
+
+    def test_hot_chapters_raise_the_service_signal_and_the_plan_section(self):
+        import kb_service
+        names = ("kb/a.md", "kb/b.md", "kb/c.md")
+        bodies = {rel: "# Глава\n\n" + "".join(self.para(-k) for k in range(40)) for rel in names}
+        for rel in names:
+            self.save(rel, bodies[rel])
+        self.service_mark("Сервисный обход базы: главы заведены")
+        for i in range(21):
+            for rel in names:
+                bodies[rel] += self.para(i)
+                self.save(rel, bodies[rel])
+            self.commit(f"append {i}")
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(self.base / "state")}):
+            acc = kb_service.accumulated(str(self.root))
+        self.assertEqual(acc["hot"], 3)
+        self.assertTrue(acc["due"], acc["reasons"])
+        plan = self.run_py("kb_service.py", "plan", str(self.root)).stdout
+        self.assertIn("## 2а. Согласованность — PENDING", plan)
+        self.assertIn("непрочитанные горячие главы он не закрывает", plan)
+        self.assertIn("только по этому проекту", plan)
+
+    def test_roles_without_a_control_question_are_named(self):
+        import kb_service
+        self.save("PROJECT_ROLES.json", json.dumps({"roles": [
+            {"id": "cashier", "title": "Кассир"}, {"id": "site-editor", "title": "Редактор сайта"}]}))
+        self.save("QUESTIONS.md", "# Контрольные вопросы\n| Вопрос | Ответ |\n|---|---|\n"
+                                  "| Кассир: как закрыть смену? | Z-отчёт |\n")
+        self.commit("roles")
+        self.assertEqual(kb_service.roles_without_questions(str(self.root)), ["site-editor"])
 
 
 if __name__ == "__main__":

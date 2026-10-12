@@ -93,9 +93,12 @@ VERIFY = re.compile(r"^[ \t]*verify[ \t]*:[ \t]*(.*)$", re.MULTILINE)
 TEMP_PATH = re.compile(r"(?<![\w.-])(?:/private)?/(?:tmp|var/folders)/[^\s`'\")\]>|,;]+"
                        r"|(?<![\w.-])[^\s`'\"(\[<|,;]*scratchpad/[^\s`'\")\]>|,;]+")
 # Адрес факта в памяти агента: конкретный файл памяти Claude или «память `имя`». Упоминание
-# памяти Codex как предмета разговора адресом факта не является.
+# памяти Codex как предмета разговора адресом факта не является. «Ключ памяти `catalogKey`» —
+# кэш экрана, а не память агента (проект магазина, 12.10): «памяти» считается только после «в/из»
+# или со словом «агента».
 MEMORY_FILE = re.compile(r"\.claude/projects/[^/\s`'\"<>]+/memory/[^\s`'\")\]>|,;]+\.md"
-                         r"|(?i:\bпамят[ьи](?:[ \t]+агента)?[ \t]+`[\w.-]+`)")
+                         r"|(?i:(?:\bпамять|\b(?:в|из)[ \t]+памяти)(?:[ \t]+агента)?[ \t]+`[\w.-]+`"
+                         r"|\bпамят[ьи][ \t]+агента[ \t]+`[\w.-]+`)")
 TEMP_ALLOWED_KEYS = ("временные пути допустимы", "temporary paths allowed")
 LOCAL_ALLOWED_KEYS = ("локальные файлы допустимы", "local files allowed")
 DATE = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
@@ -447,7 +450,12 @@ def main():
     inbox_root = inbox_dir(root)
     inbox_root = os.path.realpath(inbox_root) + os.sep if inbox_root else None
     wrong_name, no_verify, nesource = [], [], []
-    files_all = collect(root)
+    # Объявленное «вне знания» (исходники сайта, выходы сборки) — не база: ссылки там адреса
+    # сайта, а не файлы (проект магазина, 10.10: 126 ложных битых ссылок статей).
+    outside = kb_index.excluded_globs(root)
+    collected = collect(root)
+    files_all = [p for p in collected if not kb_index.is_excluded(os.path.relpath(p, root), outside)]
+    skipped_outside = len(collected) - len(files_all)
     ORDER = infer_order(open(f, encoding="utf-8", errors="ignore").read() for f in files_all[:400])
 
     for path in files_all:
@@ -808,6 +816,38 @@ def main():
         print("  Локальная цель по этим адресам не найдена.")
         print("  Проверь путь ссылки и доступность файла в исходном источнике.\n")
 
+    # Согласованность: где база вероятно противоречит себе и не проверена (проект магазина, 12.10:
+    # ~130 противоречий при «целостность: чисто»). Сама проверка не ищет противоречий — она
+    # не даёт назвать базу чистой, пока горячие главы не прочитаны.
+    try:
+        import kb_consistency
+        consistency = kb_consistency.signals(root)
+    except Exception as exc:
+        consistency = {"status": "UNKNOWN", "reason": f"сбой проверки: {type(exc).__name__}: {exc}",
+                       "chapters": []}
+    if consistency.get("status") == "UNKNOWN":
+        found += 1
+        print(f"СОГЛАСОВАННОСТЬ НЕ ПРОВЕРЕНА — {consistency.get('reason')}.")
+        print("  Проверка не состоялась: это не «сигналов нет». Повтори; повторяется — разбери причину.\n")
+    conflicts = [c for c in consistency.get("chapters", []) if c.get("conflict")]
+    if conflicts:
+        found += len(conflicts)
+        print(f"ПРОТИВОРЕЧИЯ НЕ ИСПРАВЛЕНЫ — {skl(len(conflicts), 'глава', 'главы', 'глав')}:")
+        for c in conflicts[:20]:
+            print(f"  {c['path']} — " + "; ".join(c["reasons"]))
+        print("  Проверка нашла и подтвердила противоречия, а исправлены не все. Исправь по источнику")
+        print("  правды и запиши заново: kb_consistency.py record.\n")
+    pending = [c for c in consistency.get("chapters", []) if not c["reviewed"] and not c.get("conflict")]
+    if pending:
+        found += len(pending)
+        print(f"СОГЛАСОВАННОСТЬ НЕ ПРОВЕРЕНА — {skl(len(pending), 'горячая глава', 'горячие главы', 'горячих глав')}:")
+        for c in pending[:20]:
+            print(f"  {c['path']} — " + "; ".join(c["reasons"]))
+        print("  Сюда много дописывали поверх или глава потеряла форму, а прочитанной в этой версии")
+        print("  её никто не отметил. Проверь: kb_consistency.py review <корень> (модель читает главу,")
+        print("  находки сверяешь с источником), затем kb_consistency.py record. Не противоречие само")
+        print("  по себе — знак, что здесь его вероятнее всего найти.\n")
+
     ignored = ignored_links(root, linked_files)
     for title, items, advice in (
             ("ССЫЛКИ НА ВРЕМЕННОЕ", temporary,
@@ -952,6 +992,10 @@ def main():
                      f"({cover['reachable']}/{cover['files']} в {', '.join(cover['roots'])})")
     scope.append("generated_from (эфемерный · отсутствующий · вне Git)")
     scope.append("временные пути · память агента · игнорируемые файлы в каноне")
+    scope.append(kb_consistency.status_line(consistency) if "kb_consistency" in sys.modules
+                 else f"согласованность — НЕ ПРОВЕРЕНО ({consistency.get('reason')})")
+    if skipped_outside:
+        scope.append(f"вне знания по объявлению, не проверено: {skl(skipped_outside, 'файл', 'файла', 'файлов')}")
     scope.append(debt_scope)
 
     if not found:

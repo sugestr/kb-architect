@@ -188,7 +188,7 @@ def exam_age(root, questions, today):
     """Дней с последнего экзамена: отчёт этой машины или журнал прогонов в самом проекте."""
     ages = []
     report = exam_report(root)
-    if report and report.get("status") == "OK":
+    if report and report.get("status") in ("OK", "FAIL"):    # прогон состоялся, даже с провалами
         ages.append((today - datetime.date.fromisoformat(report["date"])).days)
     if questions:
         text = kb_paths.read(questions)
@@ -244,14 +244,24 @@ def accumulated(root, today=None):
     if commits >= THRESHOLDS["work_commits"] and (days is None or days >= THRESHOLDS["days_with_work"]):
         primary.append(f"коммитов с прошлого обхода: {commits} за {days} дн." if days is not None
                        else f"коммитов за 30 дней: {commits}, обхода ещё не было")
+    try:
+        import kb_consistency
+        state = kb_consistency.signals(root, today)
+        hot = state.get("pending", 0) + state.get("conflicts", 0)
+    except Exception as exc:
+        state, hot = {"status": "UNKNOWN", "reason": f"{type(exc).__name__}: {exc}"}, 0
+    if state.get("status") == "UNKNOWN":
+        secondary.append(f"согласованность не проверена ({state.get('reason')})")
+    if hot:
+        primary.append(f"горячих глав без проверки или с неисправленными противоречиями: {hot}")
     if questions and (age is None or age >= THRESHOLDS["exam_days"]):
         secondary.append("экзамен базы " + (f"был {age} дн. назад" if age is not None
                                             else "ещё не проводился"))
     git_ok = is_git(root)
     due = git_ok and (len(primary) >= 2 or len(corrections) >= 3 * THRESHOLDS["open_corrections"]
-                      or now_size > 2 * NOW_LIMIT)
+                      or now_size > 2 * NOW_LIMIT or hot >= 3)
     return {"since": since, "corrections": len(corrections), "now_bytes": now_size,
-            "commits": commits, "unrecorded_turns": unrecorded, "exam_age": age,
+            "commits": commits, "unrecorded_turns": unrecorded, "exam_age": age, "hot": hot,
             "has_questions": bool(questions), "git": git_ok,
             "reasons": primary + secondary, "due": bool(due)}
 
@@ -366,6 +376,7 @@ def plan(root, show_all=False):
     for s in undocumented[:15]:
         print(f"- {s[:200]}")
     print("Описать то, что изменилось в системе или решено, в месте по карте; мелочь — пропустить.")
+    consistency_section(root)
     print("\n## 3. Починить")
     print(f"- долги знания: python3 {q(scripts + '/kb_debts.py')} {q(root)} --summary — закрыть или PENDING")
     print(f"- целостность: python3 {q(scripts + '/kb_check.py')} {q(root)} — битые ссылки, просроченное")
@@ -374,6 +385,10 @@ def plan(root, show_all=False):
     if a["has_questions"]:
         print(f"- python3 {q(scripts + '/kb_service.py')} exam {q(root)} — итог строкой в журнал прогонов "
               "контрольных вопросов; провал — значит знание не на месте или его нет: поправить")
+        uncovered = roles_without_questions(root)
+        if uncovered:
+            print("- роли без контрольного вопроса: " + ", ".join(uncovered) + " — добавить по вопросу, "
+                  "который владелец реально задаёт этой роли (экзамен растёт вместе с базой)")
     else:
         print("- контрольных вопросов нет: предложи владельцу 3–5 вопросов, которые он реально задаёт")
     print("\n## 5. Реорганизация (только с согласия владельца)")
@@ -381,12 +396,65 @@ def plan(root, show_all=False):
         print(f"- NOW {a['now_bytes'] // 1024} КБ: проверь, не стал ли NOW хроникой; размер сам по себе не ошибка. "
               "Если хроника — карточка (где мы, что открыто, решения, чего ждём), хронику дословно "
               "в архивный файл со ссылкой (references/service-layer.md → service_pass)")
-    print("- главы больше ~100 КБ — предложить деление по смыслу; места для повторяющихся видов "
-          "знания, которых нет в карте, — предложить завести")
+    print("- глава с потерянной формой (раздел 2а) — предложить деление по смыслу или разделы; "
+          "переписывание содержимого — по references/adopt-existing.md → reorganization (писатель, "
+          "проверяющий другого семейства, сверка спорного по источнику). Размер сам по себе — не повод; "
+          "места для повторяющихся видов знания, которых нет в карте, — предложить завести")
     print("\n## 6. Отметка")
     print(f"Коммит по правилам проекта; в сообщении — «Сервисный обход базы: <что сделано>». "
-          "С него начнётся новый счёт. Владельцу — итог в 3–5 строках и список «нужно решение».")
+          "С него начнётся новый счёт, но непрочитанные горячие главы он не закрывает: обход не "
+          "завершён, пока раздел 2а не PASS или остаток не назван. Зелёные скрипты — нижняя граница, "
+          "не здоровье базы. Владельцу — итог в 3–5 строках и список «нужно решение» только по этому "
+          "проекту; вопросы других проектов и исполнителей — в их инбоксы.")
     return 0
+
+
+def consistency_section(root):
+    """Раздел 2а плана: горячие главы, выпавшее из входа, тяжёлые маршруты."""
+    try:
+        import kb_consistency
+        state = kb_consistency.signals(root)
+    except Exception as exc:
+        print(f"\n## 2а. Согласованность — НЕ ПРОВЕРЕНА ({type(exc).__name__}: {exc})")
+        return
+    script = shlex.quote(os.path.join(os.path.dirname(os.path.abspath(__file__)), "kb_consistency.py"))
+    print("\n## 2а. Согласованность — " + kb_consistency.status_line(state).split(" — ", 1)[-1])
+    for c in state.get("chapters", []):
+        mark = "прочитана" if c["reviewed"] else "не проверена"
+        print(f"- {c['path']} ({mark}) — " + "; ".join(c["reasons"]))
+    if state.get("pending") or state.get("conflicts"):
+        print(f"Прочитать каждую непроверенную: python3 {script} review {shlex.quote(root)} "
+              "[--agent codex|claude — другого семейства, чем писавший]. Находки — данные: сверить с "
+              "источником правды проекта (код, система, git, решение владельца), подтверждённое "
+              "исправить точной заменой (новое заменяет старое, копии — ссылкой), неуверенное — "
+              f"записать, не править. Итог главы: python3 {script} record {shlex.quote(root)} <глава> "
+              "--found N --confirmed M --fixed K.")
+    pieces = kb_consistency.evicted(root, kb_consistency.last_service_sha(root))
+    if pieces:
+        print("Из входа с прошлого обхода выпало (со словом статуса) — найти, где это теперь, "
+              "или вернуть с адресом:")
+        for piece in pieces:
+            print(f"  · {piece}")
+    routes = kb_consistency.heavy_routes(root)
+    if routes:
+        print("Маршруты дороже 150 КБ (справка; дешевле — section-цели): "
+              + ", ".join(f"{name} {size // 1024} КБ" for name, size in routes[:8]))
+
+
+def roles_without_questions(root):
+    """Роли реестра, которых не упоминает файл контрольных вопросов."""
+    questions = kb_paths.locate(root, "questions").path
+    if not questions:
+        return []
+    try:
+        import kb_entry
+        roles, _ = kb_entry.declared_roles(root)
+    except Exception:
+        return []
+    text = kb_paths.read(questions).lower()
+    return [r["id"] for r in roles
+            if not any(name.strip() and name.strip().lower() in text
+                       for name in (str(r["id"]), str(r.get("title") or "")))]
 
 
 # ---------------------------------------------------------------- экзамен
@@ -418,17 +486,23 @@ PASS — ответ верен по сути и назван источник; P
 {data}"""
 
 
-def agent_argv(prompt, cwd, out):
+def agent_argv(prompt, cwd, out, family=None):
+    """Агент только для чтения. family «codex» или «claude» выбирает семейство явно —
+    проверяющий другого семейства, чем писавший (Astra и Fable 12.10.2026)."""
     custom = os.environ.get("KB_AGENT_CMD")
     if custom:
         return shlex.split(custom) + ["--cwd", cwd, "--out", out, prompt]
     codex = shutil.which("codex") or (CODEX_APP if os.path.exists(CODEX_APP) else None)
+    if family == "claude":
+        codex = None
+    elif family == "codex" and not codex:
+        raise RuntimeError("codex не найден, а проверяющим выбран codex")
     if codex:
         model = os.environ.get("KB_AGENT_MODEL", "gpt-6.1-sol")
         return [codex, *ISOLATE, "exec", "--ignore-user-config", "-m", model, "-s", "read-only",
                 "--skip-git-repo-check", "--ephemeral", "-C", cwd, "-o", out, prompt]
     claude = shutil.which("claude") or os.path.join(HOME, ".local", "bin", "claude")
-    if os.path.exists(claude):
+    if os.path.exists(claude) and family != "codex":
         return [claude, "-p", prompt, "--setting-sources", "", "--strict-mcp-config",
                 "--allowedTools", "Read(./**)", "Grep(./**)", "Glob(./**)"]
     raise RuntimeError("нет агента для экзамена: ни codex, ни claude")
@@ -445,14 +519,16 @@ def isolated_home():
     return home
 
 
-def run_agent(prompt, cwd, timeout=2400):
+def run_agent(prompt, cwd, timeout=2400, family=None, check=False):
+    """Ответ агента. check=True: ненулевой код завершения — исключение, а не ответ
+    (ревью 8.2.0: exit 1 со stdout «[]» принимался как «противоречий нет»)."""
     fd, out = tempfile.mkstemp(prefix="kb-agent-", suffix=".txt")
     os.close(fd)
     home = isolated_home()
     try:
         # Ввод закрыт: у Bash агента он открыт, и `codex exec` ждал бы его до тайм-аута
         # (самопроверка лаборатории 05.10.2026; урок 03.10 был записан, но не у этого вызова).
-        r = subprocess.run(agent_argv(prompt, cwd, out), cwd=cwd, capture_output=True, text=True,
+        r = subprocess.run(agent_argv(prompt, cwd, out, family), cwd=cwd, capture_output=True, text=True,
                            stdin=subprocess.DEVNULL,
                            timeout=timeout, env=dict(os.environ, KB_ENTRY_HOOK="off",
                                                      KB_ENTRY_UPDATE="off", CODEX_HOME=home))
@@ -464,6 +540,8 @@ def run_agent(prompt, cwd, timeout=2400):
             os.remove(out)
         except OSError:
             pass
+    if check and r.returncode != 0:
+        raise RuntimeError(f"агент завершился с кодом {r.returncode}: {(r.stderr or '').strip()[:200]}")
     return text if text.strip() else r.stdout
 
 
@@ -593,6 +671,8 @@ def exam(root):
     if not by_id or report["ungraded"] == len(data):
         report["status"] = "EXAM_FAILED"      # агент не ответил или не оценил — не «экзамен сдан»
         return report
+    if report["fail"]:
+        report["status"] = "FAIL"             # неверный ответ — не «OK» (проект магазина, 12.10)
     with open(os.path.join(state_dir("exam"), key(root) + ".json"), "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=1)
     return report
@@ -611,7 +691,11 @@ def print_exam(report):
     for item in report.get("items", []):
         if item["verdict"] != "PASS":
             print(f"- {item['id']} {item['verdict']}: {item['question'][:120]} — {item['reason']}")
-    if report["status"] == "OK":
+    if report["status"] == "FAIL":
+        print("Один прогон ненадёжен: повтори экзамен. Неверный ответ разбери по причине — знания нет, "
+              "оно не там, база противоречит себе, индекс ведёт не туда, вопрос или ожидаемый ответ "
+              "составлен неверно.")
+    if report["status"] in ("OK", "FAIL"):
         print("Строку итога — в журнал прогонов контрольных вопросов; провалы — поправить место "
               "знания или завести его.")
 

@@ -295,6 +295,21 @@ UNREACHABLE_ALLOWED_KEYS = ("допустимо без дороги", "unreachab
 # memo sent to a person) are results, not knowledge: the project names them by
 # glob and the report shows how many were set aside.
 KNOWLEDGE_EXCLUDE_KEYS = ("вне знания", "knowledge exclude", "knowledge_exclude")
+
+
+def excluded_globs(root):
+    """Маски «вне знания: <glob>[, <glob>]» из правил проекта.
+
+    declared_value strips trailing "*" as Markdown emphasis; a glob ending in "/"
+    therefore means "everything below that directory"."""
+    raw, _ = kb_paths.declared_value(str(root), KNOWLEDGE_EXCLUDE_KEYS)
+    globs = [g.strip().strip("`\"'«»") for g in re.split(r"[,;]", raw or "") if g.strip()]
+    return [g + "*" if g.endswith("/") else g for g in globs]
+
+
+def is_excluded(rel, globs):
+    import fnmatch
+    return any(fnmatch.fnmatch(rel, g) for g in globs)
 MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+?\.md)(?:#[^)]*)?\)|`([^`\s]+?\.md)`")
 # Structured canons (a profile JSON, a ledger) address their documents by path in
 # string values; a road through them is as real as a Markdown link.
@@ -429,13 +444,8 @@ def coverage(root: Path, index_path: Path) -> dict:
             continue
         seen.add(rel)
         stack.extend(local_links(root, rel))
-    raw_exclude, _ = kb_paths.declared_value(str(root), KNOWLEDGE_EXCLUDE_KEYS)
-    # declared_value strips trailing "*" as Markdown emphasis; a glob ending in "/"
-    # therefore means "everything below that directory".
-    globs = [g.strip().strip("`\"'«»") for g in re.split(r"[,;]", raw_exclude or "") if g.strip()]
-    globs = [g + "*" if g.endswith("/") else g for g in globs]
-    import fnmatch
-    excluded = [f for f in files if any(fnmatch.fnmatch(f, g) for g in globs)]
+    globs = excluded_globs(root)
+    excluded = [f for f in files if is_excluded(f, globs)]
     views = [f for f in files if f not in set(excluded) and is_generated_view(root, f)]
     files = [f for f in files if f not in set(views) and f not in set(excluded)]
     unreachable = [f for f in files if f not in seen]
