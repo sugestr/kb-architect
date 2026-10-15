@@ -2117,6 +2117,87 @@ class ExecutableEntry0110Tests(unittest.TestCase):
     def bundle_of(self, context):
         return re.search(r"(/\S+ENTRY-\S+\.md)", context).group(1)
 
+    def test_a_role_switch_does_not_repeat_unchanged_current(self):
+        """A project 15.10.2026: three role switches re-read the same 20 KB NOW (~40 KB of repeats)."""
+        self.project(big_now=True)
+        first = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        ok = self.confirm("-".join(self.marks(first)), "--session", "s1", "--bundle", first)
+        self.assertIn("ENTRY_CONFIRMED", ok.stdout, ok.stdout + ok.stderr)
+        out = subprocess.run([sys.executable, str(HERE / "kb_entry.py"), str(self.root), "--role", "ops",
+                              "--agent", "claude", "--since", first], capture_output=True, text=True,
+                             timeout=60, env=self.env())
+        second = re.search(r"ENTRY_BUNDLE=(\S+)", out.stdout).group(1)
+        text = Path(second).read_text(encoding="utf-8")
+        self.assertNotIn("ПОСЛЕДНЯЯ СТРОКА NOW", text, "the unchanged NOW is not repeated")
+        self.assertIn("Уже прочитано в", text)
+        self.assertIn("без повтора неизменного", out.stdout)
+        done = self.confirm("-".join(self.marks(second)), "--session", "s1", "--bundle", second)
+        self.assertIn("ENTRY_CONFIRMED: роль", done.stdout, done.stdout)
+        self.hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "s2"})
+        refused = self.confirm("-".join(self.marks(second)), "--session", "s2", "--bundle", second)
+        self.assertIn("ENTRY_NOT_CONFIRMED", refused.stdout)
+        import kb_start
+        confirmed, why = kb_start.verify(str(self.root), None, "-".join(self.marks(second)), second)
+        self.assertIsNone(confirmed, "without a confirmed earlier entry the skipped NOW was never read")
+        self.assertIn("--since", why)
+        # Review 8.2.1: rebuilding the confirmed file in place does not make its new parts read.
+        self.save("NOW.md", "Обновлено: 2026-10-15\nНОВОЕ СОСТОЯНИЕ, НЕ ПРОЧИТАНО\n")
+        subprocess.run([sys.executable, str(HERE / "kb_entry.py"), str(self.root), "--role", "dev",
+                        "--agent", "claude", "--out", second], capture_output=True, text=True,
+                       timeout=60, env=self.env())
+        out = subprocess.run([sys.executable, str(HERE / "kb_entry.py"), str(self.root), "--role", "ops",
+                              "--agent", "claude", "--since", second], capture_output=True, text=True,
+                             timeout=60, env=self.env())
+        third = re.search(r"ENTRY_BUNDLE=(\S+)", out.stdout).group(1)
+        self.assertNotIn("НОВОЕ СОСТОЯНИЕ", Path(third).read_text(encoding="utf-8"))
+        cheat = self.confirm("-".join(self.marks(third)), "--session", "s1", "--bundle", third)
+        self.assertIn("ENTRY_NOT_CONFIRMED", cheat.stdout, cheat.stdout)
+
+    def test_a_confirmed_entry_covers_the_projects_worktrees(self):
+        """15.10.2026: a session confirmed in the main checkout hit the lock on every worktree
+        it touched (12–27 denials per session)."""
+        self.project()
+        first = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("ENTRY_CONFIRMED", self.confirm("-".join(self.marks(first)), "--session", "s1",
+                                                       "--bundle", first).stdout)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "base")
+        wt = self.base / "wt-feature"
+        self.git("worktree", "add", "-q", str(wt))
+        target = str(wt / "kb" / "05_catalog.md")
+        self.assertEqual(self.tool("Edit", file_path=target, old_string="x", new_string="y"), "allow")
+        other = self.hook({"hook_event_name": "PreToolUse", "tool_name": "Edit", "session_id": "s9",
+                           "tool_input": {"file_path": target, "old_string": "x", "new_string": "y"}})
+        self.assertEqual((other or {}).get("hookSpecificOutput", {}).get("permissionDecision"), "deny",
+                         "another session that never entered still gets the lock")
+        # Review 8.2.1: a worktree with another current or a nested KB project is another entry.
+        wt2 = self.base / "wt-other"
+        self.git("worktree", "add", "-q", str(wt2))
+        (wt2 / "NOW.md").write_text("Обновлено: 2026-10-15\nДругое состояние\n", encoding="utf-8")
+        self.assertEqual(self.tool("Edit", file_path=str(wt2 / "kb" / "05_catalog.md"),
+                                   old_string="x", new_string="y"), "deny")
+        nested = wt / "apps" / "shop"
+        nested.mkdir(parents=True)
+        (nested / "CLAUDE.md").write_text("# Shop\nkb_standard_version: 7.2.0\n", encoding="utf-8")
+        (nested / "NOW.md").write_text("Обновлено: 2026-10-15\n", encoding="utf-8")
+        self.assertEqual(self.tool("Edit", file_path=str(nested / "NOW.md"),
+                                   old_string="x", new_string="y"), "deny")
+        wt3 = self.base / "wt-after-compact"
+        self.git("worktree", "add", "-q", str(wt3))
+        self.start(source="compact")
+        self.assertEqual(self.tool("Edit", file_path=str(wt3 / "kb" / "05_catalog.md"),
+                                   old_string="x", new_string="y"), "deny",
+                         "after compaction an earlier confirmation does not open other worktrees")
+
+    def test_host_ui_tools_pass_the_entry_lock(self):
+        """A project 15.10.2026: the host's task-list tool, required as the first call, was denied."""
+        self.project()
+        self.start()
+        self.assertEqual(self.tool("mcp__ccd_session__update_plan", plan=[]), "allow")
+        self.assertEqual(self.tool("mcp__ccd_view__show_pane", pane="diff"), "allow")
+        self.assertEqual(self.tool("mcp__ccd_session__spawn_task", title="x", prompt="y", tldr="z"), "deny")
+        self.assertEqual(self.tool("mcp__gmail__send_message", to="x"), "deny")
+
     def test_outside_a_kb_project_the_hook_is_silent(self):
         plain = self.base / "plain"
         plain.mkdir()
@@ -4969,11 +5050,12 @@ class Consistency1210Tests(unittest.TestCase):
 
     def test_lost_form_is_hot_but_journals_and_dated_snapshots_are_not(self):
         long_line = "Длинный абзац без деления " * 300 + "\n"
-        for rel in ("kb/orders.md", "CHANGELOG.md", "reports/2026-10-analysis.md"):
+        for rel in ("kb/orders.md", "CHANGELOG.md", "reports/2026-10-analysis.md", "references/releases.md"):
             self.save(rel, "# Заголовок\n\n" + long_line)
         self.commit("long")
         for i in range(3):
-            for rel in ("kb/orders.md", "CHANGELOG.md", "reports/2026-10-analysis.md"):
+            for rel in ("kb/orders.md", "CHANGELOG.md", "reports/2026-10-analysis.md",
+                        "references/releases.md"):
                 self.save(rel, (self.root / rel).read_text(encoding="utf-8") + f"строка {i}\n")
             self.commit(f"touch {i}")
         paths = [c["path"] for c in self.state()["chapters"]]

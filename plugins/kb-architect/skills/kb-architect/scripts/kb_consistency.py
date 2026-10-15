@@ -50,7 +50,7 @@ LIMITS = {"commits": 20, "words": 2000, "ratio": 0.05, "size": 40_000,
           "window_days": 14, "route": 150_000}
 # Журналы и снимки — не живой канон: дописывание в них норма.
 JOURNAL = re.compile(r"(?i)(?:^|/)(?:changelog|corrections|slomalos|history|correspondence|"
-                     r"timeline|переписка|хроника)[^/]*\.md$"
+                     r"timeline|releases|release-notes|переписка|хроника|журнал)[^/]*\.md$"
                      r"|(?:^|/)[^/]*(?:archive|архив)[^/]*(?:/|\.md$)"
                      r"|(?<!\d)20\d{2}-\d{2}(?:-\d{2})?(?!\d)")
 FENCE = re.compile(r"(?ms)^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1[^\n]*$")

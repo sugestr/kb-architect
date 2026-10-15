@@ -265,6 +265,35 @@ def build(root, roles_wanted=(), routes_wanted=(), skip=()):
             "roles": roles, "found_roles": found_roles, "total": total, "now_stamp": now_stamp}
 
 
+def reuse(result, since):
+    """Убирает из входа части, которые уже прочитаны в файле `since` и не изменились
+    (проект 15.10.2026: смена роли трижды повторила неизменный NOW, ~40 КБ). Подтвердить такой
+    файл можно, только если `since` подтверждён в этой же сессии — проверяет kb_start."""
+    try:
+        with open(since + ".json", encoding="utf-8") as f:
+            previous = json.load(f)
+    except (OSError, ValueError):
+        return None
+    known = {(c.get("rel"), c.get("sha256")) for c in previous.get("content") or []
+             if isinstance(c, dict)}
+    if not known:
+        return None
+    kept, reused = [], []
+    for rel, why, data in result["files"]:
+        if rel != "роли проекта" and (rel, hashlib.sha256(data).hexdigest()) in known:
+            reused.append({"rel": rel, "sha256": hashlib.sha256(data).hexdigest()})
+        else:
+            kept.append((rel, why, data))
+    result["files"] = kept
+    result["total"] = sum(len(d) for _, _, d in kept)
+    result["reused_content"] = reused
+    result["reused_from"] = os.path.realpath(since)
+    if not reused:
+        return ""
+    return ("Уже прочитано в " + os.path.basename(since) + " и не изменилось — не перечитывай: "
+            + ", ".join(c["rel"] for c in reused) + ".")
+
+
 def default_out(root):
     """Свой файл на каждый вызов: сессии в одном checkout не затирают вход
     друг друга. Git-каталог не отслеживается; недоступен — временный каталог."""
@@ -304,10 +333,12 @@ def out_blocked(root, out):
 
 def receipt_line(result, digest):
     roles = result["found_roles"]
+    reused = len(result.get("reused_content") or [])
     return (f"ENTRY_RECEIPT: kb-architect {kb_paths.skill_version() or '?'} · "
             f"current {result['now_stamp'] or 'без «Обновлено»'} · роль "
             f"{', '.join(roles) if roles else 'не выбрана'} · файлы: {len(result['files'])}, "
-            f"{result['total']} B, {digest[:12]}")
+            f"{result['total']} B, {digest[:12]}"
+            + (f" · без повтора неизменного: {reused}" if reused else ""))
 
 
 def write(root, result, out, header_note=""):
@@ -336,6 +367,12 @@ def write(root, result, out, header_note=""):
                # Внешний аудит 03.10.2026: метки неполного входа не снимают замок.
                "missing": result["missing"], "blocking": result["blocking"],
                "part_sha256": [part_hash(x) for x in fragments],
+               # Содержимое частей — чтобы следующий вход роли не повторял неизменное (--since).
+               "content": result.get("reused_content", []) + [
+                   {"rel": rel, "sha256": hashlib.sha256(data).hexdigest()}
+                   for rel, _, data in files if rel != "роли проекта"],
+               "reused_from": result.get("reused_from"),
+               "reused": result.get("reused_content", []),
                "receipt": receipt_line(result, digest)}
     try:
         with open(out + ".json", "w", encoding="utf-8") as f:
@@ -355,6 +392,8 @@ def main():
     parser.add_argument("--out")
     parser.add_argument("--agent", choices=("claude", "codex"),
                         help="не класть правила, которые этот агент загружает сам")
+    parser.add_argument("--since", help="подтверждённый в этой сессии файл входа: неизменные "
+                                        "части не повторяются (смена роли)")
     args = parser.parse_args()
     root = os.path.abspath(args.root)
     if not os.path.isdir(root):
@@ -366,12 +405,19 @@ def main():
         return 2
     skip = {"claude": ("CLAUDE.md",), "codex": ("AGENTS.md",)}.get(args.agent, ())
     result = build(root, args.role, args.route, skip=skip)
+    note = ""
+    if args.since:
+        note = reuse(result, args.since)
+        if note is None:
+            print(f"BLOCKED: у {args.since} нет описи частей (файл входа до 8.2.1 или не файл входа); "
+                  "собери вход без --since")
+            return 2
     files, missing, optional, roles = (result["files"], result["missing"], result["optional"],
                                        result["roles"])
     total = result["total"]
     if not out:
         out = default_out(root)
-    digest, _ = write(root, result, out)
+    digest, _ = write(root, result, out, header_note=note)
     print(f"ENTRY_BUNDLE={out}")
     print(f"  файлов: {len(files)}, байт: {total}")
     for rel, why, data in files:

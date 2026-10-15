@@ -57,6 +57,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import kb_entry
+import kb_index
 import kb_paths
 import kb_turns
 
@@ -602,6 +603,20 @@ def verify(root, state, token, bundle=None, no_role=None):
     found, why = check_marks(candidates(root, state, bundle, since), fragments_of(token))
     if not found:
         return None, why
+    # Вход без повтора неизменного (--since) засчитывается, только если файл, на который он
+    # опирается, подтверждён в этой же сессии: иначе current можно было бы не прочитать вовсе.
+    reused_from = found.get("reused_from")
+    if reused_from or found.get("reused"):
+        done = (state or {}).get("confirmed") or {}
+        read = {(c.get("rel"), c.get("sha256")) for c in done.get("content") or []
+                if isinstance(c, dict)}
+        reused = {(c.get("rel"), c.get("sha256")) for c in found.get("reused") or []
+                  if isinstance(c, dict)}
+        if not done.get("bundle") or not reused_from or \
+                os.path.realpath(done["bundle"]) != os.path.realpath(reused_from) or \
+                not reused <= read:
+            return None, ("файл собран с --since, а пропущенное не прочитано в подтверждённом входе "
+                          "этой сессии: собери вход без --since и подтверди его метками")
     # Внешний аудит 03.10.2026: чтение оставшихся частей не доказывает вход роли. Держит замок
     # только пробел роли (метод не найден или не прочитан, сломан предок); выход — другая роль
     # или «без роли». Файл входа до 7.7 (без поля) принимается как прежде.
@@ -619,7 +634,12 @@ def verify(root, state, token, bundle=None, no_role=None):
     if state and state.get("project_update"):
         receipt += f" · проект: {state['project_update']}"
     return {"at": now_iso(), "bundle": found.get("bundle"), "roles": found.get("roles", []),
-            "receipt": receipt, "no_role": (no_role or "").strip() or None}, None
+            "receipt": receipt, "no_role": (no_role or "").strip() or None,
+            # Опись прочитанного и отпечаток входа — снимок в момент подтверждения: файл входа
+            # можно пересобрать по тому же пути, состояние сессии — нет (ревью 8.2.1).
+            "content": [c for c in (found.get("content")
+                                    or (sidecar(found.get("bundle") or "") or {}).get("content")
+                                    or []) if isinstance(c, dict)]}, None
 
 
 def parse_confirm(cmd):
@@ -803,6 +823,12 @@ def shell_read_only(cmd):
         if words and not command_read_only(words):
             return False
     return True
+
+
+# Служебные инструменты приложения Claude (план задачи, панели, сессии) не меняют проект; хост
+# требует некоторые из них первым вызовом, и замок входа отклонял их (проект 15.10.2026).
+HOST_UI = re.compile(r"^mcp__ccd_view__(?:show_pane|close_pane|get_layout|set_transcript_view)$|"
+                     r"^mcp__ccd_session__(?:update_plan|wrap_up|mark_chapter|read_widget_context)$")
 
 
 def mcp_read_only(tool):
@@ -1267,12 +1293,94 @@ def on_tool(event, agent):
     return decision
 
 
+def entry_content(root, roles=(), skip=()):
+    """{(часть, sha256)} того, что вход этого корня сделал бы обязательным для этих ролей:
+    правила, current, обязательные файлы, маршруты «всегда», методы ролей."""
+    try:
+        result = kb_entry.build(root, tuple(roles), (), skip=skip)
+    except Exception:
+        return None
+    return {(rel, hashlib.sha256(data).hexdigest()) for rel, _, data in result["files"]
+            if rel != "роли проекта"}
+
+
+def session_rearmed_after(sid, moment):
+    """Взводился ли вход этой сессии в каком-либо корне после `moment` (сжатие, /clear)."""
+    folder = os.path.join(state_root(), "sessions")
+    prefix = f"{safe_name(sid)}--"
+    try:
+        names = [n for n in os.listdir(folder) if n.startswith(prefix) and n.endswith(".json")]
+    except OSError:
+        return False
+    for name in names:
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                state = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if iso_time(state.get("armed_at")) > moment:
+            return True
+    return False
+
+
+def same_file(a, b):
+    try:
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            return fa.read() == fb.read()
+    except OSError:
+        return not os.path.exists(a) and not os.path.exists(b)
+
+
+def sibling_confirmation(sid, root, agent="claude"):
+    """Подтверждённый вход этой сессии в другой worktree того же репозитория, покрывающий
+    всё, что потребовал бы вход этого корня.
+
+    15.10.2026: сессия, вошедшая в основной checkout, упиралась в замок при первом касании
+    каждого worktree (в одной сессии — 12–27 отказов). Засчитывается (ревью 8.2.1), только если
+    корень — верх своего worktree (не вложенный проект), сам ещё не взводился в этой сессии,
+    после того подтверждения вход сессии нигде не взводился заново (сжатие), и каждая
+    обязательная часть входа этого корня с тем же содержимым есть среди прочитанного.
+    Замок защищает от забывчивости, а не от агента, подделывающего файлы входа."""
+    if load_state(sid, root):
+        return None                      # корень уже взводился: свой вход, не соседский
+    real = os.path.realpath(root)
+    try:
+        top = subprocess.run(["git", "-C", root, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True, timeout=10)
+        out = subprocess.run(["git", "-C", root, "worktree", "list", "--porcelain", "-z"],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if top.returncode or out.returncode or os.path.realpath(top.stdout.strip()) != real:
+        return None
+    for field in out.stdout.split("\0"):
+        if not field.startswith("worktree "):
+            continue
+        other = os.path.realpath(field[len("worktree "):])
+        if other == real:
+            continue
+        done = ((load_state(sid, other) or {}).get("confirmed")) or {}
+        read = {(c.get("rel"), c.get("sha256")) for c in done.get("content") or []
+                if isinstance(c, dict)}
+        if not read or session_rearmed_after(sid, iso_time(done.get("at"))):
+            continue
+        skip = AUTO_RULES.get(agent, ())
+        need = entry_content(root, done.get("roles") or (), skip)
+        # Правила, которые агент загружает сам, во вход не попадают: они должны совпадать байтами.
+        if need and need <= read and all(same_file(os.path.join(root, n), os.path.join(other, n))
+                                         for n in skip):
+            return done
+    return None
+
+
 def gate(event, agent, roots):
     tool = event.get("tool_name") or ""
     sid = event.get("session_id")
     tool_input = event.get("tool_input") or {}
     cmd = command_of(tool_input) if tool in SHELL_TOOLS else ""
     for root in roots:
+        if not (load_state(sid, root) or {}).get("confirmed") and sibling_confirmation(sid, root, agent):
+            continue
         state, _ = session_state(sid, root, agent)
         if not state or state.get("confirmed") or state.get("error"):
             continue
@@ -1289,7 +1397,7 @@ def gate(event, agent, roots):
                 continue
         if tool in SHELL_TOOLS and shell_read_only(cmd):
             continue
-        if tool.startswith("mcp__") and mcp_read_only(tool):
+        if tool.startswith("mcp__") and (mcp_read_only(tool) or HOST_UI.match(tool)):
             continue
         return deny(deny_reason(state, kb_entry.declared_roles(root)[0]))
     return None
