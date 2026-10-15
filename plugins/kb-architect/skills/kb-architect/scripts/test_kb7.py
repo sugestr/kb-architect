@@ -2798,12 +2798,12 @@ class ReleaseActions0210Tests(unittest.TestCase):
         # Below the full line, apply must still show the outstanding release actions.
         self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
         due = self.run_tool("kb_due.py").stdout
-        self.assertIn(f"полный уровень проекта для него — {line}", due)
+        self.assertIn(f"полный уровень проекта для него — {kb_paths.skill_version()}", due)
         self.assertIn("примени применимое и обнови строку", due)
         applied = self.run_tool("kb_apply.py")
         self.assertEqual(applied.returncode, 1, applied.stdout + applied.stderr)
         self.assertIn("NEEDS_APPLICATION", applied.stdout)
-        self.assertIn(f"цель {line}", applied.stdout)
+        self.assertIn(f"цель {kb_paths.skill_version()}", applied.stdout)
         self.assertIn("PROJECT_RELEASE_ACTIONS", applied.stdout)
         self.assertIn("`entry_role`", applied.stdout)
         self.assertNotIn("миграции нет", applied.stdout)
@@ -2923,11 +2923,11 @@ class VersionLine0210Tests(unittest.TestCase):
                 due = self.run_tool("kb_due.py").stdout
                 applied = self.run_tool("kb_apply.py")
                 self.assertIn(f"версия проекта {version}", due)
-                self.assertIn(f"полный уровень проекта для него — {line}", due)
+                self.assertIn(f"полный уровень проекта для него — {kb_paths.skill_version()}", due)
                 self.assertIn("примени применимое и обнови строку", due)
                 self.assertEqual(applied.returncode, 1, applied.stdout + applied.stderr)
                 self.assertIn("NEEDS_APPLICATION", applied.stdout)
-                self.assertIn(f"Версия проекта {version}, цель {line}", applied.stdout)
+                self.assertIn(f"Версия проекта {version}, цель {kb_paths.skill_version()}", applied.stdout)
                 self.assertNotIn("PROJECT_VERSION_OK", applied.stdout)
         self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.0.0\n")
         self.assertIn("примени применимое и обнови", self.run_tool("kb_due.py").stdout)
@@ -4923,7 +4923,7 @@ class CloseSession0510Tests(unittest.TestCase):
         run = subprocess.run([sys.executable, str(HERE / "kb_apply.py"), str(self.root)],
                              capture_output=True, text=True, timeout=60)
         self.assertEqual(run.returncode, 1, run.stdout)
-        self.assertIn(f"цель {line} — полный уровень выпуска", run.stdout)
+        self.assertIn(f"цель {kb_paths.skill_version()} — полный уровень выпуска", run.stdout)
         self.assertIn("ВЫПУСКИ ВЫШЕ НОМЕРА ПРОЕКТА", run.stdout)
         self.assertIn("NEEDS_APPLICATION", run.stdout)
         self.assertNotIn("номер проекта менять не нужно", run.stdout)

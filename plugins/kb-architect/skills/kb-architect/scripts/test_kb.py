@@ -142,7 +142,7 @@ def t_620_thin_router_points_to_versioned_contract():
     out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
     check("версионируемое ядро сохраняет обязательные правила и их маршруты",
           len(router.encode("utf-8")) <= 14_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B.
-          and 'version: "8.2.1"' in router
+          and 'version: "8.2.2"' in router
           and all(path in router for path in (
               "references/project-roles.md", "references/retrieval.md",
               "references/adopt-existing.md", "references/migration.md"))
@@ -193,7 +193,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 14_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == '8.2.1'
+          and data.get("baseline_version") == '8.2.2'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
@@ -1850,7 +1850,7 @@ def t_633_apply_does_not_replay_historical_cleanup():
     out = run("kb_apply.py", d)
     check("6.4 application does not replay historical cleanup rows",
           out.code == 1 and "NEEDS_APPLICATION" in out
-          and f"цель {line}" in out and "[7.2.0]" in out
+          and f"цель {kb_paths.skill_version()}" in out and "[7.2.0]" in out
           and "[5.4]" not in out
           and "credential cleanup" not in out,
           out, "full-level delta is shown without repeating accepted historical cleanup")
@@ -2016,7 +2016,7 @@ def t_620_update_does_not_replay_old_optional_capabilities():
     out = run("kb_apply.py", d)
     check("обновление не переоткрывает старые опциональные возможности",
           out.code == 1 and "NEEDS_APPLICATION" in out
-          and f"цель {line}" in out and "[7.2.0]" in out
+          and f"цель {kb_paths.skill_version()}" in out and "[7.2.0]" in out
           and "[4.19]" not in out
           and "НОВЫХ ВОЗМОЖНОСТЕЙ, ТРЕБУЮЩИХ РЕШЕНИЯ, НЕТ" in out,
           out, "the full-level delta does not reopen choices below the accepted project marker")
@@ -2686,7 +2686,7 @@ def t_apply_ignores_marker_syntax_examples():
           "[4.17] …" not in out and "[4.21] …" not in out
           and "[5.0]" not in out and "[7.2.0]" in out
           and out.code == 1 and "NEEDS_APPLICATION" in out
-          and f"цель {line}" in out
+          and f"цель {kb_paths.skill_version()}" in out
           and "ТРЕБУЮТ ДЕЙСТВИЯ" in out, out,
           "parser skips placeholders; below the minimum the delta starts at the minimum, not history")
     shutil.rmtree(d, ignore_errors=True)
@@ -3309,7 +3309,7 @@ def t_512_update_project_option_really_runs_apply():
           and "SESSION_ACTION=APPLY_PROJECT_DELTA_NOW" in out
           and "[7.2.0]" in out
           and "[5.4]" not in out
-          and f"цель {line}" in out
+          and f"цель {kb_paths.skill_version()}" in out
           and "ВЫПУСКИ ВЫШЕ НОМЕРА ПРОЕКТА" in out,
           out, "the single entry command executes kb_apply and propagates exit 1")
     shutil.rmtree(source, ignore_errors=True)
@@ -5425,14 +5425,14 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "8.2.1"
+          kb_paths.skill_version() == "8.2.2"
           and kb_paths.skill_contract_line() == "7.2.0"
-          and kb_skills.current_contract_line() == line
+          and kb_skills.current_contract_line() == kb_paths.skill_version()
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
           and ("миграции нет" in p.stdout or "PROJECT_VERSION_OK" in p.stdout)
           and "PROJECT_RELEASE_ACTIONS" in p.stdout
           and old_run.returncode == 1 and "NEEDS_APPLICATION" in old_run.stdout
-          and f"цель {line}" in old_run.stdout
+          and f"цель {kb_paths.skill_version()}" in old_run.stdout
           and "[7.2.0]" in old_run.stdout and "[7.1.0]" not in old_run.stdout,
           out, "full release level as the target, 7.2.0 only as the compatibility minimum")
     shutil.rmtree(d, ignore_errors=True)

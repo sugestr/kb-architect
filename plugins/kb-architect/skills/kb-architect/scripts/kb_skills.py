@@ -1994,13 +1994,14 @@ def active_registry(root: Path, registry: Path) -> tuple[Path, dict | None, list
 
 
 def current_contract_line() -> str:
-    """Полный уровень проекта для установленного выпуска — его линия, не минимум совместимости
-    (владелец 11.10: «обновись» поднимает проект до полного уровня)."""
+    """Полный уровень проекта — номер установленного выпуска, не минимум совместимости и не его
+    линия (владелец 11.10 и 15.10: «обновись» поднимает проект до актуального выпуска)."""
     skill_file = Path(__file__).resolve().parent.parent / "SKILL.md"
     version = (frontmatter_value(skill_file, "version")
                or frontmatter_value(skill_file, "minimum_project_version") or "7.0.0")
     try:
-        return kb_apply.line_text(version)
+        kb_apply.line_text(version)               # проверка формы номера
+        return version.strip()
     except (AttributeError, ValueError):
         return "7.0.0"
 
