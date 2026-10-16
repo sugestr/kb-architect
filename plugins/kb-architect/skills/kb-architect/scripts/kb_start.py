@@ -1351,7 +1351,7 @@ def sibling_confirmation(sid, root, agent="claude"):
                              capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if top.returncode or out.returncode or os.path.realpath(top.stdout.strip()) != real:
+    if top.returncode or out.returncode or os.path.realpath(top.stdout.rstrip("\r\n")) != real:
         return None
     for field in out.stdout.split("\0"):
         if not field.startswith("worktree "):

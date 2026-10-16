@@ -591,7 +591,9 @@ def exam(root):
     # Внешний аудит 03.10.2026: вопросы, база и проверка из одного HEAD;
     # archive SHA:prefix даёт корень вложенного проекта, без соседних проектов.
     head = git(root, "rev-parse", "HEAD").strip()
-    top = git(root, "rev-parse", "--show-toplevel").strip()
+    # Путь из git: снимается только перевод строки — пробел в конце имени корня значим
+    # (проект «Foxio LTD », 15.10.2026: экзамен падал COPY_FAILED).
+    top = git(root, "rev-parse", "--show-toplevel").rstrip("\r\n")
     if not head or not top or not inside(root, top):
         report["status"] = "COPY_FAILED"
         return report

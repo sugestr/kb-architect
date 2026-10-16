@@ -3368,6 +3368,16 @@ open(out, "w").write("Источник: [QUESTIONS.md] — см. ниже\n" + j
         self.git("add", ".")
         self.git("commit", "-qm", "base")
 
+    def test_exam_runs_in_a_root_whose_name_ends_with_a_space(self):
+        """A company project 15.10.2026: «Foxio LTD » lost its trailing space to .strip() and the
+        exam stopped at COPY_FAILED."""
+        self.root = self.base / "Foxio LTD "
+        self.root.mkdir()
+        self.exam_project()
+        out = self.service("exam", env=self.fake("good"))
+        self.assertNotIn("COPY_FAILED", out.stdout, out.stdout + out.stderr)
+        self.assertIn("верно 2", out.stdout)
+
     def test_exam_hides_the_answers_renumbers_and_grades(self):
         self.exam_project()
         out = self.service("exam", env=self.fake("good"))
@@ -5060,6 +5070,17 @@ class Consistency1210Tests(unittest.TestCase):
             self.commit(f"touch {i}")
         paths = [c["path"] for c in self.state()["chapters"]]
         self.assertEqual(paths, ["kb/orders.md"])
+
+    def test_a_reference_table_is_not_lost_form(self):
+        """A company project 16.10.2026: reference tables of 30–50 KB under one heading were hot."""
+        row = "| " + " | ".join(f"поле {k} значение" for k in range(30)) + " |\n"
+        self.save("kb/19-spravochnik.md", "# Справочник\n\n| a | b |\n|---|---|\n" + row * 200)
+        self.commit("table")
+        for i in range(3):
+            self.save("kb/19-spravochnik.md", (self.root / "kb/19-spravochnik.md").read_text(encoding="utf-8")
+                      + row)
+            self.commit(f"row {i}")
+        self.assertEqual(self.state()["chapters"], [])
 
     def test_a_recorded_review_holds_only_for_the_version_read(self):
         self.grow("kb/site.md")

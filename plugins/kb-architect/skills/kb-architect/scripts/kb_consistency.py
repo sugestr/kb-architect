@@ -169,10 +169,15 @@ def canon_files(root):
 
 
 def form(text):
-    """(байт, самая длинная строка вне кода, заголовков)."""
+    """(байт текста, самая длинная строка текста, заголовков) — вне кода и вне таблиц.
+
+    Строка таблицы — запись справочника, а не абзац: справочник на 50 КБ с одним заголовком
+    и длинными строками таблицы правилен (проект 16.10.2026: три ложные горячие главы)."""
     prose = FENCE.sub("", text)
-    longest = max((len(line.encode("utf-8")) for line in prose.splitlines()), default=0)
-    return len(text.encode("utf-8")), longest, len(HEADING.findall(prose))
+    lines = [line for line in prose.splitlines() if not line.lstrip().startswith("|")]
+    longest = max((len(line.encode("utf-8")) for line in lines), default=0)
+    size = sum(len(line.encode("utf-8")) + 1 for line in lines)
+    return size, longest, len(HEADING.findall(prose))
 
 
 # ---------------------------------------------------------------- история
