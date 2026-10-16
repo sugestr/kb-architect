@@ -2534,7 +2534,7 @@ class ExecutableEntryReview0210Tests(unittest.TestCase):
         self.assertIn("ENTRY_CONFIRMED: роль ops", ok.stdout)
 
     def test_paths_with_spaces_survive_copying_the_printed_command(self):
-        self.root = self.base / "Foxio LTD "
+        self.root = self.base / "Company LTD "
         self.root.mkdir()
         self.project(big_now=True)
         context = self.start()["hookSpecificOutput"]["additionalContext"]
@@ -3369,9 +3369,9 @@ open(out, "w").write("Источник: [QUESTIONS.md] — см. ниже\n" + j
         self.git("commit", "-qm", "base")
 
     def test_exam_runs_in_a_root_whose_name_ends_with_a_space(self):
-        """A company project 15.10.2026: «Foxio LTD » lost its trailing space to .strip() and the
+        """A company project 15.10.2026: «Company LTD » lost its trailing space to .strip() and the
         exam stopped at COPY_FAILED."""
-        self.root = self.base / "Foxio LTD "
+        self.root = self.base / "Company LTD "
         self.root.mkdir()
         self.exam_project()
         out = self.service("exam", env=self.fake("good"))

@@ -142,7 +142,7 @@ def t_620_thin_router_points_to_versioned_contract():
     out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
     check("версионируемое ядро сохраняет обязательные правила и их маршруты",
           len(router.encode("utf-8")) <= 14_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B.
-          and 'version: "8.2.3"' in router
+          and 'version: "8.2.4"' in router
           and all(path in router for path in (
               "references/project-roles.md", "references/retrieval.md",
               "references/adopt-existing.md", "references/migration.md"))
@@ -193,7 +193,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 14_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == '8.2.3'
+          and data.get("baseline_version") == '8.2.4'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
@@ -3466,7 +3466,7 @@ def t_602_private_family_report_defaults_to_detailed_local_route():
 
 
 def t_612_linked_worktree_finds_canonical_private_report_inbox():
-    """29.08 Foxio: isolated worktree guessed GitHub although owner lab was local."""
+    """29.08 a company project: isolated worktree guessed GitHub although owner lab was local."""
     parent = tempfile.mkdtemp(prefix="kbtest-report-owner-")
     projects = os.path.join(parent, "Documents", "Projects")
     source = os.path.join(projects, "subject")
@@ -3576,7 +3576,7 @@ def t_611_git_only_candidate_uses_commit_without_second_shadow():
 
 
 def t_612_git_root_trailing_space_preserves_tracking():
-    """29.08 Foxio: .strip() changed a valid Git root and invented untracked roles."""
+    """29.08 a company project: .strip() changed a valid Git root and invented untracked roles."""
     import kb_paths
 
     details = []
@@ -3728,7 +3728,7 @@ def t_621_compact_application_requires_the_actual_candidate_parent():
 
 
 def t_612_release_application_follows_safe_boot_symlink():
-    """29.08 Foxio: recommended AGENTS.md -> CLAUDE.md failed source receipt."""
+    """29.08 a company project: recommended AGENTS.md -> CLAUDE.md failed source receipt."""
     import kb_apply
     import kb_paths
     line = kb_apply.line_text(kb_paths.skill_version())
@@ -3923,7 +3923,7 @@ def t_601_acceptance_gates_cannot_collapse_into_owner_claim():
 
 
 def t_612_static_behavior_assertion_is_not_an_executed_run():
-    """Foxio recurrence: five static PASS rows passed without observed behavior."""
+    """A company project recurrence: five static PASS rows passed without observed behavior."""
     import json
     d, _registry = accepted_role_fixture()
     path = os.path.join(d, "ROLE_ACCEPTANCE.json")
@@ -3940,7 +3940,7 @@ def t_612_static_behavior_assertion_is_not_an_executed_run():
 
 
 def t_613_nonexistent_harness_cannot_pass_recorded_behavior():
-    """Foxio 6.1.2: a hand-written receipt named a harness that did not exist."""
+    """A company project, 6.1.2: a hand-written receipt named a harness that did not exist."""
     import json
     d, _registry = accepted_role_fixture()
     path = os.path.join(d, "ROLE_ACCEPTANCE.json")
@@ -4672,7 +4672,7 @@ def t_616_malformed_execution_receipt_fields_fail_closed():
 
 
 def t_612_packaging_review_cannot_claim_professional_method_pass():
-    """Foxio review moved files but was reported as professional role quality PASS."""
+    """A company project review moved files but was reported as professional role quality PASS."""
     import json
     d, _registry = accepted_role_fixture()
     review = os.path.join(d, "skills", "domain-auditor", "ROLE_QUALITY_REVIEW.json")
@@ -5425,7 +5425,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "8.2.3"
+          kb_paths.skill_version() == "8.2.4"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == kb_paths.skill_version()
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout
