@@ -26,6 +26,11 @@ from pathlib import Path
 import subprocess
 import sys
 from typing import Mapping
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import kb_lock  # noqa: E402,F401  (UTF-8 вывод на Windows)
+except ImportError:  # частичная копия скилла: без настройки вывода, но не падать
+    pass
 
 
 OWNER_REPOSITORY = "sugestr/kb-architect-lab"

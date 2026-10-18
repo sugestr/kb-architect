@@ -5313,5 +5313,50 @@ class Consistency1210Tests(unittest.TestCase):
         self.assertEqual(kb_service.roles_without_questions(str(self.root)), ["site-editor"])
 
 
+class Windows1810Tests(unittest.TestCase):
+    """Отчёт с Windows 18.10.2026: без fcntl падали kb_start/kb_service при импорте, консоль cp1252
+    роняла печать кириллицы."""
+
+    def no_fcntl_env(self, tmp):
+        site = Path(tmp) / "site"
+        site.mkdir()
+        (site / "sitecustomize.py").write_text("import sys\nsys.modules['fcntl'] = None\n", encoding="utf-8")
+        return dict(os.environ, PYTHONPATH=str(site), KB_ENTRY_HOOK="off", KB_ENTRY_UPDATE="off")
+
+    def test_scripts_start_without_fcntl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self.no_fcntl_env(tmp)
+            probe = subprocess.run([sys.executable, "-c", "import fcntl"], capture_output=True, env=env)
+            self.assertNotEqual(probe.returncode, 0, "the fixture really hides fcntl")
+            for script in ("kb_start.py", "kb_service.py", "kb_entry.py", "kb_check.py", "kb_consistency.py"):
+                run = subprocess.run([sys.executable, str(HERE / script), "--help"], capture_output=True,
+                                     text=True, timeout=60, env=env)
+                self.assertNotIn("No module named 'fcntl'", run.stderr, script)
+                self.assertNotIn("Traceback", run.stderr, script)
+
+    def test_portable_lock_excludes_a_second_holder_where_a_mechanism_exists(self):
+        import kb_lock
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "x.lock")
+            with open(path, "a", encoding="utf-8") as a, open(path, "a", encoding="utf-8") as b:
+                self.assertTrue(kb_lock.try_lock(a))
+                if kb_lock.fcntl is not None or kb_lock.msvcrt is not None:
+                    self.assertFalse(kb_lock.try_lock(b), "a second holder must wait")
+                kb_lock.unlock(a)
+                self.assertTrue(kb_lock.try_lock(b), "released after unlock")
+                kb_lock.unlock(b)
+
+    def test_windows_console_gets_utf8(self):
+        import kb_lock
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="cp1252")
+        with patch.object(kb_lock.os, "name", "nt"), patch.object(sys, "stdout", stream), \
+                patch.object(sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="cp1252")):
+            kb_lock.utf8_stdio()
+            print("  файлов: 3, байт: 100")
+            sys.stdout.flush()
+        self.assertIn("файлов".encode("utf-8"), raw.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

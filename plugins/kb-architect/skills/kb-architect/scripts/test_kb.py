@@ -142,7 +142,7 @@ def t_620_thin_router_points_to_versioned_contract():
     out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
     check("версионируемое ядро сохраняет обязательные правила и их маршруты",
           len(router.encode("utf-8")) <= 14_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B.
-          and 'version: "8.2.4"' in router
+          and 'version: "8.2.5"' in router
           and all(path in router for path in (
               "references/project-roles.md", "references/retrieval.md",
               "references/adopt-existing.md", "references/migration.md"))
@@ -193,7 +193,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 14_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == '8.2.4'
+          and data.get("baseline_version") == '8.2.5'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
@@ -1234,6 +1234,39 @@ def t_external_role_checkout_must_match_declared_pin():
           out, "a sibling checkout at a newer commit is not the pinned role")
     shutil.rmtree(d, ignore_errors=True)
     shutil.rmtree(external, ignore_errors=True)
+
+
+def t_unmaterialized_git_symlink_discovery_is_named_with_a_way_out():
+    """18.10.2026, Windows: core.symlinks=false turns discovery links into pointer files."""
+    d = base({"skills/domain-auditor/SKILL.md":
+              "---\nname: domain-auditor\n---\n"})
+    os.makedirs(os.path.join(d, ".agents", "skills"))
+    os.makedirs(os.path.join(d, ".claude", "skills"))
+    for agent_dir in (".agents", ".claude"):
+        with open(os.path.join(d, agent_dir, "skills", "domain-auditor"), "w", encoding="utf-8") as f:
+            f.write("../../skills/domain-auditor")
+    registry = visible_role_registry(
+        "domain-auditor", "skills/domain-auditor",
+        ".agents/skills/domain-auditor", ".claude/skills/domain-auditor")
+    write_role_acceptance(d, registry)
+    import json
+    os.makedirs(os.path.join(d, "knowledge"))
+    with open(os.path.join(d, "knowledge", "case.md"), "w", encoding="utf-8") as f:
+        f.write("fixture\n")
+    with open(os.path.join(d, "KNOWLEDGE_INDEX.json"), "w", encoding="utf-8") as f:
+        json.dump(knowledge_index(), f)
+    with open(os.path.join(d, "PROJECT_ROLES.json"), "w", encoding="utf-8") as f:
+        json.dump(registry, f)
+    subprocess.run(["git", "-C", d, "init", "-q"], check=True)
+    subprocess.run(["git", "-C", d, "add", "PROJECT_ROLES.json", "ROLE_ACCEPTANCE.json", "role-acceptance",
+                    "KNOWLEDGE_INDEX.json", "knowledge", "skills", ".agents", ".claude"], check=True)
+    out = run_skills(d)
+    check("незаметный Windows-symlink роли назван с рабочим продолжением",
+          out.code == 1 and "Git symlink the OS did not create" in out
+          and "kb_entry.py <root> --role domain-auditor" in out
+          and "resolves to another copy" not in out,
+          out, "a pointer file is told apart from a broken target and gets the manual route")
+    shutil.rmtree(d, ignore_errors=True)
 
 
 def t_broken_project_skill_discovery_is_visible():
@@ -5425,7 +5458,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "8.2.4"
+          kb_paths.skill_version() == "8.2.5"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == kb_paths.skill_version()
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

@@ -9,6 +9,12 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import kb_lock  # noqa: E402,F401  (UTF-8 вывод на Windows)
+except ImportError:  # частичная копия скилла: без настройки вывода, но не падать
+    pass
 
 
 ROOT = Path(__file__).resolve().parents[1]

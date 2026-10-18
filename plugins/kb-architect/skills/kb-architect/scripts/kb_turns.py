@@ -34,7 +34,6 @@ PostToolUse/Failure для результатов) и
 import argparse
 from contextlib import contextmanager
 from contextvars import ContextVar
-import fcntl
 import hashlib
 import json
 import os
@@ -45,6 +44,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kb_lock  # noqa: E402
 
 DECISION = re.compile(r"(?:решени|решил|правил[оа]|всегда\b|никогда\b|запомни|впредь|отныне|"
                       r"договорились|принимаю|утверждаю|согласен|делаем так)", re.IGNORECASE)
@@ -78,18 +78,14 @@ def file_lock(path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     deadline = DEADLINE.get() or time.monotonic() + GIT_BUDGET
     with open(path + ".lock", "a", encoding="utf-8") as lock:
-        while True:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("реестр: ожидание блокировки истекло")
-                time.sleep(0.02)
+        while not kb_lock.try_lock(lock):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("реестр: ожидание блокировки истекло")
+            time.sleep(0.02)
         try:
             yield
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            kb_lock.unlock(lock)
 
 
 def state_root():

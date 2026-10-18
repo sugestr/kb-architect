@@ -32,6 +32,12 @@ kb_paths.py — где у проекта вход, журнал и контро�
 
 import os
 import re
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import kb_lock  # noqa: E402,F401  (UTF-8 вывод на Windows)
+except ImportError:  # частичная копия скилла: без настройки вывода, но не падать
+    pass
 
 RULES_NAMES = ("CLAUDE.md", "AGENTS.md", "ПРАВИЛА.md")
 

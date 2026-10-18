@@ -321,6 +321,15 @@ def check_skill_source(root: Path, entry: dict, agents: list[str],
         if point.is_symlink() and not point.exists():
             errors.append(f"{name}: broken {agent} discovery symlink")
             continue
+        pointer = git_symlink_pointer(point)
+        if pointer is not None and (point.parent / pointer).resolve() == canonical:
+            # Windows без права на symlink (core.symlinks=false): Git кладёт вместо ссылки файл
+            # с путём; канон цел, не работает только автообнаружение (отчёт с Windows, 18.10.2026).
+            errors.append(f"{name}: {agent} discovery is a Git symlink the OS did not create "
+                          f"(core.symlinks=false); the canonical skill is intact — choose the role "
+                          f"with `kb_entry.py <root> --role {name}`; for automatic discovery enable "
+                          f"symlinks (Windows Developer Mode) and run `git checkout -- {declared}`")
+            continue
         if not point.exists():
             errors.append(f"{name}: missing {agent} discovery point")
             continue
@@ -337,6 +346,17 @@ def check_skill_source(root: Path, entry: dict, agents: list[str],
     notes.append(f"{name}: entry={size} bytes (~{round(size / 3.3)} tokens); "
                  f"canonical={entry['canonical']}")
     return name, size
+
+
+def git_symlink_pointer(point: Path):
+    """Путь из файла-заглушки, которым Git заменяет symlink при core.symlinks=false, иначе None."""
+    try:
+        if point.is_symlink() or not point.is_file() or point.stat().st_size > 512:
+            return None
+        text = point.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text if text and "\n" not in text and not text.startswith("#") else None
 
 
 def evidence_errors(root: Path, value: object, label: str) -> list[str]:

@@ -18,6 +18,11 @@ import json
 import os
 import shutil
 import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import kb_lock  # noqa: E402,F401  (UTF-8 вывод на Windows)
+except ImportError:  # частичная копия скилла: без настройки вывода, но не падать
+    pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES = os.path.normpath(os.path.join(HERE, "..", "assets", "templates"))

@@ -343,30 +343,26 @@ def update_skill():
                     f"{last.get('status')}, повтор через час; вручную — kb_update.py --public"}
     except (OSError, ValueError, AttributeError):
         pass
-    import fcntl
+    import kb_lock
     os.makedirs(state_root(), exist_ok=True)
     lock = open(os.path.join(state_root(), "update.lock"), "w")
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    if not kb_lock.try_lock(lock):
         lock.close()
         return {"status": "BUSY", "line": "скилл обновляется в другой сессии прямо сейчас"}
     try:
         proc = subprocess.Popen([sys.executable, os.path.join(scripts_dir(), "kb_update.py"),
                                  "--public", "--fast", "--сделать"], stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+                                stderr=subprocess.DEVNULL, text=True, **kb_lock.new_group_kwargs())
         try:
             out, _ = proc.communicate(timeout=UPDATE_DEADLINE)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, 9)          # вместе с git clone, без сирот
-            except OSError:
-                pass
+            kb_lock.kill_tree(proc)             # вместе с git clone, без сирот (и на Windows)
             proc.communicate()
             out = "UPDATE_STATUS=TIMEOUT\n"
     except Exception as exc:
         out = f"UPDATE_STATUS=FAILED ({type(exc).__name__})\n"
     finally:
+        kb_lock.unlock(lock)
         lock.close()
     status = next((l.split("=", 1)[1].strip() for l in out.splitlines()
                    if l.startswith("UPDATE_STATUS=")), "UNKNOWN")
