@@ -81,6 +81,9 @@ def utf8_stdio():
     записи файла входа (отчёт с Windows, 18.10.2026). На POSIX ничего не меняет."""
     if os.name != "nt":
         return
+    # Дочерние python-процессы тоже в UTF-8: без этого вывод подпроцесса читался как cp1252,
+    # падал UnicodeDecodeError, и hook пропускал замок (отчёт с Windows, 18.10.2026).
+    os.environ.setdefault("PYTHONUTF8", "1")
     for stream in (sys.stdout, sys.stderr):
         try:
             if (getattr(stream, "encoding", "") or "").lower().replace("-", "") != "utf8":

@@ -142,7 +142,7 @@ def t_620_thin_router_points_to_versioned_contract():
     out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
     check("версионируемое ядро сохраняет обязательные правила и их маршруты",
           len(router.encode("utf-8")) <= 14_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B.
-          and 'version: "8.2.5"' in router
+          and 'version: "8.3.0"' in router
           and all(path in router for path in (
               "references/project-roles.md", "references/retrieval.md",
               "references/adopt-existing.md", "references/migration.md"))
@@ -193,7 +193,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 14_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == '8.2.5'
+          and data.get("baseline_version") == '8.3.0'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
@@ -1877,7 +1877,7 @@ def t_633_apply_does_not_replay_historical_cleanup():
     """An accepted compatibility minimum does not reopen old cleanup duties."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     d = base({"NOW.md": NOW_OK,
               "CLAUDE.md": "# правила\n\nkb_standard_version: 5.3\n"})
     out = run("kb_apply.py", d)
@@ -2043,7 +2043,7 @@ def t_620_update_does_not_replay_old_optional_capabilities():
     """A full-level delta does not reopen choices below the accepted marker."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     d = base({"NOW.md": NOW_OK,
               "CLAUDE.md": "# правила\n\nkb_standard_version: 4.18\n"})
     out = run("kb_apply.py", d)
@@ -2711,7 +2711,7 @@ def t_apply_ignores_marker_syntax_examples():
     4.17/4.21 превращалось в два фиктивных обязательных действия."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     d = base({"NOW.md": NOW_OK,
               "CLAUDE.md": "# правила\n\nkb_standard_version: 4.16\n"})
     out = run("kb_apply.py", d)
@@ -3312,7 +3312,7 @@ def t_512_update_project_option_really_runs_apply():
     """Команда из service-layer должна исполнять второй шаг, не только описывать."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     source = base({
         "SKILL.md": skill_text("SKILL.md"),
         "references/releases.md": skill_text("references/releases.md"),
@@ -3455,6 +3455,45 @@ def t_516_report_router_separates_local_and_remote_delivery():
     shutil.rmtree(remote, ignore_errors=True)
 
 
+def t_report_consent_language_and_link_fallback():
+    """Owner 18.10.2026: an outside user's report stayed «prepared» and was forwarded by hand."""
+    import shutil as _sh
+    def project(route_line, body):
+        return base({"NOW.md": NOW_OK,
+                     "CLAUDE.md": "# rules\n\nentry: NOW.md\n" + route_line,
+                     "report.md": body})
+    def send(d, *extra, env=None):
+        return subprocess.run([sys.executable, os.path.join(HERE, "kb_report.py"), "--project", d,
+                               "--report", os.path.join(d, "report.md"), *extra],
+                              capture_output=True, text=True, timeout=60, env=env)
+    english = "# Hook fails on Windows\n\nDetail mode: anonymised\n\nsh is missing.\n"
+    none = project("", english)
+    off = project("report route: не отправлять\n", english)
+    ru = project("report route: github-issue\n", "# Сбой\n\nDetail mode: anonymised\n")
+    en = project("report route: github-issue\n", english)
+    bindir = tempfile.mkdtemp()
+    if _sh.which("git"):
+        os.symlink(_sh.which("git"), os.path.join(bindir, "git"))
+    # Чужая машина: без лаборатории владельца рядом и в домашнем каталоге (иначе тест пишет
+    # в настоящий инбокс лаборатории).
+    away = dict(os.environ, HOME=bindir, USERPROFILE=bindir)
+    no_gh = dict(away, PATH=bindir + os.pathsep + os.path.dirname(sys.executable))
+    asked, refused = send(none, "--do", env=away), send(off, "--do", env=away)
+    russian = send(ru, "--do", "--public-safe", env=no_gh)
+    linked = send(en, "--do", "--public-safe", env=no_gh)
+    out = Vyvod("\n".join(p.stdout for p in (asked, refused, russian, linked)), 0)
+    check("отчёт: согласие один раз, любой язык, ссылка без gh",
+          asked.returncode == 1 and "CONSENT_NEEDED" in asked.stdout
+          and "github-issue" in asked.stdout
+          and refused.returncode == 1 and "NOT_SENT" in refused.stdout
+          and russian.returncode == 1 and "template=kb-report.yml" in russian.stdout
+          and linked.returncode == 1 and "template=kb-report.yml" in linked.stdout
+          and "Submit" in linked.stdout,
+          out, "no silent stop, a Russian report is fine, a prefilled link when gh is missing")
+    for d in (none, off, ru, en, bindir):
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def t_800_corrections_template_closure_is_recognised_by_the_checker():
     """8.0 review: the draft template wrote «✔ <date>; …», which kb_due never closes."""
     import kb_due
@@ -3572,7 +3611,7 @@ def t_640_marker_without_compact_application_is_unproven():
     """A current-line marker still needs one compact owner receipt."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     d = base({"CLAUDE.md": f"# rules\n\nkb_standard_version: {line}\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
@@ -3671,7 +3710,7 @@ def t_620_release_application_binds_source_line_and_owner():
     """The compact receipt binds source line and owner without a patch ledger."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
@@ -3710,7 +3749,7 @@ def t_621_compact_application_requires_the_actual_candidate_parent():
     """An older ancestor is rejected after another writer advances main."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
@@ -3764,7 +3803,7 @@ def t_612_release_application_follows_safe_boot_symlink():
     """29.08 a company project: recommended AGENTS.md -> CLAUDE.md failed source receipt."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.1.6\n"})
     os.symlink("CLAUDE.md", os.path.join(d, "AGENTS.md"))
@@ -3871,7 +3910,7 @@ def t_601_initial_adoption_records_source_without_replaying_history():
     """A new project proves initial adoption without pretending to migrate old releases."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     import json
     d = base({"CLAUDE.md": "# new project rules\n", "tests/proof.txt": "accepted\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
@@ -3905,7 +3944,7 @@ def t_620_direct_migration_does_not_replay_intermediate_releases():
     """A project moves directly from its source line to the current line."""
     import kb_apply
     import kb_paths
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     import json
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 5.16\n",
               "tests/proof.txt": "proof\n"})
@@ -5423,7 +5462,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
     import kb_apply
     import kb_paths
     import kb_skills
-    line = kb_apply.line_text(kb_paths.skill_version())
+    line = kb_paths.skill_version()
     d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 7.1.0\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md"], check=True)
@@ -5458,7 +5497,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "8.2.5"
+          kb_paths.skill_version() == "8.3.0"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == kb_paths.skill_version()
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

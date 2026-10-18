@@ -30,11 +30,13 @@ Patch history не превращается в project ledger.
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
 import posixpath
 import re
+import shlex
 import subprocess
 import sys
 
@@ -495,6 +497,68 @@ def base_traits(root):
 # Внешний аудит 03.10.2026: неиспользуемая APPLICABLE удалена.
 
 
+def patch_actions(proj, target):
+    """Дела ⟦Д⟧ выпусков в (proj, target], кроме пустого «миграции нет»."""
+    acts = []
+    for version, text in releases_between(proj, target):
+        for m in ACT.findall(text):
+            value = re.sub(r"^миграции нет[;,.]?\s*", "", " ".join(m.split()), flags=re.I)
+            if value and value not in {"…", "..."}:
+                acts.append((version, value))
+    return acts
+
+
+def bump(root, proj, target):
+    """Поднять номер проекта до выпуска: маркер в правилах и to_version квитанции, без коммита."""
+    path = os.path.join(root, APPLICATION_RECEIPT)
+    try:
+        data = json.loads(kb_paths.read(path))
+    except (OSError, ValueError) as exc:
+        print(f"BUMP_REFUSED: {APPLICATION_RECEIPT} не прочитан: {exc}")
+        return 2
+    application = data.get("application") if isinstance(data, dict) else None
+    key = "to_version" if data.get("schema") == 3 else "to_line"
+    if not isinstance(application, dict):
+        print(f"BUMP_REFUSED: в {APPLICATION_RECEIPT} нет application")
+        return 2
+    changed = []
+    for rules in kb_paths.rules_files(root):
+        real = os.path.realpath(rules)
+        if real in changed:
+            continue
+        text = kb_paths.read(rules)
+        new, n = VERSION_MARKER.subn(lambda m: m.group(0).replace(m.group(1).strip(), target, 1)
+                                     if m.group(1).strip().startswith(proj) else m.group(0), text)
+        if n and new != text:
+            with open(real, "w", encoding="utf-8") as f:
+                f.write(new)
+            changed.append(real)
+    if not changed:
+        print(f"BUMP_REFUSED: строка kb_standard_version: {proj} в правилах не найдена")
+        return 2
+    application[key] = target
+    if line_text(proj) != line_text(target):
+        # Переход через линию — новая запись перехода: источник — коммит, на котором сделан
+        # подъём, «до» — прежний номер; проверка квитанции ищет ровно этот переход.
+        head = git(root, "rev-parse", "HEAD")
+        if head.returncode:
+            print("BUMP_REFUSED: нет HEAD — подъём через линию требует коммита до него")
+            return 2
+        application["from_version" if data.get("schema") == 3 else "from_line"] = proj
+        source = application.get("source") if isinstance(application.get("source"), dict) else {}
+        source.update({"commit": head.stdout.strip(),
+                       "version_source": os.path.relpath(changed[0], os.path.realpath(root))})
+        application["source"] = source
+        application["finalized_at"] = datetime.date.today().isoformat()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    names = ", ".join(os.path.relpath(p, os.path.realpath(root)) for p in changed)
+    print(f"BUMPED: kb_standard_version {proj} → {target}; {APPLICATION_RECEIPT} {key} → {target}. "
+          f"Закоммить {names} и {APPLICATION_RECEIPT}.")
+    return 0
+
+
 def release_actions(root):
     """Действия выпуска без нового номера проекта (7.4: вход исполняет среда)."""
     try:
@@ -515,6 +579,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Проверить применение release delta к конкретной базе")
     parser.add_argument("root", help="корень базы")
+    parser.add_argument("--bump", action="store_true",
+                        help="поднять номер проекта до установленного выпуска, когда дел нет")
     parser.add_argument(
         "--target-version",
         help=("явная граница текущего migration cycle; более новая установленная "
@@ -575,7 +641,12 @@ def main():
     except (AttributeError, ValueError):
         print(f"некорректная редакция проекта: {proj}")
         return 2
-    if project_line >= target_line:
+    # Отстаёт по номеру от установленного выпуска; без дел ⟦Д⟧ в выпусках выше — поднять номер
+    # одной правкой можно и через линию (8.2.5 → 8.3.0), лишь бы проект был не ниже минимума.
+    behind = target == inst and ver_key(proj) < ver_key(inst)
+    acts_above = patch_actions(proj, inst) if behind else []
+    bumpable = behind and not acts_above and project_line >= installed_line
+    if (project_line >= target_line and not (behind and acts_above)) or bumpable:
         if project_line >= (6, 2):
             receipt_errors = application_receipt_errors(root, proj)
             if receipt_errors:
@@ -589,12 +660,27 @@ def main():
         if target != inst:
             print(f"TARGET_APPLICATION_OK: версия проекта {proj} уже покрывает "
                   f"цель {line_text(target)}.")
-        else:
-            print(f"PROJECT_VERSION_OK: проект {proj} на полном уровне выпуска {inst}; "
-                  "номер проекта менять не нужно.")
-        if target == inst:
-            release_actions(root)
+            return 0
+        if behind:
+            # Номер проекта равен номеру выпуска (владелец 18.10): «8.2.0 при скилле 8.2.5»
+            # читалось как требование ниже установленного. Сюда попадает только проект без дел
+            # в выпусках выше; выпуск с делом идёт обычным переходом ниже.
+            if args.bump:
+                return bump(root, proj, inst)
+            print(f"Версия проекта {proj}, цель {inst} — номер установленного выпуска; дел для "
+                  "проекта в выпусках выше нет.")
+            print(f"Подними номер одной правкой: python3 {os.path.abspath(__file__)} "
+                  f"{shlex.quote(root)} --bump — затем commit и push.")
+            print("NEEDS_APPLICATION: номер проекта ниже установленного выпуска.")
+            return 1
+        print(f"PROJECT_VERSION_OK: проект {proj} на уровне выпуска {inst}; "
+              "номер проекта менять не нужно.")
+        release_actions(root)
         return 0
+    if args.bump:
+        print("BUMP_REFUSED: подъём номера одной правкой — только когда проект не ниже минимума и "
+              "в выпусках выше его номера нет дел; иначе — переход по references/migration.md")
+        return 2
 
     # Переход ведёт к полному уровню выпуска: дела и возможности — из выпусков выше номера
     # проекта. Патчи внутри принятой линии миграцию не открывают.

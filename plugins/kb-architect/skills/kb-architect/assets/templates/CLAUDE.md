@@ -46,12 +46,12 @@ readiness: <единственная команда или manifest; «не пр
 
 ## Соответствие
 
-kb_standard_version: <принятый уровень — линия установленного выпуска, например 8.2.0; ставится после приёмки>
+kb_standard_version: <номер установленного выпуска, например 8.3.0; ставится после приёмки>
 release application: KB_RELEASE_APPLICATION.json
 сервисный контур kb-architect: <принят | не принят>
 обновление скилла: <по сигналу | автоматически>
 канал обновления скилла: GitHub public https://github.com/sugestr/kb-architect
-маршрут отчётов: <local-inbox | github-issue>
+маршрут отчётов: <local-inbox | github-issue | не отправлять — спроси владельца один раз>
 инбокс отчётов: <точный частный путь, если выбран local-inbox>
 отчёты о дефектах скилла: <детальные — частный канал владельца | обезличенные>
 cloud policy: <allowed | pending | prohibited>

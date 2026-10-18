@@ -1,0 +1,46 @@
+name: kb-architect problem report
+description: A failure, false alarm or overhead of the skill in a real project.
+title: "[kb-architect] "
+labels: ["kb-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An agent can fill this form for you (`kb_report.py`). Any language is fine. Do not include
+        secrets, personal data, client names or private links. For details that must stay
+        private, use "Report privately" on the new-issue page.
+  - type: input
+    id: version
+    attributes:
+      label: kb-architect version
+      placeholder: "8.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Agent
+      options: ["Claude Code", "Codex", "both", "other"]
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: ["macOS", "Linux", "Windows", "other"]
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report
+      description: What you did, what you expected, what happened, the exact output, how to reproduce.
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Check
+      options:
+        - label: The report contains no secrets, personal data or private links.
+          required: true

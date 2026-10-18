@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 
 import kb_paths
 
@@ -208,6 +209,8 @@ def declared_route(root: Path) -> str | None:
         return "local"
     if value in {"github", "github-issue", "remote", "удалённый", "удаленный"}:
         return "github"
+    if value in {"не отправлять", "не принят", "off", "none", "no", "нет"}:
+        return "off"
     return None
 
 
@@ -357,22 +360,52 @@ def copy_local(report: Path, inbox: Path, relation: tuple[str, str] | None
                f"report_id={identifier}{relation_note}")
 
 
+ISSUE_FORM = "kb-report.yml"
+LINK_LIMIT = 7500               # длина закодированного адреса: GitHub отвечает 414 на ~8 КБ
+
+
+def prefilled_link(report: Path, text: str) -> str:
+    """Ссылка на форму отчёта с уже заполненными полями: человеку остаётся нажать Submit.
+    Нужна, когда у агента нет `gh` или входа в GitHub (владелец 18.10.2026: партнёр пересылал
+    отчёты вручную). Кириллица в адресе раздувается вшестеро — режется закодированная длина."""
+    def link(body):
+        query = {"template": ISSUE_FORM, "title": title(text, report), "report": body,
+                 "version": kb_paths.skill_version() or ""}
+        return f"{GITHUB_ISSUES}/new?" + urllib.parse.urlencode(query, quote_via=urllib.parse.quote)
+    full = link(text)
+    if len(full) <= LINK_LIMIT:
+        return full
+    tail = (f"\n\n...(report longer than the link: attach or paste the rest of {report.name}; "
+            "отчёт длиннее ссылки — приложи файл или вставь остаток)")
+    low, high = 0, len(text)
+    while low < high:                     # самая длинная голова, которая влезает в ссылку
+        mid = (low + high + 1) // 2
+        if len(link(text[:mid] + tail)) <= LINK_LIMIT:
+            low = mid
+        else:
+            high = mid - 1
+    return link(text[:low] + tail)
+
+
 def publish_github(report: Path, text: str) -> tuple[int, str]:
     if not anonymised(text):
         return 2, ("BLOCKED: GitHub accepts only an anonymised report; set "
                    "`режим подробности: обезличенный` and remove private data")
     command = ["gh", "issue", "create", "--repo", GITHUB_REPOSITORY,
-               "--title", title(text, report), "--body-file", str(report)]
+               "--title", title(text, report), "--body-file", str(report),
+               "--label", "kb-report"]
+    link = prefilled_link(report, text)
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=60)
     except FileNotFoundError:
-        return 1, f"PREPARED: gh is unavailable; open {GITHUB_ISSUES}/new"
+        return 1, ("PREPARED github: gh недоступен. Дай человеку ссылку — форма уже заполнена, "
+                   f"остаётся нажать Submit; длинный отчёт — приложить файл {report}: {link}")
     except Exception as exc:
-        return 1, f"PREPARED: GitHub delivery not confirmed: {exc}"
+        return 1, f"PREPARED github: доставка не подтверждена ({exc}). Ссылка для человека: {link}"
     if result.returncode != 0:
         why = (result.stderr.strip().splitlines() or
                [f"exit {result.returncode}"])[0]
-        return 1, f"PREPARED: GitHub delivery not confirmed: {why}"
+        return 1, f"PREPARED github: доставка не подтверждена ({why}). Ссылка для человека: {link}"
     url = (result.stdout.strip().splitlines() or [GITHUB_ISSUES])[0]
     return 0, f"DELIVERED github: {url}"
 
@@ -404,8 +437,20 @@ def main() -> int:
     text = report.read_text(encoding="utf-8", errors="replace")
     inbox = local_target(root)
     route = args.target
+    declared = declared_route(root)
+    if declared == "off" and route == "auto":
+        print("NOT_SENT: правила проекта — «маршрут отчётов: не отправлять»; отчёт остаётся у проекта")
+        return 1
+    if route == "auto" and declared is None and not inbox:
+        # Согласие спрашивают один раз и записывают строкой правил (владелец 18.10.2026: без
+        # маршрута отчёт молча оставался у проекта, и человек пересылал его вручную).
+        print("CONSENT_NEEDED: маршрут отчётов не выбран. Спроси владельца проекта один раз: "
+              "«Отправлять обезличенные отчёты о сбоях kb-architect автору публичным issue?» "
+              "Да — запиши в правила `маршрут отчётов: github-issue` и повтори; нет — "
+              "`маршрут отчётов: не отправлять`. Пока отчёт остаётся у проекта.")
+        return 1
     if route == "auto":
-        route = declared_route(root) or ("local" if inbox else "github")
+        route = declared or ("local" if inbox else "github")
     lab_reason = None
     if route == "local" and (inbox is None or names_the_lab(inbox)) and not (
             inbox is not None and is_lab_checkout_inbox(inbox)):
@@ -444,7 +489,7 @@ def main() -> int:
             print(f"PREPARED local: {inbox / report.name}; "
                   f"report_id={report_id(report)}{relation_note}")
         else:
-            print(f"PREPARED github: {GITHUB_ISSUES}/new")
+            print(f"PREPARED github: {GITHUB_ISSUES}/new?template={ISSUE_FORM}")
             print("Public delivery requires an anonymised report, --public-safe and --do")
         return 1
 

@@ -1725,6 +1725,18 @@ def hook_command(agent):
             f"exec python3 \"$d/scripts/kb_start.py\" hook --agent {agent}; done; exit 0'")
 
 
+def windows_command(agent):
+    """Команда hook для Windows: там нет `sh` (отчёт с Windows 18.10.2026 — установщик 8.2.5
+    записал `sh -c …`, hook не запускался). Прямой python с UTF-8 и абсолютным путём к скрипту."""
+    first, second = ("codex", "claude") if agent == "codex" else ("claude", "codex")
+    home = os.path.expanduser("~")
+    script = next((p for p in (os.path.join(home, f".{d}", "skills", "kb-architect", "scripts",
+                                            "kb_start.py") for d in (first, second))
+                   if os.path.isfile(p)),
+                  os.path.join(home, f".{first}", "skills", "kb-architect", "scripts", "kb_start.py"))
+    return f'"{sys.executable}" -X utf8 "{script}" hook --agent {agent}'
+
+
 def ours(group):
     return isinstance(group, dict) and any(
         isinstance(h, dict) and "kb_start.py" in str(h.get("command", ""))
@@ -1743,6 +1755,11 @@ def wanted_groups(agent):
     for event, claude_matcher, codex_matcher, timeout, message in HOOK_EVENTS:
         matcher = codex_matcher if agent == "codex" else claude_matcher
         hook = {"type": "command", "command": hook_command(agent), "timeout": timeout}
+        if os.name == "nt":
+            if agent == "codex":
+                hook["commandWindows"] = windows_command(agent)   # Codex берёт его на Windows
+            else:
+                hook["command"] = windows_command(agent)
         if message and (agent == "codex" or event == "SessionStart"):
             hook["statusMessage"] = message
         if agent == "codex" and event in ("SessionStart", "UserPromptSubmit"):

@@ -2780,7 +2780,7 @@ class ReleaseActions0210Tests(unittest.TestCase):
     def test_due_and_update_print_the_actions_instead_of_no_migration(self):
         import kb_apply
         import kb_paths
-        line = kb_apply.line_text(kb_paths.skill_version())
+        line = kb_paths.skill_version()
         self.project()
         self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {line}\n")
         roles = json.loads((self.root / "PROJECT_ROLES.json").read_text())
@@ -2875,7 +2875,7 @@ class FoxKb0210Tests(unittest.TestCase):
     def test_project_born_at_its_version_finalizes_its_receipt(self):
         import kb_apply
         import kb_paths
-        line = kb_apply.line_text(kb_paths.skill_version())
+        line = kb_paths.skill_version()
         self.init_git()
         self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {line}\n")
         self.save("NOW.md", "Обновлено: 2026-10-02\n")
@@ -2894,6 +2894,61 @@ class FoxKb0210Tests(unittest.TestCase):
         self.assertIn("APPLICATION_RECEIPT_OK", out.stdout, out.stdout)
         self.assertEqual(out.returncode, 0)
 
+    def test_a_lower_patch_is_behind_and_bumps_in_one_edit(self):
+        """Owner 18.10.2026: «8.2.0 при скилле 8.2.5» read as a requirement lower than needed."""
+        import kb_apply
+        import kb_paths
+        version = kb_paths.skill_version()
+        rows = [v for v, _ in kb_apply.releases_between("0", version) if v != version]
+        old = rows[-1]                      # предыдущий выпуск, в том числе через линию (8.2.5 → 8.3.0)
+        self.assertEqual(kb_apply.patch_actions(old, version), [],
+                         "the fixture needs a release step without project actions")
+        self.init_git()
+        self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {old}\n")
+        self.save("NOW.md", "Обновлено: 2026-10-18\n")
+        self.git("add", "CLAUDE.md", "NOW.md")
+        self.git("commit", "-qm", "born")
+        first = self.git("rev-parse", "HEAD")
+        self.save("KB_RELEASE_APPLICATION.json", {"schema": 3, "application": {
+            "from_version": None, "to_version": old, "status": "finalized",
+            "source": {"commit": first, "version_source": "CLAUDE.md"},
+            "owner": {"accepted_by": "owner", "accepted_at": "2026-10-18"},
+            "finalized_at": "2026-10-18", "open": []}})
+        self.git("add", "KB_RELEASE_APPLICATION.json")
+        self.git("commit", "-qm", "receipt")
+        run = lambda *a: subprocess.run([sys.executable, str(HERE / "kb_apply.py"), str(self.root), *a],
+                                        capture_output=True, text=True, timeout=60)
+        behind = run()
+        self.assertEqual(behind.returncode, 1, behind.stdout)
+        self.assertIn(f"цель {version}", behind.stdout)
+        self.assertIn("--bump", behind.stdout)
+        self.assertNotIn("номер проекта менять не нужно", behind.stdout)
+        bumped = run("--bump")
+        self.assertIn(f"BUMPED: kb_standard_version {old} → {version}", bumped.stdout, bumped.stdout)
+        self.git("commit", "-qam", "bump")
+        after = run()
+        self.assertEqual(after.returncode, 0, after.stdout)
+        self.assertIn("APPLICATION_RECEIPT_OK", after.stdout)
+        self.assertIn(f"проект {version} на уровне выпуска {version}", after.stdout)
+
+    def test_the_owners_update_installs_a_missing_entry_hook(self):
+        """Owner 18.10.2026: on Windows the agent noted «hook missing» and stopped."""
+        home = self.base / "home"
+        skills = home / ".codex" / "skills"
+        skills.mkdir(parents=True)
+        os.symlink(HERE.parent, skills / "kb-architect")
+        code = ("import sys; sys.path.insert(0, %r); import kb_update; kb_update.ensure_entry_hooks()"
+                % str(HERE))
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+                             env=dict(os.environ, HOME=str(home), USERPROFILE=str(home)))
+        self.assertIn("HOOK_INSTALL codex", out.stdout, out.stdout + out.stderr)
+        self.assertIn("Review hooks", out.stdout)
+        hooks = (home / ".codex" / "hooks.json").read_text(encoding="utf-8")
+        self.assertIn("kb_start.py", hooks)
+        again = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120,
+                               env=dict(os.environ, HOME=str(home), USERPROFILE=str(home)))
+        self.assertNotIn("HOOK_INSTALL", again.stdout, "an installed hook is left alone")
+
 
 
 class VersionLine0210Tests(unittest.TestCase):
@@ -2908,7 +2963,7 @@ class VersionLine0210Tests(unittest.TestCase):
         """Full lines stay current; lower lines have the same target in due/apply."""
         import kb_apply
         import kb_paths
-        line = kb_apply.line_text(kb_paths.skill_version())
+        line = kb_paths.skill_version()
         self.save("NOW.md", "Обновлено: 2026-10-02\n")
         for version in dict.fromkeys((line, kb_paths.skill_version())):
             with self.subTest(current=version):
@@ -3640,7 +3695,7 @@ class EntryLock0310Tests(unittest.TestCase):
     def test_foreign_hook_secret_never_reaches_apply_or_entry_output(self):
         import kb_apply
         import kb_paths
-        line = kb_apply.line_text(kb_paths.skill_version())
+        line = kb_paths.skill_version()
         self.project()
         self.save("CLAUDE.md", f"# Rules\nвход: NOW.md\nkb_standard_version: {line}\n")
         self.git("add", "--", "CLAUDE.md")
@@ -4907,7 +4962,7 @@ class CloseSession0510Tests(unittest.TestCase):
         """a startup project 11.10.2026: under load kb_apply died with a TimeoutExpired traceback."""
         import kb_apply
         import kb_paths
-        line = kb_apply.line_text(kb_paths.skill_version())
+        line = kb_paths.skill_version()
         code = ("import runpy, subprocess, sys\n"
                 "def slow(*a, **k):\n"
                 "    raise subprocess.TimeoutExpired(['git', '-C', 'x', 'rev-parse', 'HEAD'], 30)\n"
@@ -4927,7 +4982,7 @@ class CloseSession0510Tests(unittest.TestCase):
         the owner requires the full level of the installed release."""
         import kb_apply
         import kb_paths
-        line = kb_apply.line_text(kb_paths.skill_version())
+        line = kb_paths.skill_version()
         self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
         self.save("NOW.md", "Обновлено: 2026-10-11\n")
         run = subprocess.run([sys.executable, str(HERE / "kb_apply.py"), str(self.root)],
@@ -5346,6 +5401,22 @@ class Windows1810Tests(unittest.TestCase):
                 self.assertTrue(kb_lock.try_lock(b), "released after unlock")
                 kb_lock.unlock(b)
 
+    def test_hook_commands_on_windows_do_not_need_sh(self):
+        """Windows 18.10.2026: the 8.2.5 installer wrote `sh -c …`, and there is no sh."""
+        import kb_start
+        with patch.object(kb_start.os, "name", "nt"):
+            codex = kb_start.wanted_groups("codex")
+            claude = kb_start.wanted_groups("claude")
+        for groups, field in ((codex, "commandWindows"), (claude, "command")):
+            for event, group in groups.items():
+                hook = group["hooks"][0]
+                self.assertIn("-X utf8", hook[field], event)
+                self.assertIn("kb_start.py", hook[field])
+                self.assertNotIn("sh -c", hook[field])
+                self.assertTrue(kb_start.ours(group), "the installer still recognises its own hook")
+        self.assertNotIn("commandWindows", kb_start.wanted_groups("codex")["SessionStart"]["hooks"][0],
+                         "POSIX configuration is unchanged")
+
     def test_windows_console_gets_utf8(self):
         import kb_lock
         raw = io.BytesIO()
@@ -5356,6 +5427,14 @@ class Windows1810Tests(unittest.TestCase):
             print("  файлов: 3, байт: 100")
             sys.stdout.flush()
         self.assertIn("файлов".encode("utf-8"), raw.getvalue())
+
+    def test_windows_children_run_in_utf8_mode(self):
+        import kb_lock
+        with patch.object(kb_lock.os, "name", "nt"), patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PYTHONUTF8", None)
+            with patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="utf-8")):
+                kb_lock.utf8_stdio()
+            self.assertEqual(os.environ.get("PYTHONUTF8"), "1")
 
 
 if __name__ == "__main__":

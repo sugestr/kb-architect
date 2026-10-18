@@ -555,6 +555,33 @@ def prepare_source(src, do_update):
     return True, "source свежий", top
 
 
+def ensure_entry_hooks():
+    """«Обновись» владельца ставит недостающий hook входа этой машины (владелец 18.10.2026:
+    агент на Windows записал «hook отсутствует» и остановился — установка считалась отдельным
+    решением). Без hook нет ни входа, ни автообновления. Чужие hooks сохраняются с резервной
+    копией; Codex всё равно просит одобрить новый hook в «Review hooks». Быстрый режим из
+    самого hook сюда не заходит."""
+    for agent in ("claude", "codex"):
+        script = os.path.join(os.path.expanduser(f"~/.{agent}"), "skills", "kb-architect",
+                              "scripts", "kb_start.py")
+        if not os.path.isfile(script):
+            continue
+        try:
+            check = subprocess.run([sys.executable, script, "install", "--agent", agent, "--check"],
+                                   capture_output=True, text=True, timeout=60)
+            if check.returncode == 0:
+                continue
+            done = subprocess.run([sys.executable, script, "install", "--agent", agent],
+                                  capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"HOOK_NOT_INSTALLED {agent}: {type(exc).__name__} — вход этой машины по памяти")
+            continue
+        line = (done.stdout.strip().splitlines() or [f"код {done.returncode}"])[-1]
+        print(f"HOOK_INSTALL {agent}: {line}"
+              + (" — в Codex один раз одобри новый hook в «Review hooks»" if agent == "codex"
+                 and done.returncode == 0 else ""))
+
+
 def update_from_source(src, args, source_label, record_receipt=False):
     if not recover_installs(args.do_update):
         return 2
@@ -675,6 +702,9 @@ def update_from_source(src, args, source_label, record_receipt=False):
             print("UPDATE_STATUS=UNKNOWN")
             return 2
 
+    if getattr(args, "do_update", False) and not getattr(args, "fast", False) \
+            and status in ("INSTALLED", "CURRENT") and os.environ.get("KB_ENTRY_HOOK") != "off":
+        ensure_entry_hooks()
     if status == "INSTALLED":
         print("UPDATE_STATUS=INSTALLED")
         print("SESSION_ACTION=REREAD_INSTALLED_ENTRY_AND_CURRENT_ROUTE")

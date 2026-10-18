@@ -101,6 +101,13 @@ def correction_entry_synced(text):
                for line in text.splitlines())
 
 
+def full_key(version):
+    try:
+        return tuple(int(value) for value in version.split("."))
+    except (AttributeError, ValueError):
+        return ()
+
+
 def contract_line(version):
     try:
         parts = tuple(int(value) for value in version.split("."))
@@ -760,10 +767,9 @@ def main():
                        "скилл на этой машине отстал: обнови его (kb_update.py --public "
                        "--сделать), номер проекта не трогай")
         elif skill_v and contract_line(proj_v) and contract_line(skill_v) \
-                and contract_line(proj_v) < contract_line(skill_v):
-            # Цель — полный уровень установленного выпуска (его линия), а не минимум
-            # совместимости (владелец 11.10, проект стартапа). Патч внутри линии — не дельта:
-            # номер 7.4.2 при скилле 7.4.x не даёт «ПОРА» (tg-archive 02.10).
+                and full_key(proj_v) < full_key(skill_v):
+            # Номер проекта — номер установленного выпуска (владелец 11.10 и 18.10): проект
+            # на 8.2.0 при скилле 8.2.5 отстаёт; патч без дел поднимается `kb_apply.py --bump`.
             apply_command = shlex.join([
                 sys.executable,
                 os.path.join(os.path.dirname(os.path.realpath(__file__)), "kb_apply.py"),
@@ -773,9 +779,8 @@ def main():
                        f"для него — {skill_v}. «Обновись»: "
                        f"запусти `{apply_command}` (он покажет, что менялось "
                        f"между ними и чего это касается здесь), примени применимое и обнови "
-                       f"строку. Сама строка не двигается: она говорит, по какой редакции "
-                       f"проект собран, а не какая лежит на диске — поднять её без разбора "
-                       f"значит соврать")
+                       f"строку; нет дел — он предложит `--bump`, одну правку номера. Без разбора "
+                       f"строку не двигай: она говорит, по какой редакции проект собран")
         elif skill_v and skill_line_now:
             ok.append(f"версия проекта: {proj_v} — полный уровень скилла {skill_v}; "
                       "номер проекта менять не нужно")
@@ -828,7 +833,7 @@ def main():
             else:
                 agent = "codex" if " codex " in line else "claude"
                 due.append(f"{line.split(' · ')[0]} — новые сессии на этой машине входят по памяти. "
-                           f"Установка — решение владельца для машины: "
+                           f"«Обновись» поставит его сам; вручную — "
                            f"`python3 {start_cmd} install --agent {agent}`")
         ok.append("public freshness здесь НЕ ПРОВЕРЕНА; kb_due read-only. "
                   "Принятый сервисный контур использует kb_update.py --public "

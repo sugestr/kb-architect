@@ -122,7 +122,7 @@ plugins/kb-architect/skills/kb-architect/
 ### Обратная связь
 
 Сломалось или пользы не видно — заполните
-[отчёт](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md): версия,
+[отчёт](https://github.com/sugestr/kb-architect/issues/new?template=kb-report.yml): версия,
 точный запрос, что ожидали и что произошло. Уберите личные данные и пароли. История версий —
 [`references/releases.md`](plugins/kb-architect/skills/kb-architect/references/releases.md).
 
@@ -180,7 +180,7 @@ approve the hook in Codex). In a regular chat, attach `kb-architect.skill` from 
 No professional advice, credentials or permission for external actions; text search, so an
 empty result does not prove absence; overkill for a tiny one-off folder; beta.
 
-Feedback: [open a report](https://github.com/sugestr/kb-architect/issues/new?template=beta-report.md).
+Feedback: [open a report](https://github.com/sugestr/kb-architect/issues/new?template=kb-report.yml).
 MIT.
 
 <!-- plugin.json intentionally has no second version field. The version canon is
