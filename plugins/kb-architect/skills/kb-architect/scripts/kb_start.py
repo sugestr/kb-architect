@@ -493,7 +493,10 @@ def entry_message(state, all_roles, event, due=None, agent="claude", inline=True
             "   для файла роли добавь --bundle <его путь> из ENTRY_BUNDLE.",
             "4. После подтверждения в первом ответе — строка ENTRY_RECEIPT; перед записью в "
             f"область базы — python3 {q(os.path.join(scripts_dir(), 'kb_debts.py'))} {q(root)} "
-            "--area <путь>.",
+            "--area <путь> (раз на область за блок); после связного блока — "
+            f"python3 {q(os.path.join(scripts_dir(), 'kb_check.py'))} {q(root)} --area <область>; "
+            "полная проверка — в обходе и перед передачей работы. Смена роли после подтверждения "
+            "не перечитывает неизменное: kb_entry.py сам берёт подтверждённый вход за основу.",
             f"Правила ({rules}) агент загрузил сам; в файле входа их нет.",
             f"Квитанция этого файла: {state['receipt']}"]
     for line in state.get("missing", [])[:6]:
@@ -1103,7 +1106,14 @@ def on_prompt(event, agent):
     if close:
         mark_close(sid, root)
     if not state or state.get("confirmed") or state.get("error"):
-        return context_payload("UserPromptSubmit", close_text(root)) if close else None
+        lines = []
+        if state and state.get("confirmed") and human:
+            hint = debts_reminder(sid, root)
+            if hint:
+                lines.append(hint)
+        if close:
+            lines.append(close_text(root))
+        return context_payload("UserPromptSubmit", "\n\n".join(lines)) if lines else None
     if fresh:
         return context_payload("UserPromptSubmit",
                                entry_message(state, kb_entry.declared_roles(root)[0],
@@ -1186,6 +1196,52 @@ def memory_guard(event):
         return None
 
 
+def note_debts_coverage(state, tool, ti, effects, root):
+    """Запоминает области, проверенные `kb_debts --area`, и записи в файлы знания без такой
+    проверки — для напоминания на реплике владельца (отчёт 18.10.2026: ~15 записей в главы при
+    двух проверках; замер — 15–25 % записей). Возвращает True, если состояние изменилось."""
+    changed = False
+    if tool in SHELL_TOOLS:
+        cmd = command_of(ti)
+        for m in re.finditer(r"kb_debts\.py\s+(?:\S+\s+)*?--area\s+(\"[^\"]+\"|'[^']+'|\S+)", cmd):
+            raw = m.group(1).strip("\"'")
+            rel = os.path.normpath(os.path.relpath(os.path.realpath(
+                raw if os.path.isabs(raw) else os.path.join(root, raw)), os.path.realpath(root)))
+            areas = state.setdefault("debts_areas", [])
+            if rel not in areas:
+                areas.append(rel)
+                changed = True
+    areas = state.get("debts_areas", [])
+    for e in effects:
+        if len(e) == 3 and e[1] == "file" and e[2].endswith(".md"):
+            rel = e[2]
+            if any(rel == a or a == "." or rel.startswith(a.rstrip("/") + "/") for a in areas):
+                continue
+            pending = state.setdefault("unchecked_writes", [])
+            if rel not in pending and len(pending) < 20:
+                pending.append(rel)
+                changed = True
+    return changed
+
+
+def debts_reminder(sid, root):
+    """Одна строка про записи без `kb_debts --area`, не чаще раза на область за сессию."""
+    with kb_turns.file_lock(state_path(sid, root)):
+        state = load_state(sid, root)
+        if not state:
+            return None
+        told = state.setdefault("debts_reminded", [])
+        fresh = [w for w in state.get("unchecked_writes", []) if w not in told]
+        if not fresh:
+            return None
+        told.extend(fresh)
+        save_state(state)
+    script = q(os.path.join(scripts_dir(), "kb_debts.py"))
+    return (f"В этой сессии записи без проверки долгов области: {', '.join(fresh[:6])}. Перед следующей "
+            f"записью в область — python3 {script} {q(root)} --area <область> (раз на область за блок); "
+            "это не запрет, а напоминание.")
+
+
 def record_effects(event, roots, sid, agent):
     """Классы следствий разрешённого инструмента — в ход сессии каждого затронутого
     проекта. Без текста команд, хостов и адресов; для правки файла — путь в проекте."""
@@ -1213,11 +1269,15 @@ def record_effects(event, roots, sid, agent):
                     if full.startswith(os.path.realpath(root) + os.sep):
                         effects.append(["certain", "file",
                                         os.path.relpath(full, os.path.realpath(root))[:200]])
-            if effects:
+            if effects or (tool in SHELL_TOOLS and "kb_debts.py" in command_of(ti)):
                 # Внешний аудит 03.10.2026: попытка не доказывает выполнение инструмента.
                 with kb_turns.file_lock(state_path(sid, root)):
                     state = load_state(sid, root)
-                    if not state or not state.get("turn"):
+                    if not state:
+                        continue
+                    if note_debts_coverage(state, tool, ti, effects, root):
+                        save_state(state)
+                    if not state.get("turn") or not effects:
                         continue
                     calls = state["turn"].get("calls")
                     if calls is None:

@@ -2,7 +2,7 @@
 """
 kb_check.py — целостность базы. Проверки, которые не шумят.
 
-    python3 kb_check.py <корень базы>
+    python3 kb_check.py <корень базы> [--area <путь>]
 
 Это не линтер. Линтер пытался проверять два десятка правил, половину из них
 машинно проверить нельзя, и на живом репозитории он давал сотни ложных
@@ -433,6 +433,20 @@ def main():
     if not os.path.isdir(root):
         print(f"нет такой папки: {root}")
         return 2
+    # --area <путь>: проверка одной области после связного блока — ссылки, сроки, verify,
+    # согласованность и долги только там; ветки, достижимость и общие долги — в полной проверке
+    # (замер 15–18.10.2026: полный kb_check после каждой записи, 74 раза за четыре дня).
+    area = None
+    if "--area" in sys.argv[2:]:
+        i = sys.argv.index("--area")
+        if i + 1 >= len(sys.argv):
+            print("--area требует путь области")
+            return 2
+        area = os.path.normpath(os.path.relpath(os.path.realpath(os.path.join(root, sys.argv[i + 1])),
+                                                os.path.realpath(root)))
+        if area.startswith(".."):
+            print(f"область вне проекта: {sys.argv[i + 1]}")
+            return 2
 
     today = datetime.date.today()
     broken, expired, blank = [], [], []
@@ -454,6 +468,10 @@ def main():
     # сайта, а не файлы (проект магазина, 10.10: 126 ложных битых ссылок статей).
     outside = kb_index.excluded_globs(root)
     collected = collect(root)
+    if area:
+        area_real = os.path.realpath(os.path.join(root, area))
+        collected = [p for p in collected if os.path.realpath(p) == area_real
+                     or os.path.realpath(p).startswith(area_real + os.sep)]
     files_all = [p for p in collected if not kb_index.is_excluded(os.path.relpath(p, root), outside)]
     skipped_outside = len(collected) - len(files_all)
     ORDER = infer_order(open(f, encoding="utf-8", errors="ignore").read() for f in files_all[:400])
@@ -686,7 +704,9 @@ def main():
 
     # 8. Знание без дороги от индекса (см. kb_index.coverage).
     index_path = os.path.join(root, kb_index.DEFAULT_INDEX)
-    if os.path.isfile(index_path):
+    if area:
+        cover = {"status": "NOT_CHECKED", "reason": f"область {area}; дороги — в полной проверке"}
+    elif os.path.isfile(index_path):
         cover = kb_index.coverage(kb_index.Path(root), kb_index.Path(index_path))
     else:
         cover = {"status": "NOT_CHECKED", "reason": "KNOWLEDGE_INDEX.json отсутствует"}
@@ -821,7 +841,7 @@ def main():
     # не даёт назвать базу чистой, пока горячие главы не прочитаны.
     try:
         import kb_consistency
-        consistency = kb_consistency.signals(root)
+        consistency = kb_consistency.signals(root, only=area)
     except Exception as exc:
         consistency = {"status": "UNKNOWN", "reason": f"сбой проверки: {type(exc).__name__}: {exc}",
                        "chapters": []}
@@ -920,7 +940,7 @@ def main():
     try:
         import kb_debts
         # Внешний аудит 03.10.2026: границы проверки сохраняются в итоге.
-        debt_lines, debt_checks = kb_debts.summary_lines(kb_debts.debts(root))
+        debt_lines, debt_checks = kb_debts.summary_lines(kb_debts.debts(root, area=area))
         unchecked = [line for line in debt_checks if "НЕ ПРОВЕРЕН" in line]
         debt_scope = (f"долги знания — {len(debt_lines)}" if debt_lines
                       else "долги знания — НЕ ПРОВЕРЕНЫ полностью" if unchecked
@@ -997,6 +1017,9 @@ def main():
     if skipped_outside:
         scope.append(f"вне знания по объявлению, не проверено: {skl(skipped_outside, 'файл', 'файла', 'файлов')}")
     scope.append(debt_scope)
+    if area:
+        scope.insert(0, f"ОБЛАСТЬ {area}: только её файлы; ветки, достижимость и долги всей базы — "
+                        "в полной проверке (обход, передача работы)")
 
     if not found:
         head = "целостность: чисто" if not debt_lines else \

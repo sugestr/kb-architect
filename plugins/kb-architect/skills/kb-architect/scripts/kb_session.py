@@ -756,7 +756,28 @@ def closed_path(sid, root):
                         f"{kb_start.safe_name(sid)}--{kb_start.root_key(root)}.closed")
 
 
-def mark_done(root, session, note):
+def unanswered_outside_current(root, s):
+    """Вопросы агента после последней реплики владельца, чьих слов нет в current."""
+    owner_times = [o["t"] for o in s.owner]
+    if not owner_times:
+        return []
+    last_owner = max(owner_times)
+    entry = kb_paths.locate(root, "entry")
+    current = entry.text().lower() if entry.path else ""
+    missing = []
+    for t, _line, text in questions(s):
+        if t <= last_owner:
+            continue
+        words = [w for w in re.findall(r"\w{4,}", text.lower()) if not w.isdigit()]
+        if not words:
+            continue
+        hits = sum(1 for w in words if w in current)
+        if hits < max(2, int(len(words) * 0.6)):
+            missing.append(text[:160])
+    return missing
+
+
+def mark_done(root, session, note, warnings=()):
     sid = session or os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CODEX_THREAD_ID")
     if not sid:
         print("Сессия не определена: укажи --session <id>.")
@@ -764,7 +785,11 @@ def mark_done(root, session, note):
     root = kb_start.find_root(root) or root          # отметка — по корню проекта, как у hook'а
     head = subprocess.run(["git", "-C", root, "rev-parse", "--short", "HEAD"], capture_output=True,
                           text=True).stdout.strip()
-    line = f"CLOSE_DONE {os.path.basename(root)} · {head or 'без коммита'}" + (f" · {note}" if note else "")
+    for w in warnings:
+        print(f"CLOSE_WARNING: вопрос владельцу без ответа не найден в current: «{w}» — по capture.md → close "
+              "он должен стоять в current как ожидание, даже если вход заполнен")
+    line = (f"CLOSE_DONE {os.path.basename(root)} · {head or 'без коммита'}" + (f" · {note}" if note else "")
+            + (f" · WARN: вопросов без ответа вне current {len(warnings)}" if warnings else ""))
     try:
         path = closed_path(sid, root)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -796,9 +821,21 @@ def main(argv=None):
     if not os.path.isdir(root):
         print(f"нет такой папки: {root}")
         return 2
-    if args.done:
-        return mark_done(root, args.session, args.note)
     transcript, agent = (args.transcript, args.agent) if args.transcript else find_transcript(args.session, args.agent)
+    if args.done:
+        warnings = []
+        if transcript and os.path.isfile(transcript):
+            try:
+                s = Session(root)
+                with open(transcript, encoding="utf-8", errors="replace") as f:
+                    is_codex = '"session_meta"' in f.readline()
+                (parse_codex if is_codex else parse_claude)(transcript, s)
+                warnings = unanswered_outside_current(root, s)
+            except Exception as exc:
+                print(f"  (вопросы без ответа не сверены: {type(exc).__name__})")
+        else:
+            print("  (журнал сессии не найден — вопросы без ответа с current не сверены)")
+        return mark_done(root, args.session, args.note, warnings)
     if not transcript or not os.path.isfile(transcript):
         print("Журнал сессии не найден: укажи --transcript <путь> (Claude: ~/.claude/projects/<проект>/"
               "<сессия>.jsonl; Codex: ~/.codex/sessions/…/rollout-…-<поток>.jsonl).")

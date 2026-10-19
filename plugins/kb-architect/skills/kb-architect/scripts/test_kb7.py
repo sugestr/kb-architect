@@ -5368,6 +5368,97 @@ class Consistency1210Tests(unittest.TestCase):
         self.assertEqual(kb_service.roles_without_questions(str(self.root)), ["site-editor"])
 
 
+class Overhead1810Tests(unittest.TestCase):
+    """Замер 15–18.10.2026 (journal_stats overhead): вход 80–100 КБ на сессию и 2–3 файла входа,
+    полный kb_check после каждой записи, kb_debts --area перед 15–25 % записей; отчёт dev7:
+    вопрос владельцу без ответа не попал в current «из-за бюджета»."""
+
+    setUp = ExecutableEntry0110Tests.setUp
+    run_tool = ExecutableEntry0110Tests.run_tool
+    git = ExecutableEntry0110Tests.git
+    init_git = ExecutableEntry0110Tests.init_git
+    save = ExecutableEntry0110Tests.save
+    commit_at = ExecutableEntry0110Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+    start = ExecutableEntry0110Tests.start
+    tool = ExecutableEntry0110Tests.tool
+    marks = ExecutableEntry0110Tests.marks
+    confirm = ExecutableEntry0110Tests.confirm
+    bundle_of = ExecutableEntry0110Tests.bundle_of
+
+    def check(self, *args):
+        return subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root), *args],
+                              capture_output=True, text=True, timeout=120, env=self.env()).stdout
+
+    def test_check_area_scans_only_the_area(self):
+        self.project()
+        self.save("kb/a.md", "[x](missing-a.md)\n")
+        self.save("other/b.md", "[y](missing-b.md)\n")
+        self.assertIn("БИТЫЕ ССЫЛКИ — 2", self.check())
+        area = self.check("--area", "kb")
+        self.assertIn("БИТЫЕ ССЫЛКИ — 1", area)
+        self.assertNotIn("other/b.md", area)
+        self.assertIn("ОБЛАСТЬ kb:", area)
+        self.assertIn("достижимость знания — NOT_CHECKED", area)
+
+    def test_entry_takes_the_confirmed_bundle_as_since_by_itself(self):
+        self.project(big_now=True)
+        first = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("ENTRY_CONFIRMED", self.confirm("-".join(self.marks(first)), "--session", "s1",
+                                                       "--bundle", first).stdout)
+        out = subprocess.run([sys.executable, str(HERE / "kb_entry.py"), str(self.root), "--role", "ops",
+                              "--agent", "claude"], capture_output=True, text=True, timeout=60,
+                             env=self.env(CLAUDE_CODE_SESSION_ID="s1"))
+        self.assertIn("SINCE:", out.stdout, out.stdout)
+        second = re.search(r"ENTRY_BUNDLE=(\S+)", out.stdout).group(1)
+        self.assertNotIn("ПОСЛЕДНЯЯ СТРОКА NOW", Path(second).read_text(encoding="utf-8"))
+        fresh = subprocess.run([sys.executable, str(HERE / "kb_entry.py"), str(self.root), "--role", "ops",
+                                "--agent", "claude"], capture_output=True, text=True, timeout=60,
+                               env=self.env(CLAUDE_CODE_SESSION_ID="s2"))
+        self.assertNotIn("SINCE:", fresh.stdout, "another session has nothing confirmed")
+
+    def test_hook_reminds_once_about_writes_without_a_debts_check(self):
+        self.project()
+        first = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        self.confirm("-".join(self.marks(first)), "--session", "s1", "--bundle", first)
+        target = str(self.root / "kb" / "05_catalog.md")
+        self.assertEqual(self.tool("Edit", file_path=target, old_string="x", new_string="y"), "allow")
+        prompt = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "дальше"})
+        ctx = (prompt or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
+        self.assertIn("kb_debts", ctx)
+        self.assertIn("kb/05_catalog.md", ctx)
+        self.assertIsNone(self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "ещё"}),
+                          "the same write is not reported twice")
+        self.hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                   "tool_input": {"command": f"python3 {HERE / 'kb_debts.py'} {self.root} --area kb"}})
+        self.assertEqual(self.tool("Edit", file_path=str(self.root / "kb" / "99_invariants.md"),
+                                   old_string="x", new_string="y"), "allow")
+        self.assertIsNone(self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "и ещё"}),
+                          "a checked area needs no reminder")
+
+    def test_done_warns_about_an_unanswered_question_outside_current(self):
+        self.project()
+        rows = [{"type": "user", "timestamp": "2026-10-18T10:00:00.000Z",
+                 "message": {"role": "user", "content": "Займись графиком смен"}},
+                {"type": "assistant", "timestamp": "2026-10-18T10:05:00.000Z",
+                 "message": {"content": [{"type": "text", "text":
+                             "График готов. Утвердить его сейчас или после разговора с Ани?"}]}}]
+        transcript = self.base / "t.jsonl"
+        transcript.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                              encoding="utf-8")
+        done = lambda: subprocess.run([sys.executable, str(HERE / "kb_session.py"), str(self.root), "--done",
+                                       "--session", "s1", "--transcript", str(transcript)],
+                                      capture_output=True, text=True, timeout=60, env=self.env())
+        out = done().stdout
+        self.assertIn("CLOSE_WARNING", out, out)
+        self.assertIn("WARN: вопросов без ответа вне current 1", out)
+        self.save("NOW.md", "Обновлено: 2026-10-18\n- Ожидание: утвердить график смен сейчас или после "
+                            "разговора с Ани\n")
+        self.assertNotIn("CLOSE_WARNING", done().stdout)
+
+
 class Windows1810Tests(unittest.TestCase):
     """Отчёт с Windows 18.10.2026: без fcntl падали kb_start/kb_service при импорте, консоль cp1252
     роняла печать кириллицы."""

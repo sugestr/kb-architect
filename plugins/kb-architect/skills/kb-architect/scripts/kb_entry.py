@@ -294,6 +294,20 @@ def reuse(result, since):
             + ", ".join(c["rel"] for c in reused) + ".")
 
 
+def confirmed_bundle(root):
+    """Файл подтверждённого входа этой сессии в этот корень (по состоянию hook'а), иначе None."""
+    try:
+        import kb_start
+        sid = kb_start.session_from_env()
+        state = kb_start.load_state(sid, root) if sid else None
+    except Exception:
+        return None
+    bundle = ((state or {}).get("confirmed") or {}).get("bundle")
+    if bundle and os.path.isfile(bundle) and os.path.isfile(bundle + ".json"):
+        return bundle
+    return None
+
+
 def default_out(root):
     """Свой файл на каждый вызов: сессии в одном checkout не затирают вход
     друг друга. Git-каталог не отслеживается; недоступен — временный каталог."""
@@ -406,12 +420,23 @@ def main():
     skip = {"claude": ("CLAUDE.md",), "codex": ("AGENTS.md",)}.get(args.agent, ())
     result = build(root, args.role, args.route, skip=skip)
     note = ""
+    auto_since = False
+    if args.role and not args.since:
+        # Вход этой сессии уже подтверждён — неизменное не перечитывать (замер 15–18.10.2026:
+        # 2–3 файла входа на сессию, `--since` вручную почти не использовали).
+        args.since = confirmed_bundle(root)
+        auto_since = bool(args.since)
     if args.since:
         note = reuse(result, args.since)
-        if note is None:
+        if note is None and auto_since:
+            args.since, note = None, ""           # старый файл входа без описи — обычный вход
+        elif note is None:
             print(f"BLOCKED: у {args.since} нет описи частей (файл входа до 8.2.1 или не файл входа); "
                   "собери вход без --since")
             return 2
+        elif auto_since:
+            print(f"SINCE: вход этой сессии подтверждён ({os.path.basename(args.since)}) — "
+                  "неизменное не повторяется")
     files, missing, optional, roles = (result["files"], result["missing"], result["optional"],
                                        result["roles"])
     total = result["total"]
