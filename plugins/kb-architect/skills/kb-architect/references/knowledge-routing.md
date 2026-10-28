@@ -86,3 +86,13 @@ current-маршрут и видимые ссылки, но не заменяе�
 потребители и восстановление. Связи исправлений веди существующими source ids,
 происхождением запросов и генераторами, без обязательного универсального графа.
 Зависимости обновляют по `capture.md`; перенос проверяют по `adopt-existing.md`.
+
+## `interface` — resolver для зависимых скиллов
+
+`kb_index.resolve_units(root, route_id, kinds=("file", "section"), allow_untracked=False)` и
+`kb_index.py --resolve <маршрут> [--kinds …] [--text] [--allow-untracked] [--json]` —
+объявленный интерфейс v1: единицы чтения `file` и `section` с байтовыми границами;
+`query` и `project` единицами не становятся — предупреждение. «Не в Git» по умолчанию —
+отказ; с `allow_untracked` — предупреждение, адреса разрешены (свежий проект до первого
+коммита). Имена `resolve`, `load_index`, `targets`, `section_span` не меняются без записи
+в журнале выпусков. Зависимый скилл не разбирает `KNOWLEDGE_INDEX.json` сам.

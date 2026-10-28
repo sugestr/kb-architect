@@ -69,6 +69,11 @@ INLINE_WHOLE = {"codex"}
 # кавычках, и hook 7.4.0 его не видел.
 KB_MARK = re.compile(r"^[ \t]*(?:[-*>+][ \t]*)?[`*_\"']{0,2}[ \t]*kb_standard_version"
                      r"[`*_\"']{0,2}[ \t]*:[ \t`*_\"']*v?\d", re.MULTILINE | re.IGNORECASE)
+# Репозиторий, который базой не является (шаблон проектов, скилл), объявляет это строкой
+# `kb: template` или `kb: skill`: hook входа молчит, замок не ставится (отчёт 27.10 P11:
+# папка-шаблон стала «проектом» и требовала вход с файлом «ролей нет»).
+NOT_BASE = re.compile(r"^[ \t]*(?:[-*>+][ \t]*)?[`*_\"']{0,2}[ \t]*kb[`*_\"']{0,2}[ \t]*:[ \t`*_\"']*"
+                      r"(?:template|skill|шаблон|скилл)\b", re.MULTILINE | re.IGNORECASE)
 AUTO_RULES = {"claude": ("CLAUDE.md",), "codex": ("AGENTS.md",)}
 SESSION_ENV = ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID")
 DEDUP_SECONDS = 5             # два hook'а одного события приходят почти одновременно
@@ -239,7 +244,10 @@ def find_root(start):
         rules = [os.path.join(path, n) for n in kb_paths.RULES_NAMES
                  if os.path.isfile(os.path.join(path, n))]
         if rules:
-            return path if any(KB_MARK.search(kb_paths.read(r)) for r in rules) else None
+            texts = [kb_paths.read(r) for r in rules]
+            if any(NOT_BASE.search(t) for t in texts):
+                return None
+            return path if any(KB_MARK.search(t) for t in texts) else None
         parent = os.path.dirname(path)
         if parent == path or path == home:
             return None

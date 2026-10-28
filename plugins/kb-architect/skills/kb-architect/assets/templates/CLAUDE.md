@@ -52,7 +52,7 @@ release application: KB_RELEASE_APPLICATION.json
 обновление скилла: <по сигналу | автоматически>
 канал обновления скилла: GitHub public https://github.com/sugestr/kb-architect
 маршрут отчётов: <local-inbox | github-issue | не отправлять — спроси владельца один раз>
-инбокс отчётов: <точный частный путь, если выбран local-inbox>
+инбокс отчётов: <путь к инбоксу лаборатории относительно корня проекта, например ../kb-architect/inbox, если выбран local-inbox>
 отчёты о дефектах скилла: <детальные — частный канал владельца | обезличенные>
 cloud policy: <allowed | pending | prohibited>
 runtime capabilities: <нет | .kb-environments.json>

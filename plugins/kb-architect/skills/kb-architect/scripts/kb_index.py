@@ -280,6 +280,49 @@ def resolve(root: Path, path: Path, route_id: str, chain=()) -> tuple[list[dict]
 
 
 
+INTERFACE_VERSION = "1"
+UNTRACKED = "not Git-tracked"
+
+
+def resolve_units(root, route_id, kinds=("file", "section"), index_path=None, allow_untracked=False):
+    """Стабильный интерфейс для зависимых скиллов (v1, 8.3.3; предложение предметного хаба 27.10).
+
+    Адреса одного маршрута как единицы чтения: dict(kind, path, start, end[, section]).
+    Возвращает (units, warnings, errors). «Не в Git» (свежий проект до первого коммита)
+    по умолчанию — отказ, как у resolve; allow_untracked=True переводит его в предупреждения
+    и разрешает адреса: невосстановимое названо, не скрыто. Виды query и project единицами
+    чтения не становятся — они попадают в warnings. Имена resolve, load_index, targets,
+    section_span не меняются без записи в журнале выпусков; зависимым скиллам — эта функция
+    и `kb_index.py --resolve <маршрут> [--text] [--allow-untracked]`."""
+    root = Path(root).resolve()
+    path = Path(index_path).resolve() if index_path else root / DEFAULT_INDEX
+    routes, errors, _ = validate(root, path, only={route_id})
+    warnings: list[str] = []
+    if allow_untracked:
+        warnings = [e for e in errors if UNTRACKED in e]
+        errors = [e for e in errors if UNTRACKED not in e]
+    if errors:
+        return [], warnings, errors
+    route = routes.get(route_id)
+    if route is None:
+        return [], warnings, [f"required knowledge route is unavailable: {route_id}"]
+    units = []
+    for item in targets(route):
+        kind = item.get("kind") if isinstance(item, dict) else None
+        if kind not in kinds:
+            warnings.append(f"{route_id}: target kind {kind} is not a read unit: {item.get('path') if isinstance(item, dict) else item}")
+            continue
+        destination = (root / item["path"]).resolve()
+        if kind == "section":
+            start, end = section_span(destination, item["section"])
+            units.append({"kind": kind, "path": str(destination), "section": item["section"],
+                          "start": start, "end": end})
+        else:
+            units.append({"kind": kind, "path": str(destination), "start": 0,
+                          "end": destination.stat().st_size})
+    return units, warnings, errors
+
+
 # Knowledge without a road from the index.
 #
 # UAD report of 14.09.2026: 112 of 165 knowledge files had no route, so agents that
@@ -480,9 +523,36 @@ def main() -> int:
     parser.add_argument("--coverage", action="store_true",
                         help="knowledge files that no route or link chain from boot/index reaches")
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--resolve", metavar="ROUTE",
+                        help="единицы чтения одного маршрута (интерфейс для зависимых скиллов)")
+    parser.add_argument("--kinds", default="file,section", help="виды единиц для --resolve")
+    parser.add_argument("--text", action="store_true", help="с --resolve: печатать содержимое единиц")
+    parser.add_argument("--allow-untracked", action="store_true",
+                        help="с --resolve: «не в Git» — предупреждение, адреса разрешаются")
     args = parser.parse_args()
     root = Path(args.root).resolve()
     path = args.index.resolve() if args.index else root / DEFAULT_INDEX
+    if args.resolve:
+        kinds = tuple(k.strip() for k in args.kinds.split(",") if k.strip())
+        units, warnings, errors = resolve_units(root, args.resolve, kinds, path, args.allow_untracked)
+        if args.json:
+            print(json.dumps({"route": args.resolve, "interface": INTERFACE_VERSION, "units": units,
+                              "warnings": warnings, "errors": errors}, ensure_ascii=False, indent=2))
+            return 1 if errors else 0
+        for line in warnings:
+            print(f"WARN: {line}")
+        for line in errors:
+            print(f"ERROR: {line}")
+        for unit in units:
+            label = f"{unit['kind']}\t{unit['path']}\t{unit['start']}-{unit['end']}"
+            print(label + (f"\t{unit['section']}" if unit.get("section") else ""))
+            if args.text:
+                data = Path(unit["path"]).read_bytes()[unit["start"]:unit["end"]]
+                print(f"=== {unit['path']}" + (f" § {unit['section']}" if unit.get("section") else "") + " ===")
+                print(data.decode("utf-8", errors="replace"))
+        print(f"RESOLVE: {args.resolve} — units {len(units)}, warnings {len(warnings)}, errors {len(errors)}; "
+              f"interface v{INTERFACE_VERSION}")
+        return 1 if errors else 0
     if args.coverage:
         report = coverage(root, path)
         if args.json:

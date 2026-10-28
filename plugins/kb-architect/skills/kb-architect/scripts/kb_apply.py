@@ -276,6 +276,15 @@ def _evidence_errors(root, value, label):
     return errors
 
 
+def first_marker_commit(root, locator):
+    """Первый коммит, в котором через locator виден номер проекта: переход нового проекта
+    (from_version null). 8.3.3: kb_init пишет квитанцию до первого коммита с пустым source.commit."""
+    run = git(root, "log", "--reverse", "--format=%H", "-S", "kb_standard_version", "--", locator)
+    if run.returncode or not run.stdout.strip():
+        return None
+    return run.stdout.split()[0]
+
+
 def application_receipt_errors(root, marker):
     """Prove that a v6+ marker came from a complete, reviewable migration.
 
@@ -315,12 +324,17 @@ def application_receipt_errors(root, marker):
         except (AttributeError, ValueError):
             errors.append(f"compact application has invalid {from_key}/{to_key}")
         source = application.get("source")
-        if not isinstance(source, dict) or not source.get("commit") \
-                or not source.get("version_source"):
+        if not isinstance(source, dict) or not source.get("version_source") \
+                or (not source.get("commit") and from_version is not None):
             errors.append("compact application source needs commit and version_source")
         else:
-            commit = source["commit"]
+            commit = source.get("commit")
             locator = source["version_source"]
+            if not commit:
+                # новый проект: переход — коммит, где маркер появился впервые; до него проверять нечего
+                commit = first_marker_commit(root, locator)
+            if not commit:
+                return errors
             if os.path.isabs(locator) or ".." in locator.replace("\\", "/").split("/"):
                 errors.append("compact application version_source leaves project root")
             elif git(root, "rev-parse", "--verify", commit + "^{commit}").returncode:

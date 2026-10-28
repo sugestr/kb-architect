@@ -5729,5 +5729,151 @@ class Release832Tests(unittest.TestCase):
             self.assertNotIn("Traceback", buf.getvalue())
 
 
+class Release833Tests(unittest.TestCase):
+    """8.3.3 (28.10.2026): партия для зависимых скиллов и три упрощения — по предложениям предметного
+    хаба 27.10 и самопроверке лаборатории 28.10."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+    start = ExecutableEntry0110Tests.start
+    tool = ExecutableEntry0110Tests.tool
+    entry_fixture = ReportsAndEntry2909Tests.entry_fixture
+
+    def test_1_resolve_units_is_a_declared_interface_with_text_and_untracked_modes(self):
+        self.entry_fixture()
+        index = json.loads((self.root / "KNOWLEDGE_INDEX.json").read_text(encoding="utf-8"))
+        for route in index["routes"]:      # старая фикстура без description/aliases — validate их требует
+            route.setdefault("description", route["id"])
+            route.setdefault("aliases", [route["id"]])
+        index["routes"].append({"id": "catalog-section", "description": "section", "load_when": ["x"],
+                                "aliases": ["cs"],
+                                "targets": [{"kind": "section", "path": "kb/05_catalog.md", "section": "Catalog"}]})
+        self.save("KNOWLEDGE_INDEX.json", index)
+        self.commit_at("2026-10-28", "KNOWLEDGE_INDEX.json")
+        units, warnings, errors = kb_index.resolve_units(self.root, "catalog")
+        self.assertEqual((errors, warnings), ([], []))
+        self.assertEqual([(u["kind"], Path(u["path"]).name, u["start"]) for u in units], [("file", "05_catalog.md", 0)])
+        units, _, errors = kb_index.resolve_units(self.root, "catalog-section")
+        self.assertEqual(errors, [])
+        self.assertEqual(units[0]["section"], "Catalog")
+        self.assertEqual(units[0]["start"], 0)
+        self.assertEqual(units[0]["end"], (self.root / "kb" / "05_catalog.md").stat().st_size)
+        self.save("kb/fresh.md", "# Fresh\nещё не в Git\n")
+        index["routes"].append({"id": "fresh", "description": "f", "load_when": ["x"], "aliases": ["f"],
+                                "paths": ["kb/fresh.md"]})
+        self.save("KNOWLEDGE_INDEX.json", index)
+        units, warnings, errors = kb_index.resolve_units(self.root, "fresh")
+        self.assertEqual(units, [])
+        self.assertTrue(any("not Git-tracked" in e for e in errors), errors)
+        units, warnings, errors = kb_index.resolve_units(self.root, "fresh", allow_untracked=True)
+        self.assertEqual(errors, [])
+        self.assertTrue(any("not Git-tracked" in w for w in warnings), warnings)
+        self.assertEqual(Path(units[0]["path"]).name, "fresh.md")
+        out = self.run_tool("kb_index.py", "--resolve", "catalog", "--text")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("series C00001", out.stdout)
+        self.assertIn("RESOLVE: catalog — units 1, warnings 0, errors 0; interface v1", out.stdout)
+        blocked = self.run_tool("kb_index.py", "--resolve", "fresh")
+        self.assertEqual(blocked.returncode, 1)
+        self.assertIn("ERROR:", blocked.stdout)
+        allowed = self.run_tool("kb_index.py", "--resolve", "fresh", "--allow-untracked", "--json")
+        self.assertEqual(allowed.returncode, 0, allowed.stdout)
+        self.assertEqual(json.loads(allowed.stdout)["interface"], "1")
+
+    def test_2_cost_policy_is_optional_and_untracked_route_files_mark_the_measurement_partial(self):
+        from test_kb import compact_role_fixture
+        root = Path(compact_role_fixture(accepted=False)).resolve()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        registry_path = root / "PROJECT_ROLES.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        scenario = registry["cost_policy"]["scenarios"][0]
+        (root / "knowledge" / "extra.md").write_text("# Extra\nне в Git\n", encoding="utf-8")
+        scenario["route_files"] = list(scenario.get("route_files", [])) + ["knowledge/extra.md"]
+        registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+        out = subprocess.run([sys.executable, str(HERE / "kb_skills.py"), str(root)],
+                             capture_output=True, text=True, timeout=120).stdout
+        self.assertIn("COST_SCOPE_PARTIAL", out)
+        self.assertIn("route file is not Git-tracked: knowledge/extra.md", out)
+        del registry["cost_policy"]
+        registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2), encoding="utf-8")
+        out = subprocess.run([sys.executable, str(HERE / "kb_skills.py"), str(root)],
+                             capture_output=True, text=True, timeout=120).stdout
+        self.assertNotIn("need cost_policy", out)
+        self.assertIn("cost_policy не объявлен", out)
+
+    def test_3_report_inbox_path_is_not_a_host_specific_boot_error(self):
+        import kb_environments
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n"
+                               "инбокс отчётов: /home/someone/kb-architect/inbox\n")
+        os.symlink("CLAUDE.md", self.root / "AGENTS.md")
+        self.commit_at("2026-10-28", "CLAUDE.md", "AGENTS.md")
+        errors = []
+        kb_environments.entry_portability(self.root, ["claude-local"], errors)
+        self.assertEqual(errors, [])
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n"
+                               "инбокс отчётов: /home/someone/kb-architect/inbox\n"
+                               "данные: /home/someone/data\n")
+        self.commit_at("2026-10-28", "CLAUDE.md")
+        errors = []
+        kb_environments.entry_portability(self.root, ["claude-local"], errors)
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("host-specific path", errors[0])
+        template = (HERE.parent / "assets" / "templates" / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn("../kb-architect/inbox", template)
+
+    def test_4_a_template_or_skill_repository_silences_the_entry_hook(self):
+        self.project()
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb: template\nkb_standard_version: 7.2.0\n")
+        self.assertIsNone(self.start(), "no entry for a repository that declares it is not a base")
+        self.assertEqual(self.tool("Edit", file_path=str(self.root / "NOW.md"), old_string="a", new_string="b"),
+                         "allow", "no lock either")
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
+        self.assertIsNotNone(self.start(), "a base still gets its entry")
+
+    def test_5_a_new_project_is_born_on_the_installed_version_with_a_finalized_receipt(self):
+        import kb_paths
+        version = kb_paths.skill_version()
+        fresh = self.base / "fresh"
+        fresh.mkdir()
+        out = subprocess.run([sys.executable, str(HERE / "kb_init.py"), str(fresh)],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        rules = (fresh / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn(f"kb_standard_version: {version}\n", rules)
+        self.assertNotIn("ставится после приёмки", rules)
+        receipt = json.loads((fresh / "KB_RELEASE_APPLICATION.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["application"]["status"], "finalized")
+        self.assertIsNone(receipt["application"]["from_version"])
+        self.assertEqual(receipt["application"]["to_version"], version)
+        self.assertIsNone(receipt["application"]["source"]["commit"])
+        before = subprocess.run([sys.executable, str(HERE / "kb_apply.py"), str(fresh)],
+                                capture_output=True, text=True, timeout=60)
+        self.assertNotIn("Traceback", before.stdout + before.stderr)
+        self.init_git(root=fresh)
+        self.git("add", "-A", root=fresh)
+        self.git("commit", "-qm", "born", root=fresh)
+        after = subprocess.run([sys.executable, str(HERE / "kb_apply.py"), str(fresh)],
+                               capture_output=True, text=True, timeout=60)
+        self.assertEqual(after.returncode, 0, after.stdout + after.stderr)
+        self.assertIn("APPLICATION_RECEIPT_OK", after.stdout)
+        self.assertIn("PROJECT_VERSION_OK", after.stdout)
+
+    def test_6_references_name_the_interface_and_the_marker(self):
+        routing = (HERE.parent / "references" / "knowledge-routing.md").read_text(encoding="utf-8")
+        self.assertIn("## `interface` — resolver для зависимых скиллов", routing)
+        service = (HERE.parent / "references" / "service-layer.md").read_text(encoding="utf-8")
+        self.assertIn("`kb: template` или `kb: skill`", service)
+        migration = (HERE.parent / "references" / "migration.md").read_text(encoding="utf-8")
+        self.assertIn("`kb_init` пишет такую квитанцию сам", migration)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

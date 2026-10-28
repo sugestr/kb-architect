@@ -30,6 +30,10 @@ CLOUD_LOCAL_KINDS = {"local-mcp", "local-filesystem", "macos-keychain"}
 # Split the macOS home prefix so the public leakage scanner does not mistake this
 # generic detector for a copied personal path.
 ABSOLUTE = re.compile(r"(?:/" + r"Users/|/home/|[A-Za-z]:\\\\|~/)")
+# 8.3.3: адрес инбокса отчётов — частный по назначению (отчёт шаблона компаний 27.10 P9):
+# проверка host-specific path его не касается, хотя шаблон советует относительный путь.
+REPORT_ROUTE = re.compile(r"^[ \t]*(?:[-*>+][ \t]+)?[`*_\"']{0,2}[ \t]*(?:инбокс отчётов|report inbox|"
+                          r"defect report inbox|маршрут отчётов|report route)[`*_\"']{0,2}[ \t]*:", re.IGNORECASE)
 
 
 def git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -73,6 +77,8 @@ def entry_portability(root: Path, runtimes: list[str], errors: list[str]) -> Non
             errors.append(f"{name}: entry is unreadable: {exc}")
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
+            if REPORT_ROUTE.match(line):
+                continue
             if ABSOLUTE.search(line) and not line.lstrip().startswith("# historical"):
                 errors.append(
                     f"{name}:{lineno}: active instruction contains a host-specific path; "

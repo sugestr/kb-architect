@@ -16,6 +16,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -158,6 +159,36 @@ def main() -> int:
                 f.write("\n".join(lines))
             created.append(f"план областей → {target}")
 
+    # 8.3.3: новый проект рождается на номере установленного выпуска и с финализированной
+    # квитанцией — перехода не было, подтверждать владельцу нечего; до этого hook не видел
+    # новый проект (заглушка вместо номера), а kb_apply требовал приёмку перехода, которого нет
+    # (зависимый скилл 27.10). Проверить: `kb_apply.py <root>` → PROJECT_VERSION_OK после первого коммита.
+    try:
+        import kb_paths
+        version = kb_paths.skill_version()
+    except Exception:
+        version = None
+    rules_path = os.path.join(root, "CLAUDE.md")
+    if version and "CLAUDE.md" in created:
+        with open(rules_path, encoding="utf-8") as f:
+            text = f.read()
+        stamped = re.sub(r"^kb_standard_version:.*$", f"kb_standard_version: {version}", text, count=1,
+                         flags=re.MULTILINE)
+        if stamped != text:
+            with open(rules_path, "w", encoding="utf-8") as f:
+                f.write(stamped)
+            created.append(f"kb_standard_version: {version}")
+    receipt = os.path.join(root, "KB_RELEASE_APPLICATION.json")
+    if version and not os.path.lexists(receipt):
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        with open(receipt, "w", encoding="utf-8") as f:
+            json.dump({"schema": 3, "application": {
+                "from_version": None, "to_version": version, "status": "finalized",
+                "source": {"commit": None, "version_source": "CLAUDE.md"},
+                "owner": {"accepted_by": "kb_init: новый проект, перехода нет", "accepted_at": now},
+                "finalized_at": now, "open": []}}, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        created.append("KB_RELEASE_APPLICATION.json")
     print("Создано: " + ", ".join(created))
     if skipped:
         print("Пропущено (уже есть): " + ", ".join(skipped))
@@ -165,7 +196,7 @@ def main() -> int:
         "\nДальше:\n"
         "  1. Заполни NOW.md — где мы, что дальше, чего ждём, что не знаем.\n"
         "  2. Впиши в QUESTIONS.md пять вопросов проекта, один из них злой.\n"
-        "  3. Заполни остальной CLAUDE.md: язык, вход в сессию, границы, блок «Соответствие».\n"
+        "  3. Заполни остальной CLAUDE.md: язык, вход в сессию, границы, блок «Соответствие» (номер выпуска уже стоит).\n"
         "  4. git init + приватный remote + первый коммит.\n"
         "\nСверх минимума ничего не заводи, пока в SLOMALOS.md не появится повтор."
     )

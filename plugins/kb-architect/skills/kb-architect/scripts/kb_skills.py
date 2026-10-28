@@ -775,7 +775,10 @@ def route_file(root: Path, value: object, label: str,
     elif not path.is_file():
         errors.append(f"{label}: route file is missing: {value}")
     elif not tracked(root, path):
+        # 8.3.3: файл вне Git считается в замере, замер помечается частичным — иначе цифра до
+        # первого коммита занижена вдвое и выглядит обычной (зависимый скилл 27.10)
         errors.append(f"{label}: route file is not Git-tracked: {value}")
+        return path
     else:
         return path
     return None
@@ -1482,8 +1485,13 @@ def validate_visible(root: Path, data: dict, registry: Path,
                      "global instructions and installed entry are extra unless included in route_files")
         cost = data.get("cost_policy")
         covered_roles: set[str] = set()
-        if not isinstance(cost, dict) or not isinstance(cost.get("scenarios"), list):
-            errors.append("required roles need cost_policy.scenarios")
+        if cost is None:
+            # 8.3.3: бюджет ролей — явное решение проекта, не обязанность (владелец 03.10 снял бюджет
+            # байтов для скилла; для проектов цифры с причинами придумывались ради проверки).
+            notes.append("cost_policy не объявлен — бюджет ролей не проверяется и не замеряется; "
+                         "объяви cost_policy.scenarios, если проекту нужен принятый предел")
+        elif not isinstance(cost, dict) or not isinstance(cost.get("scenarios"), list):
+            errors.append("cost_policy is declared but has no scenarios array")
         else:
             threshold = cost.get("review_above_bytes", 8192)
             if not isinstance(threshold, int) or threshold <= 0:
@@ -1530,6 +1538,11 @@ def validate_visible(root: Path, data: dict, registry: Path,
                                   ", ".join(missing_paths))
                 paths = [route_file(root, value, scenario_id, errors)
                          for value in dict.fromkeys(declared_files)]
+                untracked = [value for value, p in zip(dict.fromkeys(declared_files), paths)
+                             if p and not tracked(root, p)]
+                if untracked:
+                    notes.append(f"COST_SCOPE_PARTIAL {scenario_id}: {len(untracked)} route file(s) not "
+                                 "Git-tracked — counted, measurement not final until committed")
                 try:
                     route_units = kb_index.local_read_set(
                         root, [index_routes.get(route, {}) for route in required_routes],

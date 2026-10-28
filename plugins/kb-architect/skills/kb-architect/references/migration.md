@@ -116,7 +116,9 @@
 `from_version`, `to_version`, `status`, исходный commit и `version_source`,
 решение с `accepted_by` и `accepted_at`, `finalized_at` и открытое.
 Для нового проекта `from_version: null`, а source commit — тот, где marker
-появился впервые. Используй незаполненный шаблон `assets/templates/release-application.json`;
+появился впервые; с 8.3.3 `kb_init` пишет такую квитанцию сам (финализированную,
+`source.commit` пуст до первого коммита — `kb_apply` берёт коммит первого появления marker),
+слово владельца нужно только переходу с делами ⟦Д⟧. Используй незаполненный шаблон `assets/templates/release-application.json`;
 неизвестные результаты не превращай в готовые статусы.
 
 Старые schema 2 с `from_line` и `to_line` остаются читаемыми без косметического
