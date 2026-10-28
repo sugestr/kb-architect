@@ -3,7 +3,7 @@ name: kb-architect
 description: "Build and improve durable project knowledge bases: diverse knowledge, professional roles, nested projects, reliable intake and retrieval, low-cost maintenance. Создать, проверить, обновить или перестроить базу знаний."
 license: MIT
 metadata:
-  version: "8.3.1"
+  version: "8.3.2"
   minimum_project_version: "7.2.0"
   author: "sugestr"
 ---
@@ -44,7 +44,9 @@ metadata:
 Существенный вывод требует проверяемых источников, области применимости,
 подтверждений, ограничений и явного непроверенного остатка по `references/retrieval.md`.
 Прямое поле источника отличай от вывода, слова человека — от установленного факта.
-Пустой поиск не доказывает отсутствие. Совершённое действие без достаточной
+Пустой поиск не доказывает отсутствие. Выведенная метрика — существенный вывод: метод
+(запрос, скрипт, разметка) хранится рядом с результатом; метрика-заместитель без измеренной
+точности — `UNKNOWN`, одна в основание решения не годится. Совершённое действие без достаточной
 проверки результата остаётся `TBD`, а не фактом. Проверка подтверждает только свой охват:
 `PASS` означает успешную выполненную проверку, `FAIL` — обнаруженный отказ,
 `UNKNOWN` — неизвестный результат, `PENDING` — незавершённую работу.
@@ -131,6 +133,7 @@ Authority действия — право выполнить его в теку�
 | Собрать мусор | `references/patterns.md` → `garbage_collection` |
 | Понять authority и границы публикации | `references/authority.md` |
 | Измерить пользу/стоимость слоёв | `references/measurement.md` + `scripts/kb_cost.py --check` |
+| Замер или анализ по данным проекта | `references/measurement.md` → `lifecycle` + `references/retrieval.md` → `evidence_contract` |
 | Разобрать дефект или сопровождать скилл | `references/service-layer.md` → `reports` |
 | Собрать или доставить баг-репорт | `assets/templates/defect-report.md` + `scripts/kb_report.py --help` |
 

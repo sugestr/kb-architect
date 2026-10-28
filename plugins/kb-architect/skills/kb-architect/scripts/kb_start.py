@@ -827,7 +827,9 @@ def shell_read_only(cmd):
 # Служебные инструменты приложения Claude (план задачи, панели, сессии) не меняют проект; хост
 # требует некоторые из них первым вызовом, и замок входа отклонял их (проект 15.10.2026).
 HOST_UI = re.compile(r"^mcp__ccd_view__(?:show_pane|close_pane|get_layout|set_transcript_view)$|"
-                     r"^mcp__ccd_session__(?:update_plan|wrap_up|mark_chapter|read_widget_context)$")
+                     r"^mcp__ccd_session__(?:update_plan|wrap_up|mark_chapter|read_widget_context)$|"
+                     # в приложении список задач и итог хода живут под mcp__ccd_turn__ (продукт на Odoo, отчёт 26.10 §2)
+                     r"^mcp__ccd_turn__(?:update_plan|wrap_up)$")
 
 
 def mcp_read_only(tool):

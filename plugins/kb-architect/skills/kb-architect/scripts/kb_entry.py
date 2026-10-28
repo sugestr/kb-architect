@@ -308,41 +308,71 @@ def confirmed_bundle(root):
     return None
 
 
+ENTRY_FOLDER_LOCAL = ".kb-entry"
+
+
+class OutBlocked(Exception):
+    """Файл входа некуда записать: ни одна папка цепочки не доступна."""
+
+
+def entry_folder_candidates(root):
+    base = git_dir(root)
+    yield "git", (os.path.join(base, "kb-entry") if base else None)
+    yield "cache", os.path.join(os.path.expanduser("~"), ".cache", "kb-architect", "entry", "out")
+    yield "temp", None
+    yield "root", os.path.join(root, ENTRY_FOLDER_LOCAL)
+
+
 def default_out(root):
     """Свой файл на каждый вызов: сессии в одном checkout не затирают вход
-    друг друга. Git-каталог не отслеживается; недоступен — временный каталог."""
+    друг друга. Цепочка папок (8.3.2, партнёр на Windows 19.10: sandbox Codex закрывал и
+    `.git`, и %TEMP%, скрипт падал traceback'ом): `.git/kb-entry` (не отслеживается) →
+    `~/.cache/kb-architect/entry/out` → временный каталог → `<root>/.kb-entry/` с собственным
+    `.gitignore` (скрытую папку обходы kb_check и kb_paths пропускают). Нигде нельзя —
+    OutBlocked с перечнем попыток."""
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    base = git_dir(root)
-    folder = None
-    if base:
+    tried = []
+    for kind, folder in entry_folder_candidates(root):
         try:
-            folder = os.path.join(base, "kb-entry")
-            os.makedirs(folder, exist_ok=True)
-            probe = os.path.join(folder, f".probe-{os.getpid()}")
-            open(probe, "w").close()
-            os.remove(probe)
-        except OSError:
-            folder = None
-    if folder:
-        # hook входа собирает файл на каждом старте и сжатии: старше недели — мусор
-        limit = time.time() - 7 * 86400
-        for name in os.listdir(folder):
-            if name.startswith("ENTRY-"):
-                try:
-                    if os.path.getmtime(os.path.join(folder, name)) < limit:
-                        os.remove(os.path.join(folder, name))
-                except OSError:
-                    pass
-    if not folder:
-        folder = tempfile.mkdtemp(prefix="kb-entry-")
-    return os.path.join(folder, f"ENTRY-{stamp}-{os.getpid()}-{secrets.token_hex(2)}.md")
+            if kind == "temp":
+                folder = tempfile.mkdtemp(prefix="kb-entry-")
+            elif folder is None:
+                tried.append(f"{kind}: нет git-каталога")
+                continue
+            else:
+                os.makedirs(folder, exist_ok=True)
+                probe = os.path.join(folder, f".probe-{os.getpid()}")
+                open(probe, "w").close()
+                os.remove(probe)
+            if kind == "root":
+                ignore = os.path.join(folder, ".gitignore")
+                if not os.path.exists(ignore):
+                    with open(ignore, "w", encoding="utf-8") as f:
+                        f.write("*\n")
+            if kind != "temp":
+                # hook входа собирает файл на каждом старте и сжатии: старше недели — мусор
+                limit = time.time() - 7 * 86400
+                for name in os.listdir(folder):
+                    if name.startswith("ENTRY-"):
+                        try:
+                            if os.path.getmtime(os.path.join(folder, name)) < limit:
+                                os.remove(os.path.join(folder, name))
+                        except OSError:
+                            pass
+            return os.path.join(folder, f"ENTRY-{stamp}-{os.getpid()}-{secrets.token_hex(2)}.md")
+        except OSError as exc:
+            tried.append(f"{kind} {folder or ''}: {type(exc).__name__}".strip())
+    raise OutBlocked("; ".join(tried))
 
 
 def out_blocked(root, out):
     real_out = os.path.realpath(out)
     base = git_dir(root)
     inside_tree = real_out.startswith(os.path.realpath(root) + os.sep)
-    return inside_tree and not (base and real_out.startswith(os.path.realpath(base) + os.sep))
+    local = os.path.realpath(os.path.join(root, ENTRY_FOLDER_LOCAL))
+    allowed = (base and real_out.startswith(os.path.realpath(base) + os.sep)) \
+        or real_out.startswith(local + os.sep)
+    return inside_tree and not allowed
 
 
 def receipt_line(result, digest):
@@ -441,7 +471,12 @@ def main():
                                        result["roles"])
     total = result["total"]
     if not out:
-        out = default_out(root)
+        try:
+            out = default_out(root)
+        except OutBlocked as exc:
+            print(f"BLOCKED_OUT: файл входа некуда записать — {exc}. Открой одну из этих папок или дай "
+                  f"--out <файл вне дерева проекта или в {ENTRY_FOLDER_LOCAL}/>")
+            return 2
     digest, _ = write(root, result, out, header_note=note)
     print(f"ENTRY_BUNDLE={out}")
     print(f"  файлов: {len(files)}, байт: {total}")

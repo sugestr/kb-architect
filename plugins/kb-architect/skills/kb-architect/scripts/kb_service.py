@@ -508,6 +508,48 @@ def agent_argv(prompt, cwd, out, family=None):
     raise RuntimeError("нет агента для экзамена: ни codex, ни claude")
 
 
+AGENT_TIMEOUT = 2400
+
+
+def agent_label(family=None):
+    """Какой агент и какая модель запустятся — печатается до запуска (продукт на Odoo, отчёт 26.10 §4: `review`
+    молча запустил третий Codex при свопе 75 %)."""
+    custom = os.environ.get("KB_AGENT_CMD")
+    if custom:
+        return f"KB_AGENT_CMD: {custom}"
+    codex = shutil.which("codex") or (CODEX_APP if os.path.exists(CODEX_APP) else None)
+    if family != "claude" and codex:
+        return f"codex exec, модель {os.environ.get('KB_AGENT_MODEL', 'gpt-6.1-sol')}"
+    claude = shutil.which("claude") or os.path.join(HOME, ".local", "bin", "claude")
+    if os.path.exists(claude) and family != "codex":
+        return "claude -p, модель по умолчанию CLI"
+    return f"агент не найден ({family or 'любой'})"
+
+
+def swap_usage():
+    """(занято %, пояснение) или (None, причина). macOS — `sysctl vm.swapusage`, Linux —
+    /proc/meminfo. Своп почти полон — параллельная модель замедлит или уронит соседние сессии."""
+    try:
+        if sys.platform == "darwin":
+            r = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True, timeout=5)
+            m = re.search(r"total = ([\d.]+)M\s+used = ([\d.]+)M", r.stdout)
+            if not m:
+                return None, "vm.swapusage не прочитан"
+            total, used = float(m.group(1)), float(m.group(2))
+            if total <= 0:
+                return None, "свопа нет"
+            return used / total * 100, f"{used:.0f} из {total:.0f} МБ"
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            info = dict(line.split(":", 1) for line in f if ":" in line)
+        total = float(info.get("SwapTotal", "0").split()[0])
+        free = float(info.get("SwapFree", "0").split()[0])
+        if total <= 0:
+            return None, "свопа нет"
+        return (total - free) / total * 100, f"{(total - free) / 1024:.0f} из {total / 1024:.0f} МБ"
+    except Exception as exc:
+        return None, f"не прочитан: {type(exc).__name__}"
+
+
 def isolated_home():
     """Пустой CODEX_HOME только с авторизацией: без глобальных правил и памяти владельца,
     которые указывают агенту на настоящий проект (ревью 7.6.0)."""
@@ -519,7 +561,7 @@ def isolated_home():
     return home
 
 
-def run_agent(prompt, cwd, timeout=2400, family=None, check=False):
+def run_agent(prompt, cwd, timeout=AGENT_TIMEOUT, family=None, check=False):
     """Ответ агента. check=True: ненулевой код завершения — исключение, а не ответ
     (ревью 8.2.0: exit 1 со stdout «[]» принимался как «противоречий нет»)."""
     fd, out = tempfile.mkstemp(prefix="kb-agent-", suffix=".txt")

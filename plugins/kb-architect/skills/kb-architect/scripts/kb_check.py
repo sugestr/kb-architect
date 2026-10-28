@@ -416,6 +416,30 @@ def ignored_links(root, linked):
             if p in hit and os.path.realpath(os.path.join(root, rel)) not in hit]
 
 
+OTHER_HOME = re.compile(r"^/(?:home|Users)/[^/]+/(.+)$")
+
+
+def same_checkout_elsewhere(clean, home_rel):
+    """`/home/<u>/<адрес checkout>/x` → `x`, если адрес после домашнего каталога совпадает с
+    адресом этого checkout от домашнего каталога здесь: проект «одинаково на обоих хостах»
+    (продукт на Odoo, отчёт 26.10 §1: 70 из 75 «битых» ссылок были путями того же checkout на сервере)."""
+    if not home_rel or home_rel.startswith(".."):
+        return clean
+    m = OTHER_HOME.match(clean)
+    if not m:
+        return clean
+    rest = m.group(1)
+    if rest == home_rel or rest.startswith(home_rel + "/"):
+        return rest[len(home_rel):].lstrip("/") or "."
+    return clean
+
+
+def touches_area(v, area):
+    paths = getattr(v, "paths", None) or (v.outside_path + v.outside_name + v.both_sides)
+    area = area.replace(os.sep, "/")
+    return any(p == area or p.startswith(area + "/") for p in paths)
+
+
 def is_internal(target):
     t = target.strip()
     if not t or t.startswith(("#", "http://", "https://", "mailto:", "tel:", "data:")):
@@ -447,11 +471,29 @@ def main():
         if area.startswith(".."):
             print(f"область вне проекта: {sys.argv[i + 1]}")
             return 2
+    # 8.3.2 (продукт на Odoo, отчёт 26.10 §9): незнакомый ключ принимался молча — `--json` давал обычный текст,
+    # и чужой скрипт падал на разборе. Ключи кроме --area <путь> — отказ с кодом 2.
+    extra, skip = [], False
+    for tok in sys.argv[2:]:
+        if skip:
+            skip = False
+            continue
+        if tok == "--area":
+            skip = True
+            continue
+        extra.append(tok)
+    if extra:
+        print(f"неизвестный ключ: {' '.join(extra)} — поддерживается только --area <путь>; "
+              "вывода в JSON нет")
+        return 2
 
     today = datetime.date.today()
     broken, expired, blank = [], [], []
     temporary, memory_refs, linked_files = [], [], []
     root_real = os.path.realpath(root)
+    home_real = os.path.realpath(os.path.expanduser("~"))
+    home_rel = (os.path.relpath(root_real, home_real).replace(os.sep, "/")
+                if root_real.startswith(home_real + os.sep) else None)
     raw_temp, _ = kb_paths.declared_value(root, TEMP_ALLOWED_KEYS)
     temp_allowed = [g.strip().strip("`\"'«»") for g in re.split(r"[,;]", raw_temp or "") if g.strip()]
     raw_local, _ = kb_paths.declared_value(root, LOCAL_ALLOWED_KEYS)
@@ -519,6 +561,7 @@ def main():
                         os.path.join(os.path.dirname(path), decoded),
                         os.path.join(root, decoded.lstrip("/")))):
                 clean = decoded
+            clean = same_checkout_elsewhere(clean, home_rel)
             # путь может быть задан относительно файла или относительно корня
             # базы — оба написания встречаются в живых репозиториях, и считать
             # второе поломкой значит производить шум вместо находок
@@ -699,6 +742,10 @@ def main():
 
     vetki, vetki_why = kb_paths.unmerged_refs(root)
     poterya = [v for v in vetki if v.lost]
+    if area:
+        # 8.3.2 (архив переписки, отчёт 26.10 §3): проверка области показывала ветки всей базы и противоречила
+        # своей строке охвата. В счёт идут только ветки, которые трогают файлы области.
+        poterya = [v for v in poterya if touches_area(v, area)]
     lishnie = [v for v in vetki if not v.lost]
     report_inbox, report_inbox_error, report_inbox_note = report_inbox_state(root)
 
@@ -993,15 +1040,20 @@ def main():
                          "(informational; project budget not declared)")
         else:
             # 05.10.2026: вход на 39 977 из 40 000 Б — PASS, а новое правило работы агента во вход
-            # уже не помещалось и ушло в память. Заполненный вход назван отдельно; это не находка.
-            full = not budget_exceeded and budget and bootstrap >= budget * 0.99
-            state = "EXCEEDED" if budget_exceeded else ("FULL" if full else "PASS")
+            # уже не помещалось и ушло в память. 8.3.2 (продукт на Odoo, отчёт 26.10 §6): 39 945 из 40 000 снова PASS,
+            # реорганизация понадобилась при 55 Б запаса — порог «почти полон» от 95 % или запаса
+            # меньше 2 КБ. Это предупреждение с адресом, не находка.
+            headroom = budget - bootstrap
+            near = not budget_exceeded and budget and (bootstrap >= budget * 0.95 or headroom < 2048)
+            state = "EXCEEDED" if budget_exceeded else ("NEAR_LIMIT" if near else "PASS")
             scope.append(f"project bootstrap budget — {state} "
                          f"({bootstrap}/{budget} B)")
-            if full:
-                print(f"ВХОД ЗАПОЛНЕН: {bootstrap} из {budget} B. Новое правило работы агента во вход "
-                      "не поместится — освободи место или запиши правило в главу с адресом раздела "
-                      "входа, куда его поднять; память агента местом не служит.\n")
+            if near:
+                print(f"ВХОД ПОЧТИ ЗАПОЛНЕН: {bootstrap} из {budget} B, запас {headroom} B. Новое правило "
+                      "работы агента во вход не поместится — освободи вход: references/adopt-existing.md → "
+                      "reorganization (карточка вместо хроники, закрытое — в архив с адресом); правило, "
+                      "которому нет места, — в главу с адресом раздела входа, куда его поднять; "
+                      "память агента местом не служит.\n")
     else:
         scope.append("max project bootstrap — NOT_CHECKED")
 
@@ -1018,8 +1070,8 @@ def main():
         scope.append(f"вне знания по объявлению, не проверено: {skl(skipped_outside, 'файл', 'файла', 'файлов')}")
     scope.append(debt_scope)
     if area:
-        scope.insert(0, f"ОБЛАСТЬ {area}: только её файлы; ветки, достижимость и долги всей базы — "
-                        "в полной проверке (обход, передача работы)")
+        scope.insert(0, f"ОБЛАСТЬ {area}: только её файлы и ветки, которые их трогают; достижимость "
+                        "и долги всей базы — в полной проверке (обход, передача работы)")
 
     if not found:
         head = "целостность: чисто" if not debt_lines else \

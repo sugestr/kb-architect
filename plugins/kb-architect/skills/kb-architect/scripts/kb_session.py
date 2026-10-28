@@ -504,6 +504,16 @@ def classify(name, inp, session, cwd=None):
                            "message_thread_id", "idempotency_key", "id", "path")}
         out.append(("внешняя система", f"{server}.{parts[-1]} {short(json.dumps(brief, ensure_ascii=False), 120)}"))
         return out
+    if name not in kb_start.FILE_TOOLS and name != "apply_patch":
+        # 8.3.2 (закрытие Codex 25.10): вызов с кодом под незнакомым именем (`js`, `exec` без
+        # `tools.*`) выпадал из actions.md молча. Непрозрачный код — кандидат на просмотр, не
+        # «мутация»: read-only JS сюда тоже попадает и помечается так же.
+        code = next((inp.get(k) for k in ("code", "cmd", "script", "input", "command")
+                     if isinstance(inp.get(k), str) and inp.get(k).strip()), None)
+        if code:
+            out.append(("UNKNOWN: требует просмотра",
+                        f"{name}: {short(code.strip().splitlines()[0], 120)}"))
+            return out
     paths = []
     if name in kb_start.FILE_TOOLS and isinstance(inp.get(kb_start.FILE_TOOLS[name]), str):
         paths = [inp[kb_start.FILE_TOOLS[name]]]
@@ -641,17 +651,42 @@ def current_removed(root, since):
         return None, []
     rel = os.path.relpath(entry.path, root)
     try:
-        log = subprocess.run(["git", "-C", root, "log", f"--since={since}", "-p", "--format=@@COMMIT %h",
-                              "--", rel], capture_output=True, text=True, timeout=30).stdout
+        # 8.3.2 (закрытие Codex 25.10 b): `git log --since` берёт все коммиты за время сессии, в том
+        # числе чужие; раньше заголовок говорил «в этой сессии». Автор — в каждой строке.
+        log = subprocess.run(["git", "-C", root, "log", f"--since={since}", "-p",
+                              "--format=@@COMMIT %h %an", "--", rel],
+                             capture_output=True, text=True, timeout=30).stdout
     except (OSError, subprocess.SubprocessError):
         return rel, []
-    removed, commit = [], ""
+    removed, commit, author = [], "", ""
     for line in log.splitlines():
         if line.startswith("@@COMMIT "):
-            commit = line.split()[1]
+            parts = line.split(maxsplit=2)
+            commit, author = parts[1], (parts[2] if len(parts) > 2 else "")
         elif line.startswith("-") and not line.startswith("---") and line[1:].strip():
-            removed.append((commit, line[1:].rstrip()))
+            removed.append((commit, author, line[1:].rstrip()))
     return rel, removed
+
+
+def tree_changes(root, since):
+    """Файлы дерева, изменённые за время сессии по git: коммиты с --since и текущие
+    незакоммиченные. Запасной счёт записей: python, heredoc и скрипты разбор не видит
+    (закрытие Codex 25.10 c)."""
+    if not since:
+        return []
+    files = set()
+    try:
+        log = subprocess.run(["git", "-C", root, "log", f"--since={since}", "--name-only",
+                              "--format="], capture_output=True, text=True, timeout=30).stdout
+        files.update(l.strip() for l in log.splitlines() if l.strip())
+        status = subprocess.run(["git", "-C", root, "status", "--porcelain", "--untracked-files=all"],
+                                capture_output=True, text=True, timeout=30).stdout
+        for l in status.splitlines():
+            if len(l) > 3:
+                files.add(l[3:].strip().strip('"').split(" -> ")[-1])
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return sorted(files)
 
 
 def knowledge_split(root, rels):
@@ -719,6 +754,13 @@ def write_out(s, out, tz):
     else:
         writes += ["Корни знания не объявлены (`KNOWLEDGE_INDEX.json`): раздели сам — рабочая заметка "
                    "и папка данных адресом не считаются.", "", *[f"- {r}" for r in other]]
+    changed = tree_changes(s.root, s.first)
+    uncounted = [p for p in changed if p not in s.writes]
+    s.uncounted = uncounted
+    writes += ["", "## Охват", "Записи через python, heredoc и скрипты разбор журнала не видит: счёт выше "
+               f"частичный. По git за время сессии изменены файлы: {len(changed)}; из них не учтены "
+               f"выше: {len(uncounted)} — их решения и факты тоже нужны в каноне.",
+               *[f"- {p}" for p in uncounted[:100]]]
     save("writes.md", writes)
 
     qs = questions(s)
@@ -728,10 +770,13 @@ def write_out(s, out, tz):
          + [f"- {local(t, tz)} · L{n} · {short(q, 300)}" for t, n, q in qs])
 
     rel, removed = current_removed(s.root, s.first)
-    save("current.md", [f"# Снято с current ({rel or 'current не найден'}) в этой сессии — {len(removed)} строк",
+    save("current.md", [f"# Снято с current ({rel or 'current не найден'}) за время сессии, все авторы — "
+                        f"{len(removed)} строк",
                         "", "Каждое действующее правило и открытый вопрос — в главе или в current; "
-                        "архив и хроника адресом действующего не считаются.", ""]
-         + [f"- {c} · {short(line, 300)}" for c, line in removed[:200]])
+                        "архив и хроника адресом действующего не считаются. Коммиты других сессий и "
+                        "агентов за это время попадают сюда тоже: автор — в строке, чужое — кандидат, "
+                        "не доказанная правка этой сессии.", ""]
+         + [f"- {c} · {a or '?'} · {short(line, 300)}" for c, a, line in removed[:200]])
 
     timeline = [(o["t"], f"### ВЛАДЕЛЕЦ {local(o['t'], tz)} · L{o['line']}\n{o['text']}") for o in s.owner]
     timeline += [(a["t"], f"### АГЕНТ {local(a['t'], tz)} · L{a['line']}\n{a['text']}") for a in s.agent]
@@ -872,7 +917,8 @@ def main(argv=None):
           + (" — " + ", ".join(f"{k} {v}" for k, v in sorted(kinds.items())) if kinds else ""))
     if undelivered:
         print(f"  сообщения сессиям без доставки: {len(undelivered)}")
-    print(f"  файлов проекта записано: {len(s.writes)}; вопросов агента: {len(questions(s))}; "
+    print(f"  файлов проекта записано: {len(s.writes)} (по git изменено ещё {len(getattr(s, 'uncounted', []))} — "
+          f"охват записей частичный); вопросов агента: {len(questions(s))}; "
           f"скрыто значений, похожих на секреты: {hidden + hidden_values} (маска ловит не все)")
     print(f"  кандидаты: {out} (owner.md, actions.md, writes.md, questions.md, current.md, parts/ — {parts})")
     print("Дальше по references/capture.md → close: у каждого пункта адрес в каноне или запись сейчас;"

@@ -141,8 +141,8 @@ def t_620_thin_router_points_to_versioned_contract():
     migration = skill_text("references/migration.md")
     out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
     check("версионируемое ядро сохраняет обязательные правила и их маршруты",
-          len(router.encode("utf-8")) <= 14_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B.
-          and 'version: "8.3.1"' in router
+          len(router.encode("utf-8")) <= 15_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B; 8.3.2 = 15,016 B, предел 15 500.
+          and 'version: "8.3.2"' in router
           and all(path in router for path in (
               "references/project-roles.md", "references/retrieval.md",
               "references/adopt-existing.md", "references/migration.md"))
@@ -191,9 +191,9 @@ def t_layer_cost_is_measured_from_the_single_router():
         (x for x in routes if "стоимость слоёв" in x.get("task", "")), {})
     check("стоимость entry и routed-слоёв воспроизводима без второго route registry",
           p.returncode == 0
-          and data.get("entry_bytes", 99_999) <= 14_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B.
+          and data.get("entry_bytes", 99_999) <= 15_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B; 8.3.2 предел 15 500.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == '8.3.1'
+          and data.get("baseline_version") == '8.3.2'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
@@ -293,7 +293,7 @@ def t_631_local_source_uses_bounded_cold_path():
     check("local source reaches a visible fact before service and durable work",
           p.returncode == 0
           and local.get("resources") == ["references/incoming.md"]
-          and local.get("total_bytes", 99_999) <= 22_000  # growth guard (owner 03.10); 8.0.0 local route = 20,507 B.
+          and local.get("total_bytes", 99_999) <= 23_000  # growth guard (owner 03.10); 8.0.0 local route = 20,507 B; 8.3.2 = 22,284 B.
           and reconcile.get("total_bytes", 99_999) <= 25_000  # 8.0.0 reconcile route = 22,366 B.
           and "Разобрать входящее, сверить реальность, найти факт" not in router
           and "что файл прямо говорит" in ref
@@ -2485,8 +2485,10 @@ def t_640_explicit_project_boot_budget_is_enforced():
 
 def t_640_inline_current_is_a_single_deduplicated_entry():
     """One physical CLAUDE/AGENTS file may own both rules and current."""
+    # 8.3.2: бюджет 24 000 — при 20 000 запас 1,8 КБ попадал под честный NEAR_LIMIT (продукт на Odoo, отчёт 26.10 §6);
+    # тест проверяет дедупликацию входа, не порог.
     content = ("# Правила\n\nтекущее состояние: раздел Сейчас в этом файле\n"
-               "project_boot_budget_bytes: 20000\n\n## Сейчас\n\n"
+               "project_boot_budget_bytes: 24000\n\n## Сейчас\n\n"
                "Обновлено: 2026-09-04\n\n- next\n" + "я" * 9000)
     d = base({"CLAUDE.md": content})
     os.symlink("CLAUDE.md", os.path.join(d, "AGENTS.md"))
@@ -2495,7 +2497,7 @@ def t_640_inline_current_is_a_single_deduplicated_entry():
     check("inline current is accepted and not added to its container twice",
           out.code == 0
           and "current entry — MEASURED (раздел внутри CLAUDE.md=" in out
-          and f"project bootstrap budget — PASS ({total}/20000 B)" in out
+          and f"project bootstrap budget — PASS ({total}/24000 B)" in out
           and "ВХОД НАЙДЕН В НЕСКОЛЬКИХ" not in out,
           out, "one physical file is first-class and its current section is deduplicated")
     shutil.rmtree(d, ignore_errors=True)
@@ -5497,7 +5499,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "8.3.1"
+          kb_paths.skill_version() == "8.3.2"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == kb_paths.skill_version()
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

@@ -5015,8 +5015,8 @@ class CloseSession0510Tests(unittest.TestCase):
         size = int(re.search(r"project bootstrap budget — \w+ \((\d+)/99999 B\)", run()).group(1))
         self.save("CLAUDE.md", body + f"project_boot_budget_bytes: {size:05d}\n")
         out = run()
-        self.assertIn(f"project bootstrap budget — FULL ({size}/{size} B)", out)
-        self.assertIn("ВХОД ЗАПОЛНЕН", out)
+        self.assertIn(f"project bootstrap budget — NEAR_LIMIT ({size}/{size} B)", out)
+        self.assertIn("ВХОД ПОЧТИ ЗАПОЛНЕН", out)
 
     def test_the_exam_agent_gets_a_closed_input(self):
         import kb_service
@@ -5526,6 +5526,207 @@ class Windows1810Tests(unittest.TestCase):
             with patch.object(sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="utf-8")):
                 kb_lock.utf8_stdio()
             self.assertEqual(os.environ.get("PYTHONUTF8"), "1")
+
+
+class Release832Tests(unittest.TestCase):
+    """8.3.2 (27.10.2026): малая партия по отчётам 25–26.10 — критерии взяты из отчётов
+    (архив переписки §3–4, продукт на Odoo §1, 2, 4, 6, 9, закрытие Codex a–c, очередь 19.10)."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+    start = ExecutableEntry0110Tests.start
+    tool = ExecutableEntry0110Tests.tool
+    stamp = staticmethod(CloseSession0510Tests.stamp)
+    user = CloseSession0510Tests.user
+    close_run = CloseSession0510Tests.close_run
+
+    def check(self, *args, **env):
+        return subprocess.run([sys.executable, str(HERE / "kb_check.py"), str(self.root), *args],
+                              capture_output=True, text=True, timeout=120, env=self.env(**env))
+
+    def test_1_area_check_counts_only_branches_touching_the_area(self):
+        self.project()
+        self.save("kb/new-area/README.md", "# Пустая область\n")
+        self.commit_at("2026-10-26", ".")
+        self.git("checkout", "-q", "-b", "feature")
+        self.save("other/branch-only.md", "# только в ветке\n")
+        self.commit_at("2026-10-26", "other/branch-only.md")
+        self.git("checkout", "-q", "main")
+        self.assertIn("РАЗЛИЧАЮТСЯ ВЕРСИИ В ВЕТКАХ — 1", self.check().stdout)
+        area = self.check("--area", "kb/new-area").stdout
+        self.assertNotIn("РАЗЛИЧАЮТСЯ ВЕРСИИ", area, area)
+        self.assertIn("целостность: чисто", area)
+        self.assertIn("ветки, которые их трогают", area)
+        touched = self.check("--area", "other").stdout
+        self.assertIn("РАЗЛИЧАЮТСЯ ВЕРСИИ В ВЕТКАХ — 1", touched, "a branch touching the area stays a finding")
+
+    def test_2_links_of_the_same_checkout_on_another_host_are_not_broken(self):
+        self.project()
+        self.save("kb/a.md", "# a\nстрока\nстрока\n")
+        rel = self.root.resolve().relative_to(self.base.resolve()).as_posix()
+        self.save("kb/notes.md", f"Код: [есть](/home/server-user/{rel}/kb/a.md:3), "
+                                 f"[нет](/home/server-user/{rel}/kb/missing.md), "
+                                 f"[чужой checkout](/home/server-user/elsewhere/{rel}/kb/a.md)\n")
+        out = self.check(HOME=str(self.base)).stdout
+        self.assertIn("БИТЫЕ ССЫЛКИ — 2", out, out)
+        self.assertIn("kb/missing.md", out)
+        self.assertIn("elsewhere", out)
+        self.assertNotIn(f"/home/server-user/{rel}/kb/a.md", out)
+
+    def test_3_app_turn_tools_pass_the_entry_lock(self):
+        self.project()
+        self.start()
+        self.assertEqual(self.tool("mcp__ccd_turn__update_plan", items=[]), "allow")
+        self.assertEqual(self.tool("mcp__ccd_turn__wrap_up", recap="x"), "allow")
+        self.assertEqual(self.tool("mcp__gmail__send_message", to="x"), "deny")
+        self.assertEqual(self.tool("Edit", file_path=str(self.root / "NOW.md"), old_string="a",
+                                   new_string="b"), "deny")
+
+    def test_4_unknown_key_is_refused_with_code_2(self):
+        self.project()
+        got = self.check("--json")
+        self.assertEqual(got.returncode, 2, got.stdout)
+        self.assertIn("неизвестный ключ: --json", got.stdout)
+        self.assertIn("ОБЛАСТЬ kb:", self.check("--area", "kb").stdout, "the one supported key still works")
+
+    def test_5_near_limit_budget_from_95_percent_or_2kb_headroom(self):
+        body = "# Rules\nkb_standard_version: 7.2.0\nвход: NOW.md\n" + "Правило проекта.\n" * 700
+        self.save("NOW.md", "Обновлено: 2026-10-05\n- Где мы\n")
+        self.save("CLAUDE.md", body + "project_boot_budget_bytes: 99999\n")
+        size = int(re.search(r"project bootstrap budget — \w+ \((\d+)/99999 B\)",
+                             self.check().stdout).group(1))
+        for budget, state in ((size + 55, "NEAR_LIMIT"), (int(size / 0.96), "NEAR_LIMIT"),
+                              (size * 2, "PASS")):
+            self.save("CLAUDE.md", body + f"project_boot_budget_bytes: {budget:05d}\n")
+            out = self.check().stdout
+            self.assertIn(f"project bootstrap budget — {state} (", out, out)
+            self.assertEqual("ВХОД ПОЧТИ ЗАПОЛНЕН" in out, state == "NEAR_LIMIT")
+            if state == "NEAR_LIMIT":
+                self.assertIn("reorganization", out)
+
+    def test_6_review_names_the_agent_and_refuses_on_a_full_swap(self):
+        import kb_consistency
+        import kb_service
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        self.save("kb/a.md", "# a\nтекст\n")
+        calls = []
+
+        def fake_agent(prompt, cwd, **kw):
+            calls.append(prompt)
+            return "[]"
+
+        def run(*extra):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = kb_consistency.main(["review", str(self.root), "--chapter", "kb/a.md", *extra])
+            return code, buf.getvalue()
+        with patch.object(kb_service, "swap_usage", return_value=(80.0, "13 из 16 ГБ")), \
+                patch.object(kb_service, "run_agent", side_effect=fake_agent), \
+                patch.object(kb_service, "agent_label", return_value="codex exec, модель test-model"):
+            code, out = run()
+            self.assertEqual(code, 1, out)
+            self.assertIn("REVIEW_RUN: codex exec, модель test-model, предел 2400 с", out)
+            self.assertIn("REVIEW_BLOCKED: своп занят 80 %", out)
+            self.assertEqual(calls, [], "the model must not start")
+            code, out = run("--force")
+            self.assertEqual(len(calls), 1, out)
+            code, out = run("--print-prompt")
+            self.assertEqual(code, 0, out)
+            self.assertIn("REVIEW_PROMPT_ONLY", out)
+            self.assertIn("ПРОВЕРКА СОГЛАСОВАННОСТИ", out)
+            self.assertEqual(len(calls), 1, "--print-prompt runs nothing")
+
+    def test_7a_opaque_code_calls_become_unknown_candidates(self):
+        rows = [{"type": "session_meta", "timestamp": self.stamp(30), "payload": {"cwd": str(self.root)}},
+                {"type": "response_item", "timestamp": self.stamp(29), "payload": {
+                    "type": "message", "role": "user", "content": [{"type": "input_text",
+                                                                    "text": "Проверь индексацию"}]}},
+                {"type": "response_item", "timestamp": self.stamp(28), "payload": {
+                    "type": "custom_tool_call", "name": "js", "call_id": "c1", "input": "await tab.click(84);\n"}},
+                {"type": "response_item", "timestamp": self.stamp(27), "payload": {
+                    "type": "custom_tool_call_output", "call_id": "c1", "output": "Crawl request submitted"}},
+                {"type": "response_item", "timestamp": self.stamp(26), "payload": {
+                    "type": "custom_tool_call", "name": "js", "call_id": "c2", "input": "document.title\n"}}]
+        path = self.base / "rollout-js.jsonl"
+        path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n", encoding="utf-8")
+        out, files = self.close_run(path, "--agent", "codex")
+        actions = files["actions.md"]
+        self.assertEqual(actions.count("UNKNOWN: требует просмотра"), 2, actions)
+        self.assertIn("js: await tab.click(84);", actions)
+        self.assertIn("js: document.title", actions, "read-only code is a candidate too, not silence")
+        self.assertNotIn("браузер: отправка", actions, "opaque code is not labelled a confirmed mutation")
+        self.assertIn("UNKNOWN: требует просмотра 2", out)
+
+    def test_7bc_current_removals_name_all_authors_and_write_coverage_is_named(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\nвход: NOW.md\n")
+        self.save("NOW.md", "Обновлено: 2026-10-20\n- строка А\n- строка Б\n")
+        self.commit_at("2026-10-20", ".")
+        path = self.base / "session.jsonl"
+        path.write_text(json.dumps(self.user("Закрой сессию", 30), ensure_ascii=False) + "\n", encoding="utf-8")
+        self.save("NOW.md", "Обновлено: 2026-10-27\n- строка Б\n")
+        self.git("add", "NOW.md")
+        self.git("-c", "user.name=Другая сессия", "-c", "user.email=o@example.invalid", "commit", "-qm", "theirs")
+        self.save("NOW.md", "Обновлено: 2026-10-27\n")
+        self.git("add", "NOW.md")
+        self.git("commit", "-qm", "mine")
+        self.save("kb/unseen.md", "записано скриптом, не инструментом\n")
+        out, files = self.close_run(path)
+        current = files["current.md"]
+        self.assertIn("за время сессии, все авторы", current)
+        self.assertIn("· Другая сессия · - строка А", current)
+        self.assertIn("· Fixture · - строка Б", current)
+        self.assertNotIn("в этой сессии", current)
+        writes = files["writes.md"]
+        self.assertIn("## Охват", writes)
+        self.assertIn("kb/unseen.md", writes)
+        self.assertIn("не учтены выше: ", writes)
+        self.assertIn("охват записей частичный", out)
+
+    def test_8_measurement_route_and_metric_rule_are_in_the_text(self):
+        skill = (HERE.parent / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("| Замер или анализ по данным проекта | `references/measurement.md` → `lifecycle`", skill)
+        self.assertIn("Выведенная метрика — существенный вывод", skill)
+        self.assertIn("метрика-заместитель", skill)
+        lifecycle = (HERE.parent / "references" / "measurement.md").read_text(encoding="utf-8")
+        self.assertIn("Метрика-заместитель (регулярка, слова) идёт с точностью", lifecycle)
+
+    def test_9_entry_file_falls_back_to_a_self_ignored_folder_then_names_the_block(self):
+        import kb_entry
+        self.save("CLAUDE.md", "# Rules\nвход: NOW.md\nkb_standard_version: 7.2.0\n")
+        self.save("NOW.md", "Обновлено: 2026-10-19\n")
+        home = self.base / "home"
+        home.mkdir()
+        os.chmod(home, 0o500)
+        self.addCleanup(os.chmod, home, 0o700)
+        with patch.object(kb_entry, "git_dir", return_value=None), \
+                patch.dict(os.environ, {"HOME": str(home)}), \
+                patch.object(kb_entry.tempfile, "mkdtemp", side_effect=PermissionError("sandbox")):
+            out = kb_entry.default_out(str(self.root))
+            local = self.root / ".kb-entry"
+            self.assertTrue(out.startswith(str(local) + os.sep), out)
+            self.assertEqual((local / ".gitignore").read_text(encoding="utf-8"), "*\n")
+            self.assertFalse(kb_entry.out_blocked(str(self.root), out))
+            self.assertTrue(kb_entry.out_blocked(str(self.root), str(self.root / "ENTRY.md")))
+            Path(out).write_text("[битая](nowhere.md)\n", encoding="utf-8")
+            self.assertNotIn("nowhere.md", self.run_tool("kb_check.py").stdout, "a hidden folder is not knowledge")
+            shutil.rmtree(local)
+            os.chmod(self.root, 0o500)
+            self.addCleanup(os.chmod, self.root, 0o700)
+            buf = io.StringIO()
+            with patch.object(sys, "argv", ["kb_entry.py", str(self.root)]), contextlib.redirect_stdout(buf):
+                code = kb_entry.main()
+            self.assertEqual(code, 2, buf.getvalue())
+            self.assertIn("BLOCKED_OUT:", buf.getvalue())
+            self.assertIn("root", buf.getvalue())
+            self.assertNotIn("Traceback", buf.getvalue())
 
 
 if __name__ == "__main__":

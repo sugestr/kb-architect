@@ -8,6 +8,7 @@
     python3 kb_consistency.py <корень> [--json]           горячие главы и статус
     python3 kb_consistency.py <корень> --area <путь>      карточка области перед записью
     python3 kb_consistency.py review <корень> [--chapter <путь>] [--agent codex|claude]
+                                            [--print-prompt] [--force]
                                                          модель читает горячие главы, только чтение
     python3 kb_consistency.py record <корень> <путь> --found N --confirmed M --fixed K
                                      [--open "<что осталось>"] [--by "<кто проверял>"]
@@ -493,7 +494,7 @@ def parse_review(text):
     return value
 
 
-def review(root, chapter=None, agent=None):
+def review(root, chapter=None, agent=None, force=False, print_prompt=False):
     import kb_service
     if chapter:
         chapter = os.path.normpath(chapter)
@@ -510,6 +511,20 @@ def review(root, chapter=None, agent=None):
     if not todo:
         print("REVIEW_NOTHING: горячих глав без проверки нет")
         return 0
+    if print_prompt:
+        for rel in todo:
+            print(f"## задание для {rel}\n{REVIEW.format(rel=rel)}")
+        print("REVIEW_PROMPT_ONLY: модель не запускалась; задание выше можно отдать агенту самому")
+        return 0
+    # 8.3.2 (продукт на Odoo, отчёт 26.10 §4): до запуска — кто и с каким пределом; своп почти полон — не стартовать.
+    print(f"REVIEW_RUN: {kb_service.agent_label(agent)}, предел {kb_service.AGENT_TIMEOUT} с на главу, "
+          f"глав {len(todo)}; только задание — --print-prompt")
+    # Подставной агент (KB_AGENT_CMD, тесты и пилоты) — не модель: защита свопа его не касается.
+    pct, note = kb_service.swap_usage() if not os.environ.get("KB_AGENT_CMD") else (None, "")
+    if pct is not None and pct > 70 and not force:
+        print(f"REVIEW_BLOCKED: своп занят {pct:.0f} % ({note}) — параллельная модель замедлит или "
+              "уронит соседние сессии; подожди, освободи память или запусти с --force")
+        return 1
     failed = False
     for rel in todo:
         try:
@@ -622,7 +637,8 @@ def main(argv):
         return default
 
     if cmd == "review":
-        return review(root, chapter=opt("--chapter"), agent=opt("--agent"))
+        return review(root, chapter=opt("--chapter"), agent=opt("--agent"),
+                      force="--force" in args, print_prompt="--print-prompt" in args)
     if cmd == "record":
         if len(args) < 2:
             print("record <корень> <путь> --found N --confirmed M --fixed K")

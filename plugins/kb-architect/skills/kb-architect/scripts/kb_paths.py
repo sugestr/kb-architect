@@ -563,8 +563,11 @@ def git_out(root, *args, timeout=30, ok_codes=(0,)):
 class Vetka:
     """Ref, не влитый в текущий канон, и что в нём лежит вне канона."""
 
-    def __init__(self, name, last, outside_path, outside_name, both_sides):
+    def __init__(self, name, last, outside_path, outside_name, both_sides, paths=None):
         self.name = name
+        # все пути, изменённые веткой относительно merge-base (8.3.2: проверка области
+        # считает только ветки, которые трогают её файлы — архив переписки, отчёт 26.10)
+        self.paths = list(paths or [])
         self.last = last                    # дата последнего коммита ветки
         self.outside_path = outside_path    # путей нет в каноне по пути
         self.outside_name = outside_name    # из них нет и по имени файла
@@ -682,7 +685,7 @@ def unmerged_refs(root):
         moved = set(head_raw2.split("\0"))
         both = [p for p in ref_paths if p in head_paths and p in moved]
         last, _ = git_out(git_root, "log", "-1", "--format=%ad", "--date=short", ref)
-        out.append(Vetka(ref, (last or "").strip(), outside_path, outside_name, both))
+        out.append(Vetka(ref, (last or "").strip(), outside_path, outside_name, both, ref_paths))
     return out, None
 
 

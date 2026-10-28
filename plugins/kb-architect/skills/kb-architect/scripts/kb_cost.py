@@ -22,7 +22,9 @@ SKILL = ROOT / "SKILL.md"
 BASELINE = ROOT / "assets" / "route-cost-baseline.json"
 # 8.0: owner retired byte minimization as a goal on 03.10.2026.
 # Keep a growth guard at the accepted entry size plus about 15% headroom.
-ENTRY_LIMIT = 14500
+# 8.3.2: предел — ограничитель роста с запасом (8.3.1 стояла на 14495 из 14500); маршрут замера
+# по данным проекта и правило о метрике добавили ~0,5 КБ обязательного текста.
+ENTRY_LIMIT = 15500
 ROW = re.compile(r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$")
 MARKDOWN_PATH = re.compile(r"`((?:references|assets)/[^`]+\.md)`")
 SECTION_HINT = re.compile(r"\s*→\s*`([^`]+)`")
