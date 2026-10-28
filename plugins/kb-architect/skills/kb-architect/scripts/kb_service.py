@@ -617,6 +617,43 @@ def inside(path, root):
     return os.path.commonpath([os.path.realpath(path), os.path.realpath(root)]) == os.path.realpath(root)
 
 
+def exam_sources(root):
+    """Файлы, по которым ключ экзамена должен быть свежим: current и локальные пути маршрутов индекса."""
+    out = []
+    entry = kb_paths.locate(root, "entry")
+    if entry.path:
+        out.append(os.path.relpath(entry.path, root))
+    try:
+        import kb_index
+        from pathlib import Path
+        data, _ = kb_index.load_index(Path(root) / kb_index.DEFAULT_INDEX)
+        for route in (data or {}).get("routes", []):
+            if isinstance(route, dict):
+                out.extend(kb_index.local_paths(route))
+    except Exception:
+        pass
+    return sorted(set(out))
+
+
+def key_staleness(root, questions_rel):
+    """{key, source} датами, если ключ экзамена коммичен раньше последнего изменения источников
+    (8.4.0: отчёт компании 26.10 — экзамен сверял ответ с устаревшим ключом и давал OK)."""
+    key_ts = int((git(root, "log", "-1", "--format=%ct", "--", questions_rel).strip() or 0))
+    if not key_ts:
+        return None
+    newest, newest_path = 0, None
+    for rel in exam_sources(root):
+        if rel == questions_rel:
+            continue
+        ts = int((git(root, "log", "-1", "--format=%ct", "--", rel).strip() or 0))
+        if ts > newest:
+            newest, newest_path = ts, rel
+    if newest > key_ts:
+        day = lambda t: datetime.datetime.fromtimestamp(t).date().isoformat()
+        return {"key": day(key_ts), "source": day(newest), "path": newest_path}
+    return None
+
+
 def exam(root):
     root = os.path.realpath(root)
     report = {"project": os.path.basename(root), "date": datetime.date.today().isoformat(),
@@ -674,6 +711,10 @@ def exam(root):
         # Относительный alias не должен оставить ответы в его физическом файле.
         hidden = os.path.realpath(hidden)
         rel = os.path.relpath(hidden, copy)
+        try:
+            report["key_stale"] = key_staleness(root, rel)
+        except Exception:
+            report["key_stale"] = None
         report["questions_dirty"] = report["questions_dirty"] or bool(
             git(root, "status", "--porcelain", "--", rel).strip())
         questions = [q for q in json_list(run_agent(EXTRACT.format(rel=rel), copy))
@@ -717,6 +758,8 @@ def exam(root):
         return report
     if report["fail"]:
         report["status"] = "FAIL"             # неверный ответ — не «OK» (проект магазина, 12.10)
+    elif report.get("key_stale"):
+        report["status"] = "STALE_KEY"        # ключ старше источника — сверка с устаревшим не «OK» (8.4.0)
     with open(os.path.join(state_dir("exam"), key(root) + ".json"), "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=1)
     return report
@@ -732,6 +775,10 @@ def print_exam(report):
         print("Вопросы имеют незакоммиченные изменения; экзамен использует только HEAD.")
     if report.get("reason"):
         print(report["reason"])
+    if report.get("key_stale"):
+        ks = report["key_stale"]
+        print(f"Ключ экзамена старше источника: ключ {ks['key']}, источник {ks['path']} — {ks['source']}. "
+              "Сверь ключ с каноном и обнови его (строка в журнале прогонов); итог не OK, пока ключ старше.")
     for item in report.get("items", []):
         if item["verdict"] != "PASS":
             print(f"- {item['id']} {item['verdict']}: {item['question'][:120]} — {item['reason']}")
@@ -777,7 +824,7 @@ def main():
         print(json.dumps(report, ensure_ascii=False))
     else:
         print_exam(report)
-    return 0 if report["status"] in ("OK", "NO_QUESTIONS") else 1
+    return 0 if report["status"] in ("OK", "NO_QUESTIONS") else 1   # STALE_KEY — код 1
 
 
 if __name__ == "__main__":

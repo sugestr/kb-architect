@@ -252,8 +252,9 @@ def build(root, roles_wanted=(), routes_wanted=(), skip=()):
     files.append(("роли проекта", "выбор роли", data))
     total += len(data)
 
-    now_stamp = None
+    now_stamp, now_dirty = None, None
     if entry.found:
+        now_dirty = current_dirty(root, entry.path)
         import kb_due
         stamp = kb_due.freshness_of(entry.text())
         now_stamp = re.split(r"[.;]| -->", stamp)[0].strip()[:32] if stamp else None
@@ -262,7 +263,43 @@ def build(root, roles_wanted=(), routes_wanted=(), skip=()):
     # починить проект нельзя, пока замок закрыт.
     blocking = [m for m in missing if m.startswith(("роль ", "наследование роли"))]
     return {"files": files, "missing": missing, "blocking": blocking, "optional": optional,
-            "roles": roles, "found_roles": found_roles, "total": total, "now_stamp": now_stamp}
+            "roles": roles, "found_roles": found_roles, "total": total, "now_stamp": now_stamp,
+            "now_dirty": now_dirty}
+
+
+def current_dirty(root, path):
+    """Текущий вход изменён в рабочем дереве и не закоммичен (8.4.0): время правки, HEAD-версия.
+    Общий checkout — обычный режим владельца: вход собирался из чужой незакоммиченной правки и
+    молчал (отчёт архива переписки 26.10 §1). Не Git или чисто — None."""
+    try:
+        rel = os.path.relpath(os.path.realpath(path), os.path.realpath(root))
+        status = subprocess.run(["git", "-C", root, "status", "--porcelain", "--", rel],
+                                capture_output=True, text=True, timeout=10)
+        if status.returncode != 0 or not status.stdout.strip():
+            return None
+        changed_at = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%d.%m %H:%M")
+        head = subprocess.run(["git", "-C", root, "show", f"HEAD:{rel}"], capture_output=True,
+                              text=True, timeout=10)
+        head_text = head.stdout if head.returncode == 0 else ""
+        m = re.search(r"Обновлено:\s*([^\n]{1,32})", head_text)
+        return {"rel": rel, "changed_at": changed_at, "untracked": status.stdout.startswith("??"),
+                "head_updated": m.group(1).strip() if m else None,
+                "head_bytes": len(head_text.encode("utf-8")) if head_text else 0}
+    except Exception:
+        return None
+
+
+def dirty_note(result, mine=None):
+    """Строка «!» для файла входа и сообщения hook'а; mine — писала ли NOW эта сессия (None — неизвестно)."""
+    d = result.get("now_dirty")
+    if not d:
+        return ""
+    who = {True: "да", False: "нет"}.get(mine, "неизвестно")
+    head = ("в HEAD его нет (не отслеживается)" if d.get("untracked") else
+            f"в HEAD «Обновлено» {d.get('head_updated') or 'не распознано'}, {d.get('head_bytes')} B")
+    return (f"! current {d['rel']} изменён в рабочем дереве и не закоммичен: изменён {d['changed_at']}, "
+            f"этой сессией — {who}; {head}. Другие сессии видят HEAD; чужие строки не затирай, свои "
+            "добавляй точечно и коммить быстро.")
 
 
 def reuse(result, since):
@@ -382,7 +419,9 @@ def receipt_line(result, digest):
             f"current {result['now_stamp'] or 'без «Обновлено»'} · роль "
             f"{', '.join(roles) if roles else 'не выбрана'} · файлы: {len(result['files'])}, "
             f"{result['total']} B, {digest[:12]}"
-            + (f" · без повтора неизменного: {reused}" if reused else ""))
+            + (f" · без повтора неизменного: {reused}" if reused else "")
+            + (f" · current не закоммичен (изменён {result['now_dirty']['changed_at']})"
+               if result.get("now_dirty") else ""))
 
 
 def write(root, result, out, header_note=""):
@@ -477,8 +516,11 @@ def main():
             print(f"BLOCKED_OUT: файл входа некуда записать — {exc}. Открой одну из этих папок или дай "
                   f"--out <файл вне дерева проекта или в {ENTRY_FOLDER_LOCAL}/>")
             return 2
-    digest, _ = write(root, result, out, header_note=note)
+    dirty = dirty_note(result)
+    digest, _ = write(root, result, out, header_note=(note or "") + ("\n" + dirty if dirty else ""))
     print(f"ENTRY_BUNDLE={out}")
+    if dirty:
+        print("  " + dirty)
     print(f"  файлов: {len(files)}, байт: {total}")
     for rel, why, data in files:
         print(f"  · {rel} — {why}, {len(data)} B")

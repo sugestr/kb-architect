@@ -142,7 +142,7 @@ def t_620_thin_router_points_to_versioned_contract():
     out = Vyvod(router + roles + adopt + service + cost + capture + migration, 0)
     check("версионируемое ядро сохраняет обязательные правила и их маршруты",
           len(router.encode("utf-8")) <= 15_500  # growth guard, not a goal (owner 03.10); 8.0.0 = 13,724 B; 8.3.2 = 15,016 B, предел 15 500.
-          and 'version: "8.3.3"' in router
+          and 'version: "8.4.0"' in router
           and all(path in router for path in (
               "references/project-roles.md", "references/retrieval.md",
               "references/adopt-existing.md", "references/migration.md"))
@@ -193,7 +193,7 @@ def t_layer_cost_is_measured_from_the_single_router():
           p.returncode == 0
           and data.get("entry_bytes", 99_999) <= 15_500  # growth guard (owner 03.10); 8.0.0 entry = 13,724 B; 8.3.2 предел 15 500.
           and data.get("module_limit") is None
-          and data.get("baseline_version") == '8.3.3'
+          and data.get("baseline_version") == '8.4.0'
           and len(routes) >= 15
           and ordinary.get("extra_bytes") == 0
           and 0 < evidence.get("extra_bytes", 0) <= 2_500  # evidence_contract section = 2,093 B in 8.0.0.
@@ -1434,14 +1434,11 @@ def t_capability_registry_expresses_role_not_only_location():
               "role-selection", "knowledge-recall", "authority-stop"}
           and all(key in scenario for key in
                   ("accepted_end_to_end_bytes", "route_files"))
-          and acceptance.get("protocol") == "kb-role-acceptance/v3"
-          and acceptance["live_test"].get("fresh_context") is None
-          and acceptance["live_test"].get("unforced") is None
-          and set(acceptance["live_test"].get("observation", {})) == {
-              "observed_at", "run_id"}
-          and acceptance["project_check"].get("execution") is None
-          and acceptance["agents"]["codex"]["status"] == "UNKNOWN"
-          and acceptance["agents"]["claude"]["status"] == "UNKNOWN",
+          and acceptance.get("protocol") == "kb-role-acceptance/v4"
+          and acceptance["live_test"].get("run_id") is None
+          and acceptance["live_test"].get("observed_at") is None
+          and acceptance["owner"].get("decision") is None
+          and "agents" not in acceptance and "project_check" not in acceptance,
           out, "method stays in one SKILL; registry carries split gates and costs")
 
 
@@ -3841,9 +3838,10 @@ def t_612_release_application_follows_safe_boot_symlink():
 
 
 def t_610_scoped_migration_target_survives_newer_installed_skill():
-    """Live 28.08 counterexample: newer stable appeared while sk-tax finalized 6.0.1."""
+    """8.3.4: фикстура переведена с 6.0→6.0.1 на 7.0→7.0.1 — журнал пакета держит строки от 7.0.0.
+    Live 28.08 counterexample: newer stable appeared while a project finalized 6.0.1 (fixture now on 7.x)."""
     import json
-    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 6.0\n",
+    d = base({"CLAUDE.md": "# rules\n\nkb_standard_version: 7.0.0\n",
               "tests/migration.txt": "migration checks passed\n",
               "tests/owner.txt": "owner accepted shown results\n"})
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
@@ -3857,14 +3855,14 @@ def t_610_scoped_migration_target_survives_newer_installed_skill():
     source_bytes = subprocess.run(["git", "-C", d, "show", source + ":CLAUDE.md"],
                                   capture_output=True, check=True).stdout
     with open(os.path.join(d, "CLAUDE.md"), "w", encoding="utf-8") as f:
-        f.write("# rules\n\nkb_standard_version: 6.0.1\n")
+        f.write("# rules\n\nkb_standard_version: 7.0.1\n")
     receipt = {"schema": 1, "applications": [{
-        "kind": "migration", "from_version": "6.0", "to_version": "6.0.1",
+        "kind": "migration", "from_version": "7.0.0", "to_version": "7.0.1",
         "status": "finalized",
         "source_snapshot": {"ref": source, "commit": source,
                             "version_source": "CLAUDE.md",
                             "version_source_sha256": hashlib.sha256(source_bytes).hexdigest()},
-        "release_ledger": [{"version": "6.0.1", "decision": "applied",
+        "release_ledger": [{"version": "7.0.1", "decision": "applied",
                             "evidence": ["tests/migration.txt"]}],
         "owner_acceptance": {"accepted_by": "owner", "accepted_at": "2026-08-28",
                              "evidence": ["tests/owner.txt"]},
@@ -3874,12 +3872,12 @@ def t_610_scoped_migration_target_survives_newer_installed_skill():
         json.dump(receipt, f)
     subprocess.run(["git", "-C", d, "add", "CLAUDE.md", "tests",
                     "KB_RELEASE_APPLICATION.json"], check=True)
-    subprocess.run(["git", "-C", d, "commit", "-qm", "finalize 6.0.1"], check=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "finalize 7.0.1"], check=True)
 
     latest = run("kb_apply.py", d)
     scoped_run = subprocess.run(
         [sys.executable, os.path.join(HERE, "kb_apply.py"), d,
-         "--target-version", "6.0.1"],
+         "--target-version", "7.0.1"],
         capture_output=True, text=True, timeout=120)
     scoped = Vyvod(scoped_run.stdout + scoped_run.stderr, scoped_run.returncode)
     combined = Vyvod(str(latest) + str(scoped), 0)
@@ -5499,7 +5497,7 @@ def t_640_has_one_current_version_and_a_640_project_floor():
         capture_output=True, text=True, timeout=30)
     out = Vyvod(p.stdout + p.stderr, p.returncode)
     check("current build keeps 7.2.0 as the minimum project level",
-          kb_paths.skill_version() == "8.3.3"
+          kb_paths.skill_version() == "8.4.0"
           and kb_paths.skill_contract_line() == "7.2.0"
           and kb_skills.current_contract_line() == kb_paths.skill_version()
           and p.returncode == 0 and "APPLICATION_RECEIPT_OK" in p.stdout

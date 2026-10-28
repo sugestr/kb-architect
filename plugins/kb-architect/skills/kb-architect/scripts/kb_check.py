@@ -434,6 +434,50 @@ def same_checkout_elsewhere(clean, home_rel):
     return clean
 
 
+FALSE_LINE = re.compile(r"ложное:\s*«([^»]{8,400})»")
+ENTRY_START = re.compile(r"^\s*(?:-|\d+\.)\s+(?:20\d\d-\d\d-\d\d|\d{1,2}\.\d{1,2}(?:\.20\d\d)?)", re.MULTILINE)
+
+
+def false_fingerprints(root):
+    """[(текст, закрыта, строка)] из канала правок: машинная строка `ложное: «…»` в записи.
+    8.4.0 (третий отчёт класса: хостинг 26.09, продукт на Odoo 12.10, компания 26.10 — 16 ложных записей
+    пережили правку в сводках и ключах): правило «новое заменяет прежнее и копии» исполнялось памятью."""
+    loc = kb_paths.locate(root, "corrections")
+    if not loc.path:
+        return None, []
+    text = strip_code(kb_paths.read(loc.path))
+    starts = [m.start() for m in ENTRY_START.finditer(text)] + [len(text)]
+    out = []
+    for a, b in zip(starts, starts[1:]):
+        block = text[a:b]
+        for m in FALSE_LINE.finditer(block):
+            claim = " ".join(m.group(1).split())
+            out.append((claim, "✔" in block, text.count("\n", 0, a + m.start()) + 1))
+    return os.path.realpath(loc.path), out
+
+
+def surviving_claims(root, files, fingerprints, corrections_path):
+    """Копии ложных утверждений в каноне: (файл, строка, текст, закрыта ли запись)."""
+    hits = []
+    if not fingerprints:
+        return hits
+    for path in files:
+        real = os.path.realpath(path)
+        rel = os.path.relpath(real, os.path.realpath(root)).replace(os.sep, "/")
+        if real == corrections_path or "/archive/" in "/" + rel or rel.startswith(("archive/", "arhiv/")):
+            continue
+        try:
+            lines = strip_code(kb_paths.read(path)).splitlines()
+        except OSError:
+            continue
+        for n, line in enumerate(lines, 1):
+            flat = " ".join(line.split())
+            for claim, closed, _ in fingerprints:
+                if claim in flat and not FALSE_LINE.search(line):
+                    hits.append((rel, n, claim, closed))
+    return hits
+
+
 def touches_area(v, area):
     paths = getattr(v, "paths", None) or (v.outside_path + v.outside_name + v.both_sides)
     area = area.replace(os.sep, "/")
@@ -873,6 +917,21 @@ def main():
         print("  вместе с сессией или лежит вне Git. Перенеси скрипт/первичку в tracked")
         print("  путь или назови внешний канон.\n")
 
+    corrections_path, fingerprints = false_fingerprints(root)
+    survived = surviving_claims(root, files_all, fingerprints, corrections_path)
+    survived_closed = [h for h in survived if h[3]]
+    survived_open = [h for h in survived if not h[3]]
+    if survived_closed:
+        found += len(survived_closed)
+        print(f"ЛОЖНОЕ УТВЕРЖДЕНИЕ ПЕРЕЖИЛО ПРАВКУ — {len(survived_closed)}:")
+        for rel, n, claim, _ in survived_closed[:20]:
+            print(f"  {rel}:{n} — «{claim[:80]}»")
+        print("  Запись канала правок закрыта (✔), а копия утверждения живёт в каноне: сводка, реестр,")
+        print("  календарь или ключ экзамена. Новое заменяет прежнее и его копии: исправь копию или дай")
+        print("  ссылку на канон; ✔ ставится после поиска копий (capture.md → corrections).\n")
+    if survived_open:
+        print(f"живые копии открытых записей канала правок — {len(survived_open)}: "
+              + "; ".join(f"{rel}:{n}" for rel, n, _, _ in survived_open[:8]) + "\n")
     if broken:
         found += len(broken)
         print(f"БИТЫЕ ССЫЛКИ — {len(broken)}:")
@@ -1063,6 +1122,8 @@ def main():
         scope.append(f"достижимость знания — {cover['status']} "
                      f"({cover['reachable']}/{cover['files']} в {', '.join(cover['roots'])})")
     scope.append("generated_from (эфемерный · отсутствующий · вне Git)")
+    scope.append(f"отпечатки правок (ложное: «…») — {len(fingerprints)}" if fingerprints
+                 else "отпечатки правок — нет записей с «ложное:»")
     scope.append("временные пути · память агента · игнорируемые файлы в каноне")
     scope.append(kb_consistency.status_line(consistency) if "kb_consistency" in sys.modules
                  else f"согласованность — НЕ ПРОВЕРЕНО ({consistency.get('reason')})")

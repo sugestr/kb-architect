@@ -218,10 +218,17 @@ class RedesignTests(unittest.TestCase):
                 self.assertEqual("OPTIMIZATION_REQUIRED" in executed, tight)
 
     def test_live_observation_binds_the_tested_agent_without_erasing_other_evidence(self):
+        # v3 читается как прежде (8.4.0): матрица агентов есть только у v3
         data = kb_skills.neutral_project_roles_template({"supported_agents": ["codex", "claude"]})
         acceptance = data["acceptance"]
+        acceptance.update(
+            protocol="kb-role-acceptance/v3",
+            project_check={"status": "PENDING", "command": None, "execution": None},
+            agents={agent: {"status": "UNKNOWN", "basis": "Not tested yet"}
+                    for agent in ("codex", "claude")})
         acceptance["live_test"].update(
             status="PASS", agent="codex", fresh_context=True, unforced=True,
+            covers=["role-selection", "knowledge-recall", "authority-stop"],
             summary="Observed answer", observation={"observed_at": "2026-09-08T00:00:00Z",
                                                      "run_id": "fixture-observation"})
         def errors():
@@ -236,6 +243,7 @@ class RedesignTests(unittest.TestCase):
         self.assertFalse(any("TESTED" in e or "another agent" in e for e in errors()))
 
     def test_unobserved_candidate_cannot_claim_live_pass_by_status_alone(self):
+        # 8.4.0, v4: без run_id и observed_at статус PASS не засчитывается; матрицы агентов нет
         candidates = [
             kb_skills.neutral_project_roles_template({"supported_agents": ["codex"]}),
             json.loads((HERE.parent / "assets/templates/project-roles.json").read_text()),
@@ -243,21 +251,20 @@ class RedesignTests(unittest.TestCase):
         for data in candidates:
             with self.subTest(source=data["acceptance"]["live_test"].get("agent")):
                 acceptance = data["acceptance"]
+                self.assertEqual(acceptance["protocol"], "kb-role-acceptance/v4")
+                self.assertNotIn("agents", acceptance)
                 live = acceptance["live_test"]
-                self.assertIsNone(live["fresh_context"])
-                self.assertIsNone(live["unforced"])
-                self.assertTrue(all(x["status"] == "UNKNOWN"
-                                    for x in acceptance["agents"].values()))
-                live.update(status="PASS", agent="codex", summary="Observed answer",
-                            observation={"observed_at": "2026-09-08T00:00:00Z",
-                                         "run_id": "external-fixture-run"})
+                self.assertIsNone(live["run_id"])
+                self.assertIsNone(live["observed_at"])
+                live.update(status="PASS", agent="codex", summary="Observed answer")
                 errors = kb_skills.light_acceptance_errors(
                     self.root, data, {}, ["codex"], [])
-                self.assertIn("live_test PASS requires fresh_context and unforced", errors)
-                live.update(fresh_context=True, unforced=True)
+                self.assertIn("live_test PASS requires run_id", errors)
+                self.assertIn("live_test PASS requires observed_at", errors)
+                live.update(run_id="external-fixture-run", observed_at="2026-09-08T00:00:00Z")
                 errors = kb_skills.light_acceptance_errors(
                     self.root, data, {}, ["codex"], [])
-                self.assertNotIn("live_test PASS requires fresh_context and unforced", errors)
+                self.assertFalse(any("live_test PASS requires" in e for e in errors), errors)
 
     def test_relative_current_alias_is_one_owner_but_copies_and_unsafe_links_are_not(self):
         self.save("NOW.md", "The only source.\n")
@@ -2099,7 +2106,12 @@ class ExecutableEntry0110Tests(unittest.TestCase):
         return json.loads(out.stdout) if out.stdout.strip() else None
 
     def start(self, source="startup", **kw):
-        return self.hook({"hook_event_name": "SessionStart", "source": source}, **kw)
+        got = self.hook({"hook_event_name": "SessionStart", "source": source}, **kw)
+        ctx = (got or {}).get("hookSpecificOutput", {}).get("additionalContext", "")
+        if got and "соберётся при первой реплике" in ctx:
+            # 8.4.0: файл входа строится на первой реплике владельца, не на старте
+            got = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "начинаем"}, **kw)
+        return got
 
     def tool(self, name, **tool_input):
         got = self.hook({"hook_event_name": "PreToolUse", "tool_name": name, "tool_input": tool_input})
@@ -2217,7 +2229,9 @@ class ExecutableEntry0110Tests(unittest.TestCase):
 
     def test_start_puts_a_short_entry_in_context_and_locks_writes(self):
         self.project(big_now=True, seed_due=False)
-        got = self.start()
+        started = self.hook({"hook_event_name": "SessionStart", "source": "startup"})
+        self.assertIn("замок поставлен", started["systemMessage"])      # 8.4.0: файл входа — на первой реплике
+        got = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "начинаем"})
         context = got["hookSpecificOutput"]["additionalContext"]
         self.assertIn("ПОРА (kb_due, раз в день):", context)
         self.assertLessEqual(len(context), 10_000, "Claude Code keeps only 10 000 characters")
@@ -2226,7 +2240,7 @@ class ExecutableEntry0110Tests(unittest.TestCase):
         self.assertIn("- ops: shop operations", context)
         self.assertNotIn("ПОСЛЕДНЯЯ СТРОКА NOW", context, "a big entry is a file, not context")
         self.assertIn("ПОСЛЕДНЯЯ СТРОКА NOW", Path(self.bundle_of(context)).read_text())
-        self.assertIn("правки закрыты", got["systemMessage"])
+        self.assertIn("запрещает правки", context)
         self.assertEqual(self.tool("Edit", file_path=str(self.root / "NOW.md")), "deny")
         self.assertEqual(self.tool("Write", file_path="x"), "deny")
         self.assertEqual(self.tool("mcp__odoo__create_record"), "deny")
@@ -2314,8 +2328,9 @@ class ExecutableEntry0110Tests(unittest.TestCase):
 
     def test_codex_gets_the_whole_file_with_the_rules_it_does_not_load(self):
         self.project(big_now=True)
-        codex = self.hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "c1"},
-                          agent="codex")["hookSpecificOutput"]["additionalContext"]
+        self.hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "c1"}, agent="codex")
+        codex = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "начинаем", "session_id": "c1"},
+                          agent="codex")["hookSpecificOutput"]["additionalContext"]   # 8.4.0: на первой реплике
         self.assertIn("ПОСЛЕДНЯЯ СТРОКА NOW", codex)
         self.assertIn("======== CLAUDE.md", codex, "Codex loads AGENTS.md, which is absent here")
 
@@ -2691,7 +2706,6 @@ class ReleaseActions0210Tests(unittest.TestCase):
         self.assertIn("## Обновление (hook сделал до входа)", context)
         self.assertIn("дельта проекта открыта", context)
         self.assertIn("--project", context)
-        self.assertIn("проект: дельта проекта открыта", got["systemMessage"])
         bundle = ExecutableEntry0110Tests.bundle_of(self, context)
         marks = "-".join(ExecutableEntry0110Tests.marks(self, bundle))
         ok = ExecutableEntry0110Tests.confirm(self, marks, "--session", "s1")
@@ -3318,10 +3332,14 @@ class ServicePass0210Tests(unittest.TestCase):
         self.piled_up()
         self.assertTrue(self.due()["due"])
         self.assertIn("ждут разнесения записей канала правок: 50", self.service("due").stdout)
+        # 8.4.0: файл входа и сигнал обслуживания приходят с первой репликой владельца
         context = self.hook({"hook_event_name": "SessionStart", "source": "startup"})
+        self.assertIn("соберётся при первой реплике", context["hookSpecificOutput"]["additionalContext"])
+        context = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "начинаем"})
         self.assertIn("## Пора обслужить базу", context["hookSpecificOutput"]["additionalContext"])
         self.assertIn("пора обслужить базу", context["systemMessage"])
-        again = self.hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "s2"})
+        self.hook({"hook_event_name": "SessionStart", "source": "startup", "session_id": "s2"})
+        again = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "начинаем", "session_id": "s2"})
         self.assertNotIn("Пора обслужить", again["hookSpecificOutput"]["additionalContext"],
                          "said once a day per project")
         entries = "".join(f"- 2026-09-{(d % 28) + 1:02d} · правка {d}: ✔ учтено → kb/05.md\n" for d in range(50))
@@ -5873,6 +5891,273 @@ class Release833Tests(unittest.TestCase):
         self.assertIn("`kb: template` или `kb: skill`", service)
         migration = (HERE.parent / "references" / "migration.md").read_text(encoding="utf-8")
         self.assertIn("`kb_init` пишет такую квитанцию сам", migration)
+
+
+class Release834Tests(unittest.TestCase):
+    """8.3.4 (28.10.2026): поставка и выпуск по свежему взгляду владельца — уборка состояния hook'а."""
+
+    setUp = RedesignTests.setUp
+
+    def test_prune_old_cleans_close_turns_due_and_out_but_keeps_fresh(self):
+        import kb_start
+        state = self.base / "state"
+        old = time.time() - 40 * 86400
+        fresh_marks, old_marks = [], []
+        for rel in ("sessions/a.json", "turns/snap/x.json", "turns/proj.jsonl", "due/root-2026-09-01.txt",
+                    "out/ENTRY-old.md", "service/said/s.txt"):
+            path = state / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+            os.utime(path, (old, old))
+            old_marks.append(path)
+        for rel in ("close/old-session/owner.md",):
+            path = state / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x", encoding="utf-8")
+            os.utime(path, (old, old))
+            os.utime(path.parent, (old, old))
+        keep = state / "turns" / "live.jsonl"
+        keep.write_text("y", encoding="utf-8")
+        keep_close = state / "close" / "live-session" / "owner.md"
+        keep_close.parent.mkdir(parents=True)
+        keep_close.write_text("y", encoding="utf-8")
+        snap_dir = state / "turns" / "snap"
+        os.utime(snap_dir, (old, old))                 # старая подпапка — не удаляется как файл
+        with patch.dict(os.environ, {"KB_ENTRY_STATE": str(state)}):
+            kb_start.prune_old()
+        for path in old_marks:
+            self.assertFalse(path.exists(), f"{path} must be pruned")
+        self.assertFalse((state / "close" / "old-session").exists(), "an old close folder is removed whole")
+        self.assertTrue(keep.exists() and keep_close.exists(), "fresh state stays")
+        self.assertTrue(snap_dir.is_dir(), "turns/snap itself is never removed")
+
+
+class Release840Tests(unittest.TestCase):
+    """8.4.0 (28.10.2026): вход и hook — грязный current, вход при первой реплике, повтор после
+    сжатия без перечитывания, широкий git add в общем checkout."""
+
+    setUp = RedesignTests.setUp
+    run_tool = RedesignTests.run_tool
+    git = RedesignTests.git
+    init_git = RedesignTests.init_git
+    save = RedesignTests.save
+    commit_at = KnowledgeDebts2609Tests.commit_at
+    project = ExecutableEntry0110Tests.project
+    env = ExecutableEntry0110Tests.env
+    hook = ExecutableEntry0110Tests.hook
+    start = ExecutableEntry0110Tests.start
+    tool = ExecutableEntry0110Tests.tool
+    marks = ExecutableEntry0110Tests.marks
+    confirm = ExecutableEntry0110Tests.confirm
+    bundle_of = ExecutableEntry0110Tests.bundle_of
+    entry_fixture = ReportsAndEntry2909Tests.entry_fixture
+
+    def edit(self, rel="kb/05_catalog.md"):
+        return self.tool("Edit", file_path=str(self.root / rel), old_string="x", new_string="y")
+
+    def test_1_dirty_current_is_named_in_the_entry_and_receipt(self):
+        self.entry_fixture()
+        bundle = self.base / "ENTRY.md"
+        clean = self.run_tool("kb_entry.py", "--role", "dev", "--out", bundle)
+        self.assertNotIn("не закоммичен", clean.stdout)
+        self.save("NOW.md", "Обновлено: 2026-10-28\n- чужая строка\n")
+        out = self.run_tool("kb_entry.py", "--role", "dev", "--out", bundle)
+        self.assertIn("current не закоммичен", out.stdout)
+        body = bundle.read_text(encoding="utf-8")
+        self.assertIn("! current NOW.md изменён в рабочем дереве и не закоммичен", body)
+        self.assertIn("в HEAD «Обновлено» 2026-09-29", body)
+
+    def test_2_entry_is_built_on_the_first_owner_prompt_and_the_lock_holds_before(self):
+        self.project()
+        start = self.hook({"hook_event_name": "SessionStart", "source": "startup"})
+        ctx = start["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("соберётся при первой реплике", ctx)
+        self.assertNotIn("ENTRY-", ctx)
+        self.assertEqual(self.edit(), "deny", "the lock holds before any prompt")
+        self.assertIsNone(self.hook({"hook_event_name": "UserPromptSubmit",
+                                     "prompt": "<task-notification>x</task-notification>"}),
+                          "a notification is not the owner's prompt")
+        self.assertEqual(self.edit(), "deny")
+        prompt = self.hook({"hook_event_name": "UserPromptSubmit", "prompt": "что дальше?"})
+        text = prompt["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("ENTRY-", text)
+        self.assertIn("Квитанция этого файла: ENTRY_RECEIPT", text)
+        bundle = self.bundle_of(text)
+        self.assertEqual(self.edit(), "deny")
+        self.assertIn("ENTRY_CONFIRMED", self.confirm("-".join(self.marks(bundle)), "--session", "s1",
+                                                       "--bundle", bundle).stdout)
+        self.assertEqual(self.edit(), "allow")
+
+    def test_3_after_compaction_unchanged_parts_are_not_reread(self):
+        self.project(big_now=True)
+        first = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("ENTRY_CONFIRMED", self.confirm("-".join(self.marks(first)), "--session", "s1",
+                                                       "--bundle", first).stdout)
+        compact = self.start(source="compact")
+        second = self.bundle_of(compact["hookSpecificOutput"]["additionalContext"])
+        body = Path(second).read_text(encoding="utf-8")
+        self.assertNotIn("ПОСЛЕДНЯЯ СТРОКА NOW", body, "unchanged NOW is not repeated after compaction")
+        self.assertIn("не перечитывай", body)
+        self.assertEqual(self.edit(), "deny", "compaction re-arms the lock")
+        self.assertIn("ENTRY_CONFIRMED", self.confirm("-".join(self.marks(second)), "--session", "s1",
+                                                       "--bundle", second).stdout)
+        self.assertEqual(self.edit(), "allow")
+
+    def test_4_broad_git_add_in_a_shared_checkout_is_refused(self):
+        self.project()
+        self.git("add", "-A")
+        self.git("commit", "-qm", "fixture")
+        foreign = self.root / "kb" / "foreign.md"
+        foreign.write_text("чужое\n", encoding="utf-8")
+        old = time.time() - 3600
+        os.utime(foreign, (old, old))
+        first = self.bundle_of(self.start()["hookSpecificOutput"]["additionalContext"])
+        self.confirm("-".join(self.marks(first)), "--session", "s1", "--bundle", first)
+        self.assertEqual(self.tool("Bash", command="git add -A"), "deny")
+        self.assertEqual(self.tool("Bash", command="git commit -am wip"), "deny")
+        self.assertEqual(self.tool("Bash", command="git add kb/05_catalog.md"), "allow")
+        self.assertEqual(self.tool("Bash", command="git status"), "allow")
+        os.utime(foreign, None)
+        self.assertEqual(self.tool("Bash", command="git add -A"), "allow",
+                         "a file changed during this session is not foreign")
+
+    # ---- партия 2: проверки ----
+
+    def test_5_a_false_claim_that_survived_its_correction_is_a_finding(self):
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\nвход: NOW.md\nканал правок: CORRECTIONS.md\n")
+        self.save("NOW.md", "Обновлено: 2026-10-20\n")
+        self.save("kb/summary.md", "# Сводка\nСтавка НДС на цветы — 21 %.\n")
+        self.save("CORRECTIONS.md", "# Правки\n\n## Закрыто\n\n- 2026-10-20 · знание · ставка НДС: ложное: «Ставка НДС на цветы — 21 %» — "
+                                    "верно 10 % — ✔ закрыто 2026-10-21, внесено в kb/tax.md.\n")
+        self.commit_at("2026-10-21", ".")
+        out = self.run_tool("kb_check.py")
+        self.assertIn("ЛОЖНОЕ УТВЕРЖДЕНИЕ ПЕРЕЖИЛО ПРАВКУ — 1", out.stdout)
+        self.assertIn("kb/summary.md:2", out.stdout)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("отпечатки правок (ложное: «…») — 1", out.stdout)
+        self.save("kb/summary.md", "# Сводка\nСтавка НДС на цветы — 10 % (см. kb/tax.md).\n")
+        self.assertNotIn("ЛОЖНОЕ УТВЕРЖДЕНИЕ", self.run_tool("kb_check.py").stdout)
+        self.save("kb/summary.md", "# Сводка\nСтавка НДС на цветы — 21 %.\n")
+        self.save("CORRECTIONS.md", "# Правки\n\n## Открыто\n\n- 2026-10-22 · знание · ложное: «Ставка НДС на цветы — 21 %» — проверяется.\n")
+        out = self.run_tool("kb_check.py").stdout
+        self.assertNotIn("ПЕРЕЖИЛО ПРАВКУ", out)
+        self.assertIn("живые копии открытых записей канала правок — 1", out)
+
+    def test_6_an_exam_key_older_than_its_sources_is_not_ok(self):
+        import kb_service
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\nвход: NOW.md\nконтрольные вопросы: QUESTIONS.md\n")
+        self.save("NOW.md", "Обновлено: 2026-10-01\n")
+        self.save("QUESTIONS.md", "# Вопросы\nHEAD answer\n")
+        self.save("kb/answer.md", "HEAD answer\n")
+        self.commit_at("2026-10-01", ".")
+
+        def agent(prompt, cwd):
+            if prompt.startswith("ИЗВЛЕЧЕНИЕ"):
+                return json.dumps([{"question": "Вопрос?", "expected": "HEAD answer"}])
+            if prompt.startswith("ЭКЗАМЕН"):
+                return json.dumps([{"id": "1", "answer": "HEAD answer", "source": "kb/answer.md"}])
+            return json.dumps([{"id": "1", "verdict": "PASS"}])
+        with patch.dict(os.environ, self.env()), patch.object(kb_service, "run_agent", side_effect=agent):
+            self.assertEqual(kb_service.exam(str(self.root))["status"], "OK")
+        self.save("NOW.md", "Обновлено: 2026-10-15\n- новое состояние\n")
+        self.commit_at("2026-10-15", "NOW.md")
+        with patch.dict(os.environ, self.env()), patch.object(kb_service, "run_agent", side_effect=agent):
+            report = kb_service.exam(str(self.root))
+        self.assertEqual(report["status"], "STALE_KEY", report)
+        self.assertEqual(report["key_stale"]["path"], "NOW.md")
+        self.assertEqual(report["pass"], 1, "answers are still graded; only the verdict is withheld")
+
+    def test_7_a_consistency_mark_carries_over_when_only_version_and_form_changed(self):
+        import kb_consistency
+        self.init_git()
+        self.save("CLAUDE.md", "# Rules\nkb_standard_version: 7.2.0\n")
+        self.save("kb/a.md", "<!-- v: 1 | updated: 2026-10-01 -->\n# Глава\nПервое правило. Второе правило.\n")
+        self.commit_at("2026-10-01", ".")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(kb_consistency.main(["record", str(self.root), "kb/a.md", "--found", "2",
+                                                  "--confirmed", "1", "--fixed", "1", "--by", "test"]), 0)
+        self.save("kb/a.md", "<!-- v: 2 | updated: 2026-10-28 -->\n# Глава\nПервое правило.\nВторое правило.\n")
+        self.commit_at("2026-10-28", ".")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = kb_consistency.main(["record", str(self.root), "kb/a.md", "--carry-over", "--by", "form"])
+        self.assertEqual(code, 0, buf.getvalue())
+        self.assertIn("перенесена", buf.getvalue())
+        entry = json.loads((self.root / "KB_CONSISTENCY.json").read_text(encoding="utf-8"))["reviews"]["kb/a.md"]
+        self.assertEqual((entry["found"], entry["confirmed"], entry["fixed"]), (2, 1, 1))
+        self.assertIn("carry-over", entry["by"])
+        self.save("kb/a.md", "<!-- v: 3 | updated: 2026-10-29 -->\n# Глава\nПервое правило.\nТретье правило.\n")
+        self.commit_at("2026-10-29", ".")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = kb_consistency.main(["record", str(self.root), "kb/a.md", "--carry-over", "--by", "form"])
+        self.assertEqual(code, 2)
+        self.assertIn("слова kb/a.md изменились", buf.getvalue())
+
+    # ---- партия 3: приёмка v4 и аренда ----
+
+    @staticmethod
+    def v4_registry(root, accepted=True):
+        """compact fixture → v4: без матрицы агентов, квитанций запуска и хешей входов."""
+        registry = json.loads((root / "PROJECT_ROLES.json").read_text(encoding="utf-8"))
+        registry["acceptance"] = {
+            "status": "accepted" if accepted else "candidate",
+            "protocol": "kb-role-acceptance/v4",
+            "accepted_skill_sha256": registry["acceptance"]["accepted_skill_sha256"],
+            "live_test": {"status": "PASS", "agent": "codex", "run_id": "fixture-run",
+                          "observed_at": "2026-10-28T10:00:00Z",
+                          "summary": "role selected, fact found, stop observed"},
+            "owner": {"status": "PASS" if accepted else "PENDING",
+                      "decision": "принято по показанному результату" if accepted else None,
+                      "accepted_at": "2026-10-28" if accepted else None},
+            "open": [],
+        }
+        return registry
+
+    def test_8_acceptance_v4_needs_only_the_live_test_the_owner_and_the_sha(self):
+        from test_kb import compact_role_fixture
+        root = Path(compact_role_fixture(accepted=True)).resolve()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        registry = root / "PROJECT_ROLES.json"
+        data = self.v4_registry(root)
+        kb_skills.write_registry_atomic(registry, data)
+        errors, notes, _ = kb_skills.validate(root, registry, runtime_roots=[])
+        self.assertEqual(errors, [], notes)
+        data["acceptance"]["live_test"]["status"] = "PENDING"
+        kb_skills.write_registry_atomic(registry, data)
+        errors, _, _ = kb_skills.validate(root, registry, runtime_roots=[])
+        self.assertTrue(any("requires one live_test PASS" in e for e in errors), errors)
+        data["acceptance"]["live_test"]["status"] = "PASS"
+        data["acceptance"]["owner"] = {"status": "PENDING", "decision": None}
+        kb_skills.write_registry_atomic(registry, data)
+        errors, _, _ = kb_skills.validate(root, registry, runtime_roots=[])
+        self.assertTrue(any("owner PASS" in e for e in errors), errors)
+        self.assertFalse(any("agents" in e or "execution" in e for e in errors), errors)
+
+    def test_9_a_leased_skill_is_accepted_at_the_lessor(self):
+        from test_kb import compact_role_fixture
+        lessor = Path(compact_role_fixture(accepted=True)).resolve()
+        self.addCleanup(shutil.rmtree, lessor, ignore_errors=True)
+        kb_skills.write_registry_atomic(lessor / "PROJECT_ROLES.json", self.v4_registry(lessor))
+        lessee = Path(compact_role_fixture(accepted=False)).resolve()
+        self.addCleanup(shutil.rmtree, lessee, ignore_errors=True)
+        registry = lessee / "PROJECT_ROLES.json"
+        data = json.loads(registry.read_text(encoding="utf-8"))
+        pin = hashlib.sha256((lessee / "skills/domain-auditor/SKILL.md").read_bytes()).hexdigest()
+        data["skills"][0]["leased_from"] = {"project": str(lessor), "pin": pin}
+        data["acceptance"] = {"status": "accepted", "protocol": "kb-role-acceptance/v4", "open": []}
+        kb_skills.write_registry_atomic(registry, data)
+        errors, notes, _ = kb_skills.validate(lessee, registry, runtime_roots=[])
+        self.assertEqual(errors, [], notes)
+        self.assertTrue(any("leased from" in n for n in notes), notes)
+        lessor_data = self.v4_registry(lessor)
+        lessor_data["acceptance"]["accepted_skill_sha256"]["domain-auditor"] = "0" * 64
+        kb_skills.write_registry_atomic(lessor / "PROJECT_ROLES.json", lessor_data)
+        errors, _, _ = kb_skills.validate(lessee, registry, runtime_roots=[])
+        self.assertTrue(any("has not accepted this SKILL.md" in e for e in errors), errors)
 
 
 if __name__ == "__main__":

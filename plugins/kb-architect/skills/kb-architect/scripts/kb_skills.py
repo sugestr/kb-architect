@@ -48,8 +48,10 @@ ACCEPTANCE_OUTCOMES = {
 }
 LIGHT_PROTOCOLS = {
     "kb-role-acceptance/v1", "kb-role-acceptance/v2", "kb-role-acceptance/v3",
+    "kb-role-acceptance/v4",
 }
-CURRENT_LIGHT_PROTOCOL = "kb-role-acceptance/v3"
+V3_PROTOCOL = "kb-role-acceptance/v3"          # runner-owned project_check, agent matrix
+CURRENT_LIGHT_PROTOCOL = "kb-role-acceptance/v4"   # 8.4.0: sha, one live test, owner's word
 PROJECT_CHECK_RUN_PROTOCOL = "kb-project-check-run/v2"
 PROJECT_CHECK_RUNNER_VERSION = "2"
 LEGACY_PROJECT_CHECK_RUN = ("kb-project-check-run/v1", "1")
@@ -305,7 +307,8 @@ def check_skill_source(root: Path, entry: dict, agents: list[str],
     if strict_version:
         errors.extend(portable_frontmatter_errors(skill_md, name, entry.get("version")))
     if outside(root, canonical):
-        check_external(canonical, entry.get("dependency"), errors, name)
+        if entry.get("leased_from") is None:      # аренда (8.4.0): рецепт — проект и pin
+            check_external(canonical, entry.get("dependency"), errors, name)
     elif not tracked(root, canonical):
         errors.append(f"{name}: repo-local canonical is not Git-tracked")
     discovery = entry.get("discovery")
@@ -925,6 +928,105 @@ def acceptance_schema_hint(root: Path, data: dict) -> int | None:
     return receipt.get("schema") if isinstance(receipt.get("schema"), int) else None
 
 
+def lease_errors(root: Path, name: str, canonical: Path, lease: object,
+                 errors: list[str], notes: list[str]) -> None:
+    """Аренда навыка (8.4.0): приёмка живёт у арендодателя.
+
+    `leased_from: {project, pin}` — путь к проекту-арендодателю и SHA-256 его SKILL.md.
+    Сходится, когда SKILL.md арендатора равен pin и реестр арендодателя принял этот
+    навык с тем же SHA; живая проверка и слово владельца у арендатора не нужны.
+    """
+    if not isinstance(lease, dict) or not isinstance(lease.get("project"), str) \
+            or not lease["project"].strip() or not isinstance(lease.get("pin"), str):
+        errors.append(f"{name}: leased_from needs project (path) and pin (SKILL.md sha256)")
+        return
+    skill_md = canonical / "SKILL.md"
+    if not skill_md.is_file() or file_sha256(skill_md) != lease["pin"]:
+        errors.append(f"{name}: leased SKILL.md does not match pin; update the pin or the copy")
+        return
+    raw = Path(lease["project"]).expanduser()
+    lessor = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
+    registry = lessor / VISIBLE_REGISTRY
+    data = load_json_object(registry) if registry.is_file() else None
+    if not isinstance(data, dict):
+        errors.append(f"{name}: lessor registry not readable: {registry}")
+        return
+    acceptance = data.get("acceptance") if isinstance(data.get("acceptance"), dict) else {}
+    bindings = acceptance.get("accepted_skill_sha256")
+    bindings = bindings if isinstance(bindings, dict) else {}
+    if acceptance.get("status") != "accepted" or bindings.get(name) != lease["pin"]:
+        errors.append(f"{name}: lessor {lease['project']} has not accepted this SKILL.md "
+                      "(status accepted with the same sha256 is required)")
+        return
+    notes.append(f"{name}: leased from {lease['project']}; acceptance lives there")
+
+
+def v4_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dict],
+                         agents: list[str]) -> list[str]:
+    """kb-role-acceptance/v4 (8.4.0): SHA метода, одна живая проверка, слово владельца.
+
+    Без матрицы агентов, хешей валидатора и входов, квитанций запуска: предметный хаб
+    26.10 не смог собрать валидную v3 — церемония без доказательства (разбор 28.10).
+    `project_check` необязателен и запускается самим проектом, не runner'ом.
+    """
+    errors: list[str] = []
+    acceptance = data.get("acceptance", {})
+    accepted = acceptance.get("status") == "accepted"
+    own = {name: entry for name, entry in skill_by_name.items()
+           if entry.get("leased_from") is None}
+    if not isinstance(acceptance.get("open", []), list):
+        errors.append("light acceptance open must be an array")
+    if skill_by_name and not own:
+        if not accepted:
+            errors.append("every skill is leased: set acceptance status accepted; "
+                          "the live test and the owner's word live with the lessor")
+        return errors
+    live = acceptance.get("live_test")
+    if not isinstance(live, dict) or live.get("status") not in {"PASS", "PENDING"}:
+        errors.append("light acceptance needs live_test status PASS or PENDING")
+        live = {}
+    if accepted and live.get("status") != "PASS":
+        errors.append("accepted role manifest requires one live_test PASS")
+    if live.get("status") == "PASS":
+        if live.get("agent") not in agents:
+            errors.append("live_test.agent must be a supported agent")
+        for key in ("run_id", "observed_at", "summary"):
+            if not isinstance(live.get(key), str) or not live[key].strip():
+                errors.append(f"live_test PASS requires {key}")
+    project_check = acceptance.get("project_check")
+    if project_check is not None:
+        declared = {
+            entry.get("validation", {}).get("project", {}).get("command")
+            for entry in skill_by_name.values()
+            if isinstance(entry.get("validation"), dict)
+        }
+        if not isinstance(project_check, dict) or project_check.get("status") not in {
+                "PASS", "PENDING", "FAIL"}:
+            errors.append("project_check, when declared, needs status PASS, PENDING or FAIL")
+        elif project_check.get("command") not in declared:
+            errors.append("project_check must bind one declared project validator command")
+        elif project_check.get("status") == "FAIL":
+            errors.append("project_check recorded FAIL; fix the check and reset it to PENDING")
+    bindings = acceptance.get("accepted_skill_sha256")
+    bindings = bindings if isinstance(bindings, dict) else {}
+    if accepted or live.get("status") == "PASS":
+        for name, entry in own.items():
+            raw = Path(str(entry.get("canonical", ""))).expanduser()
+            canonical = (raw if raw.is_absolute() else root / raw).resolve(strict=False)
+            skill_file = canonical / "SKILL.md"
+            if not skill_file.is_file() or bindings.get(name) != file_sha256(skill_file):
+                errors.append(f"{name}: compact acceptance does not match current SKILL.md")
+    owner = acceptance.get("owner")
+    if not isinstance(owner, dict):
+        errors.append("light acceptance needs owner decision")
+        owner = {}
+    if accepted and (owner.get("status") != "PASS" or not isinstance(owner.get("decision"), str)
+                     or not owner["decision"].strip()):
+        errors.append("accepted role manifest requires owner PASS and the owner's decision "
+                      "(their words)")
+    return errors
+
+
 def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dict],
                             agents: list[str], notes: list[str]) -> list[str]:
     """Validate one compact project acceptance record and its run locators.
@@ -938,9 +1040,10 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
     acceptance = data.get("acceptance", {})
     accepted = acceptance.get("status") == "accepted"
     protocol = acceptance.get("protocol")
+    if protocol == CURRENT_LIGHT_PROTOCOL:
+        return v4_acceptance_errors(root, data, skill_by_name, agents)
     if protocol in {"kb-role-acceptance/v1", "kb-role-acceptance/v2"} and not accepted:
-        errors.append("new compact candidates require kb-role-acceptance/v3 "
-                      "runner-owned project results")
+        errors.append("new compact candidates require kb-role-acceptance/v4")
     live = acceptance.get("live_test")
     if not isinstance(live, dict) or live.get("status") not in {"PASS", "PENDING"}:
         errors.append("light acceptance needs live_test status PASS or PENDING")
@@ -958,7 +1061,7 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
             errors.append("live_test must cover selection, recall and one stop/conflict case")
         if not live.get("summary"):
             errors.append("live_test PASS requires a short result summary")
-        if protocol == CURRENT_LIGHT_PROTOCOL:
+        if protocol == V3_PROTOCOL:
             observation = live.get("observation")
             if not isinstance(observation, dict) or not observation.get("observed_at") \
                     or not observation.get("run_id"):
@@ -987,7 +1090,7 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
                 or not execution.get("run_id") or execution.get("exit_code") != 0:
             errors.append("project_check PASS requires executed_at, run_id and exit_code 0")
     if project_check.get("status") in {"PASS", "FAIL"} \
-            and protocol == CURRENT_LIGHT_PROTOCOL:
+            and protocol == V3_PROTOCOL:
         execution = project_check.get("execution")
         if not isinstance(execution, dict):
             errors.append("project_check result requires a runner-owned execution receipt")
@@ -1059,14 +1162,14 @@ def light_acceptance_errors(root: Path, data: dict, skill_by_name: dict[str, dic
             continue
         if result.get("status") == "TESTED":
             tested += 1
-            if protocol == CURRENT_LIGHT_PROTOCOL:
+            if protocol == V3_PROTOCOL:
                 if not isinstance(result.get("basis"), str) or not result["basis"].strip():
                     errors.append(f"acceptance.agents.{agent} TESTED needs observed basis")
                 elif result["basis"].strip() == "live_test" and agent != live.get("agent"):
                     errors.append(f"acceptance.agents.{agent} cannot claim another agent's live_test")
         elif not result.get("basis"):
             errors.append(f"acceptance.agents.{agent} {result.get('status')} needs basis")
-    if protocol == CURRENT_LIGHT_PROTOCOL and live.get("status") == "PASS":
+    if protocol == V3_PROTOCOL and live.get("status") == "PASS":
         observed_agent = runtime.get(live.get("agent")) if isinstance(live.get("agent"), str) else None
         if not isinstance(observed_agent, dict) or observed_agent.get("status") != "TESTED":
             errors.append("live_test PASS requires its observed agent to be TESTED")
@@ -1202,7 +1305,7 @@ def execute_compact_project_check(root: Path, data: dict, registry: Path,
     """Run one pending v3 check and record the observed result without a shell."""
     acceptance = data.get("acceptance")
     if not isinstance(acceptance, dict) \
-            or acceptance.get("protocol") != CURRENT_LIGHT_PROTOCOL:
+            or acceptance.get("protocol") != V3_PROTOCOL:
         errors.append("--execute-project-check requires kb-role-acceptance/v3")
         return False
     project_check = acceptance.get("project_check")
@@ -1459,6 +1562,8 @@ def validate_visible(root: Path, data: dict, registry: Path,
         skill_supports[checked_name] = role_linked_files(
             canonical, checked_name, link_errors)
         check_runtime_collisions(checked_name, canonical, roots, errors, notes)
+        if entry.get("leased_from") is not None:
+            lease_errors(root, checked_name, canonical, entry["leased_from"], errors, notes)
     for role_id, role in role_by_id.items():
         if role.get("skill") not in skill_by_name:
             errors.append(f"{role_id}: referenced skill is not declared: {role.get('skill')}")
@@ -1659,6 +1764,9 @@ def validate_visible(root: Path, data: dict, registry: Path,
             errors.append("ROLE_ACCEPTANCE_STATUS_INVALID: status must be candidate or accepted")
         if light_mode and (accepted_mode or pre_owner_mode):
             if protocol == CURRENT_LIGHT_PROTOCOL and execute_project_check:
+                notes.append("v4: project_check is optional and not runner-owned; run the "
+                             "declared command yourself and record PASS")
+            if protocol == V3_PROTOCOL and execute_project_check:
                 if errors:
                     errors.append("PROJECT_CHECK_EXECUTION_BLOCKED: fix registry errors first")
                 else:
@@ -1683,7 +1791,7 @@ def validate_visible(root: Path, data: dict, registry: Path,
             if protocol == "kb-role-acceptance/v2" and accepted_mode:
                 notes.append("ROLE_ACCEPTANCE_V2_LEGACY_ATTESTED: accepted with a "
                              "self-recorded execution locator; patch builds do not reopen it")
-            if protocol == CURRENT_LIGHT_PROTOCOL and not execute_project_check:
+            if protocol == V3_PROTOCOL and not execute_project_check:
                 project_check = acceptance.get("project_check", {})
                 if isinstance(project_check, dict) \
                         and project_check.get("status") == "PENDING":
@@ -2280,23 +2388,11 @@ def neutral_project_roles_template(prefill: dict) -> dict:
             "status": "candidate",
             "protocol": CURRENT_LIGHT_PROTOCOL,
             "accepted_skill_sha256": {},
-            "project_check": {
-                "status": "PENDING", "command": None, "execution": None,
-            },
             "live_test": {
-                "status": "PENDING", "agent": None, "fresh_context": None,
-                "unforced": None,
-                "covers": ["role-selection", "knowledge-recall", "authority-stop"],
+                "status": "PENDING", "agent": None, "run_id": None, "observed_at": None,
                 "summary": "Replace with one short observed result",
-                "observation": {"observed_at": None, "run_id": None},
             },
-            "agents": {
-                agent: {"status": "UNKNOWN", "basis": "Not tested yet"}
-                for agent in agents
-            },
-            "owner": {
-                "status": "PENDING", "accepted_by": None, "accepted_at": None,
-            },
+            "owner": {"status": "PENDING", "decision": None, "accepted_at": None},
             "open": [],
         },
     }

@@ -51,6 +51,7 @@ import os
 import re
 import shlex
 import stat
+import shutil
 import subprocess
 import sys
 import time
@@ -191,18 +192,33 @@ def iso_time(value):
         return 0.0
 
 
+# Папки состояния и что в них: файлы — удаляются старше срока; каталоги (выписки закрытия
+# сессий в close/) — целиком; подпапки turns/snap и service/said чистятся как файлы своих папок.
+# 8.3.4: close/ (32 МБ) и реестры turns/*.jsonl (53 МБ) росли без уборки (свежий взгляд 28.10).
+PRUNE_FOLDERS = ("sessions", os.path.join("turns", "snap"), os.path.join("service", "said"),
+                 "turns", "close", "due", "out")
+
+
 def prune_old(days=30):
     limit = time.time() - days * 86400
-    for folder in (os.path.join(state_root(), "sessions"),
-                   os.path.join(state_root(), "turns", "snap"),
-                   os.path.join(state_root(), "service", "said")):
+    for rel in PRUNE_FOLDERS:
+        folder = os.path.join(state_root(), rel)
         try:
-            for name in os.listdir(folder):
-                path = os.path.join(folder, name)
-                if os.path.getmtime(path) < limit:
-                    os.remove(path)
+            names = os.listdir(folder)
         except OSError:
-            pass
+            continue
+        for name in names:
+            path = os.path.join(folder, name)
+            try:
+                if os.path.islink(path) or os.path.getmtime(path) >= limit:
+                    continue
+                if os.path.isdir(path):
+                    if rel == "close":
+                        shutil.rmtree(path, ignore_errors=True)
+                    continue
+                os.remove(path)
+            except OSError:
+                pass
 
 
 def claim(sid, root, key):
@@ -438,21 +454,35 @@ def needs_role(root, roles):
     return bool(kb_entry.declared_roles(root)[0]) and not roles
 
 
-def start_entry(root, sid, agent, source, roles=None):
-    """Собирает файл входа и взводит замок сессии до подтверждения."""
+def start_entry(root, sid, agent, source, roles=None, previous=None, since=None):
+    """Собирает файл входа и взводит замок сессии до подтверждения.
+    8.4.0: `since` — подтверждённый файл этой сессии (сжатие контекста): неизменные части не
+    повторяются; `previous` — прежнее состояние сессии (записи, начало, прежнее подтверждение)."""
     armed_at = now_iso()                  # до сборки: файлы входа раньше взвода не принимаются
     all_roles, default = kb_entry.declared_roles(root)
     wanted = default if roles is None else roles
     result = kb_entry.build(root, wanted, (), skip=AUTO_RULES.get(agent, ()))
+    note = ""
+    if since and os.path.isfile(since + ".json"):
+        note = kb_entry.reuse(result, since) or ""
+    writes = list((previous or {}).get("writes") or [])
+    dirty = result.get("now_dirty")
+    if dirty:
+        mine = (dirty["rel"] in writes) if previous is not None else None   # hook знает записи сессии с её старта
+        note = (note + "\n" if note else "") + kb_entry.dirty_note(result, mine)
     out = kb_entry.default_out(root)
-    digest, fragments = kb_entry.write(root, result, out)
+    digest, fragments = kb_entry.write(root, result, out, header_note=note)
     state = {"schema": 2, "session": sid, "agent": agent, "root": os.path.realpath(root),
-             "source": source, "armed_at": armed_at, "bundle": out, "parts": len(fragments),
+             "source": source, "armed_at": armed_at,
+             "started_at": (previous or {}).get("started_at") or armed_at,
+             "bundle": out, "parts": len(fragments),
              "part_sha256": [kb_entry.part_hash(x) for x in fragments],
              "roles": result["found_roles"], "missing": result["missing"],
              "blocking": result["blocking"],
              "receipt": kb_entry.receipt_line(result, digest), "bytes": result["total"],
-             "confirmed": None}
+             "confirmed": None, "writes": writes,
+             "prior_confirmed": (previous or {}).get("confirmed") if since else None,
+             "dirty_current": kb_entry.dirty_note(result, None) if dirty else ""}
     if sid:
         save_state(state)
     return state, all_roles
@@ -507,6 +537,8 @@ def entry_message(state, all_roles, event, due=None, agent="claude", inline=True
             "не перечитывает неизменное: kb_entry.py сам берёт подтверждённый вход за основу.",
             f"Правила ({rules}) агент загрузил сам; в файле входа их нет.",
             f"Квитанция этого файла: {state['receipt']}"]
+    if state.get("dirty_current"):
+        head.append(state["dirty_current"])
     for line in state.get("missing", [])[:6]:
         head.append(f"! {line}")
     if update:
@@ -531,6 +563,9 @@ def entry_message(state, all_roles, event, due=None, agent="claude", inline=True
 
 
 def reminder(state):
+    if not state.get("bundle"):
+        return (f"KB-вход не собран ({os.path.basename(state['root'])}): файл входа соберётся при "
+                "первой реплике владельца; до подтверждения правки закрыты.")
     return (f"KB-вход не подтверждён ({os.path.basename(state['root'])}): файл входа "
             f"{state['bundle']}, подтверждение — {confirm_command(state['root'])}. Роль — по "
             "задаче (список в файле входа). До подтверждения правки, команды и MCP-действия "
@@ -614,7 +649,7 @@ def verify(root, state, token, bundle=None, no_role=None):
     # опирается, подтверждён в этой же сессии: иначе current можно было бы не прочитать вовсе.
     reused_from = found.get("reused_from")
     if reused_from or found.get("reused"):
-        done = (state or {}).get("confirmed") or {}
+        done = (state or {}).get("confirmed") or (state or {}).get("prior_confirmed") or {}
         read = {(c.get("rel"), c.get("sha256")) for c in done.get("content") or []
                 if isinstance(c, dict)}
         reused = {(c.get("rel"), c.get("sha256")) for c in found.get("reused") or []
@@ -903,6 +938,11 @@ def deny(reason):
 
 
 def deny_reason(state, all_roles):
+    if not state.get("bundle"):
+        return (f"KB-ВХОД НЕ СОБРАН ({os.path.basename(state['root'])}): файл входа собирается при первой "
+                "реплике владельца; до подтверждения правки, команды (кроме чтения и kb-скриптов) и "
+                f"MCP-действия закрыты. Реплика уже была — собери вход сам: {entry_command(state['root'], state.get('agent'))}, "
+                f"затем {confirm_command(state['root'])}.")
     return (f"KB-ВХОД НЕ ПОДТВЕРЖДЁН ({os.path.basename(state['root'])}): правки, команды и "
             f"MCP-действия закрыты до входа. Прочитай файл входа до конца: {state['bundle']} "
             f"(частей: {state['parts']}; роль: {', '.join(state['roles']) or 'не выбрана'}). "
@@ -962,7 +1002,27 @@ def on_session_start(event, agent):
     roles = None
     if previous and source in ("compact", "resume"):
         roles = (previous.get("confirmed") or {}).get("roles") or previous.get("roles") or None
-    state, all_roles = start_entry(root, sid, agent, source, roles)
+    if source != "compact":
+        # 8.4.0: замок — сразу, файл входа — на первой реплике владельца: 7 из 14 сессий за
+        # неделю не получили ни одной реплики, а вход в ~100 КБ им собирался дважды.
+        skill = skill or {"status": "SKIPPED", "line": "обновление скилла не проверялось"}
+        state = {"schema": 2, "session": sid, "agent": agent, "root": os.path.realpath(root),
+                 "source": source, "armed_at": now_iso(), "started_at": now_iso(),
+                 "bundle": None, "parts": 0, "part_sha256": [], "roles": list(roles or []),
+                 "missing": [], "blocking": [], "receipt": "", "bytes": 0, "confirmed": None,
+                 "pending_entry": True, "skill_line": skill["line"],
+                 "writes": list((previous or {}).get("writes") or [])}
+        save_state(state)
+        label = {"clear": "/clear — вход заново", "resume": "возобновление без подтверждённого входа"}.get(
+            source, "новая сессия")
+        text = (f"# KB-ВХОД — {os.path.basename(root)} (kb-architect {kb_paths.skill_version() or '?'}, {label})\n\n"
+                "Файл входа соберётся при первой реплике владельца — тогда прочитай его целиком и подтверди "
+                "метками. До подтверждения правки файлов проекта, команды оболочки (кроме чтения и "
+                f"kb-скриптов) и MCP-действия закрыты; чтение разрешено. {skill['line']}.")
+        return context_payload("SessionStart", text,
+                               f"KB-вход {os.path.basename(root)}: замок поставлен, файл входа — при первой реплике.")
+    since = (previous.get("confirmed") or {}).get("bundle") if previous else None
+    state, all_roles = start_entry(root, sid, agent, source, roles, previous=previous, since=since)
     if source == "compact" and previous and previous.get("turn"):
         state["turn"] = previous["turn"]      # сжатие посреди хода — тот же ход (ревью 7.6.1)
     label = {"compact": "контекст сжат — вход заново", "clear": "/clear — вход заново",
@@ -993,6 +1053,37 @@ def on_session_start(event, agent):
               f"{', '.join(state['roles']) or 'не выбрана'}); {skill['line']}; проект: "
               f"{project['short']}" + ("; пора обслужить базу" if service else "") + ".")
     return context_payload("SessionStart", text, notice)
+
+
+def build_pending(state0, root, agent):
+    """Файл входа и сообщение входа на первой реплике владельца (8.4.0)."""
+    source = state0.get("source") or "startup"
+    skill = {"status": "SKIPPED", "line": state0.get("skill_line") or "обновление скилла: при старте"}
+    state, all_roles = start_entry(root, state0["session"], agent, source,
+                                   state0.get("roles") or None, previous=state0)
+    for key in ("turn", "prompt_event", "last_turn", "unchecked_writes", "close"):
+        if state0.get(key) is not None:
+            state[key] = state0[key]
+    due = due_summary(root)
+    service = ""
+    try:
+        import kb_service
+        service = kb_service.due_text(root, once_a_day=True)
+    except Exception:
+        service = ""
+    project = project_update(root)
+    state["project_update"] = project["short"]
+    save_state(state)
+    label = {"clear": "/clear — вход заново", "resume": "возобновление без подтверждённого входа",
+             "late": "сессия старше hook'а"}.get(source, "новая сессия")
+    text = entry_message(state, all_roles, label, due, agent,
+                         update=update_section(root, skill, project)
+                         + (["", "## Пора обслужить базу", service] if service else []))
+    notice = (f"KB-вход {os.path.basename(root)}: файл входа собран, правки закрыты до "
+              f"подтверждения ({state['parts']} частей, роль "
+              f"{', '.join(state['roles']) or 'не выбрана'}); проект: {project['short']}"
+              + ("; пора обслужить базу" if service else "") + ".")
+    return text, notice
 
 
 def starting_path(sid, root):
@@ -1109,9 +1200,13 @@ def on_prompt(event, agent):
     if not root or not sid:
         return None
     state, fresh = session_state(sid, root, agent)
+    human = kb_turns.prompt_kind(event.get("prompt")) == "human"
+    pending_text = pending_notice = None
+    if state and state.get("pending_entry") and not state.get("bundle") and human:
+        pending_text, pending_notice = build_pending(state, root, agent)
+        state = load_state(sid, root) or state
     if state:
         begin_turn(state, root, event.get("prompt") or "")
-    human = kb_turns.prompt_kind(event.get("prompt")) == "human"
     close = bool(state) and human and is_close_command(event.get("prompt"))
     if close:
         mark_close(sid, root)
@@ -1124,6 +1219,10 @@ def on_prompt(event, agent):
         if close:
             lines.append(close_text(root))
         return context_payload("UserPromptSubmit", "\n\n".join(lines)) if lines else None
+    if pending_text is not None:
+        close = close or (human and is_close_command(event.get("prompt")))
+        return context_payload("UserPromptSubmit", pending_text + ("\n\n" + close_text(root) if close else ""),
+                               pending_notice)
     if fresh:
         return context_payload("UserPromptSubmit",
                                entry_message(state, kb_entry.declared_roles(root)[0],
@@ -1285,7 +1384,15 @@ def record_effects(event, roots, sid, agent):
                     state = load_state(sid, root)
                     if not state:
                         continue
-                    if note_debts_coverage(state, tool, ti, effects, root):
+                    file_writes = [e[2] for e in effects if len(e) > 2 and e[1] == "file"]
+                    changed = note_debts_coverage(state, tool, ti, effects, root)
+                    if file_writes:
+                        known = state.setdefault("writes", [])
+                        for p in file_writes:
+                            if p not in known:
+                                known.append(p)
+                                changed = True
+                    if changed:
                         save_state(state)
                     if not state.get("turn") or not effects:
                         continue
@@ -1353,10 +1460,53 @@ def on_tool(event, agent):
     if guarded:
         return guarded
     roots = touched_roots(event)
-    decision = gate(event, agent, roots)
+    decision = gate(event, agent, roots) or shared_checkout_guard(event, roots, sid)
     if decision is None:
         record_effects(event, roots, sid, agent)
     return decision
+
+
+# Широкий add или commit -a в общем checkout уносит чужие правки под чужим сообщением —
+# третий отчёт класса (10.08, 25.09, 26.10: четыре случая за сутки). Чужое здесь — файлы,
+# изменённые до начала этой сессии и не закоммиченные.
+BROAD_GIT = re.compile(r"\bgit\b(?:\s+-C\s+\S+)?(?:\s+-c\s+\S+)*\s+(?:add\s+(?:-A\b|--all\b|-u\b|\.(?=\s|$))"
+                       r"|commit\s+(?:-a\b|--all\b|-am\b))")
+
+
+def shared_checkout_guard(event, roots, sid):
+    tool = event.get("tool_name") or ""
+    if tool not in SHELL_TOOLS:
+        return None
+    cmd = command_of(event.get("tool_input") or {}) or ""
+    if not BROAD_GIT.search(cmd):
+        return None
+    for root in roots:
+        state = load_state(sid, root)
+        if not state:
+            continue
+        started = iso_time(state.get("started_at") or state.get("armed_at"))
+        try:
+            out = subprocess.run(["git", "-C", root, "status", "--porcelain", "--untracked-files=all"],
+                                 capture_output=True, text=True, timeout=15).stdout
+        except Exception:
+            return None
+        foreign = []
+        for line in out.splitlines():
+            if len(line) < 4:
+                continue
+            rel = line[3:].strip().strip('"').split(" -> ")[-1]
+            try:
+                if os.path.getmtime(os.path.join(root, rel)) < started:
+                    foreign.append(rel)
+            except OSError:
+                continue
+        if foreign:
+            shown = ", ".join(foreign[:6]) + ("…" if len(foreign) > 6 else "")
+            return deny(f"ОБЩИЙ CHECKOUT ({os.path.basename(root)}): команда захватит правки, сделанные до "
+                        f"начала этой сессии и не закоммиченные — {len(foreign)}: {shown}. Добавь только свои "
+                        "пути явно (git add <пути>; git commit без -a); чужое оставь автору "
+                        "(references/collaboration.md).")
+    return None
 
 
 def entry_content(root, roles=(), skip=()):

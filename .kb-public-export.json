@@ -1,8 +1,8 @@
 {
   "config_sha256": "3842f98449f7fc47282f62bb87aa59de2ee281658bd0ea333190410b65c5f266",
-  "payload_tree_sha256": "fabb181c57aeca7d970c8d713cba0e76128e50fb4d5d3439ceefa0d448416aae",
+  "payload_tree_sha256": "f841d62a1ae743915721bb875630187c30d5e870e5791fd83bb7cef5e002cd09",
   "schema": 1,
-  "source_commit": "e08865a286888f1194983dc536f29acc4e51d443",
+  "source_commit": "d36cb78a53b259df0d7bb4dd9862f66306cd02b0",
   "source_repository": "sugestr/kb-architect-lab",
-  "version": "8.3.3"
+  "version": "8.4.0"
 }

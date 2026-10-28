@@ -16,14 +16,16 @@ FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 EXCLUDED = {".DS_Store"}
 
 
+def shipped(path: Path) -> bool:
+    """Что едет в установку: всё, кроме мусора и тестов пакета. Тесты (test_kb*.py, 650 КБ)
+    остаются в репозитории и публичном снимке для сопровождения; в архиве и на каждой машине
+    они мёртвый груз (свежий взгляд 28.10.2026, 8.3.4)."""
+    return (path.is_file() and path.name not in EXCLUDED and "__pycache__" not in path.parts
+            and path.suffix != ".pyc" and not (path.name.startswith("test_") and path.suffix == ".py"))
+
+
 def files() -> list[Path]:
-    return sorted(
-        p for p in SKILL.rglob("*")
-        if p.is_file()
-        and p.name not in EXCLUDED
-        and "__pycache__" not in p.parts
-        and p.suffix != ".pyc"
-    )
+    return sorted(p for p in SKILL.rglob("*") if shipped(p))
 
 
 def main() -> int:

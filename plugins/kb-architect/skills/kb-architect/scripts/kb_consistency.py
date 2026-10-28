@@ -7,6 +7,7 @@
 
     python3 kb_consistency.py <корень> [--json]           горячие главы и статус
     python3 kb_consistency.py <корень> --area <путь>      карточка области перед записью
+    python3 kb_consistency.py record <корень> <глава> --carry-over [--by "…"]   # слова те же — перенос
     python3 kb_consistency.py review <корень> [--chapter <путь>] [--agent codex|claude]
                                             [--print-prompt] [--force]
                                                          модель читает горячие главы, только чтение
@@ -551,6 +552,48 @@ def review(root, chapter=None, agent=None, force=False, print_prompt=False):
     return 1 if failed else 0
 
 
+def chapter_words(text):
+    """Последовательность слов главы без строки версии `<!-- v: … -->` и переносов: смена
+    версии и чистая правка формы её не меняют (8.4.0, продукт на Odoo 26.10 §3)."""
+    text = re.sub(r"^\s*<!--\s*v:[^>]*-->\s*\n?", "", text, count=1)
+    return text.split()
+
+
+def carry_over(root, rel, by):
+    """Перенос отметки проверки на новую версию главы, если слова не изменились."""
+    try:
+        data = load_record(root, strict=True)
+    except BadRecord as exc:
+        print(f"RECORD_REFUSED: {exc}")
+        return 2
+    existing = data["reviews"].get(rel)
+    if not existing or not isinstance(existing.get("blob"), str):
+        print(f"RECORD_REFUSED: у {rel} нет прежней отметки — нужна настоящая проверка")
+        return 2
+    try:
+        old_text = git(root, "cat-file", "-p", existing["blob"])
+        current = git(root, "hash-object", "--", rel).strip()
+        head = git(root, "rev-parse", "HEAD").strip()
+    except GitFailed as exc:
+        print(f"RECORD_REFUSED: {exc}")
+        return 2
+    new_text = (Path(root) / rel).read_text(encoding="utf-8", errors="ignore")
+    if chapter_words(old_text) != chapter_words(new_text):
+        print(f"RECORD_REFUSED: слова {rel} изменились с проверки — нужна настоящая проверка (review), "
+              "не перенос")
+        return 2
+    if existing.get("blob") == current:
+        print(f"RECORDED: {rel} — отметка уже на этой версии")
+        return 0
+    data["reviews"][rel] = dict(existing, blob=current, commit=head,
+                                date=datetime.date.today().isoformat(),
+                                by=f"{existing.get('by', '?')} (carry-over: {by})")
+    write_record(root, data)
+    print(f"RECORDED: {rel} — отметка перенесена на новую версию (слова те же: строка версии или форма). "
+          f"Закоммить {RECORD} вместе с правкой главы.")
+    return 0
+
+
 def record(root, rel, found, confirmed, fixed, open_items, by):
     rel = os.path.normpath(rel)
     if not inside_root(root, rel):
@@ -641,8 +684,14 @@ def main(argv):
                       force="--force" in args, print_prompt="--print-prompt" in args)
     if cmd == "record":
         if len(args) < 2:
-            print("record <корень> <путь> --found N --confirmed M --fixed K")
+            print("record <корень> <путь> --found N --confirmed M --fixed K | --carry-over")
             return 2
+        if "--carry-over" in args:
+            rel = os.path.normpath(args[1])
+            if not inside_root(root, rel) or not (Path(root) / rel).is_file():
+                print(f"RECORD_REFUSED: нет файла {rel} в корне проекта")
+                return 2
+            return carry_over(root, rel, opt("--by", "не указан"))
         try:
             nums = [int(opt(k, "0")) for k in ("--found", "--confirmed", "--fixed")]
         except ValueError:
